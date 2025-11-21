@@ -18,11 +18,14 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 [compat]
 Adapt = "4.4.0"
 ClimaOcean = "0.8.7"
+Dates = "1.10"
 JLD2 = "0.6.2"
 NCDatasets = "0.14.9"
 OceanBioME = "0.14.9"
 Oceananigans = "0.100.7"
+Printf = "1.10"
 SeawaterPolynomials = "0.3.10"
+Statistics = "1.10"
 julia = "1.10"
 
 [extras]

@@ -1,7 +1,7 @@
 name = "FjordSim"
 uuid = "70d6b63c-c5d4-46ce-8d1e-8766361373eb"
-authors = ["sia <yakubov.sha@gmail.com> and contributors"]
 version = "0.0.1"
+authors = ["sia <yakubov.sha@gmail.com> and contributors"]
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
@@ -21,7 +21,7 @@ ClimaOcean = "0.8.7"
 Dates = "1.10"
 JLD2 = "0.6.2"
 NCDatasets = "0.14.9"
-OceanBioME = "0.14.9"
+OceanBioME = "0.14.9, 0.16"
 Oceananigans = "0.100.7"
 Printf = "1.10"
 SeawaterPolynomials = "0.3.10"

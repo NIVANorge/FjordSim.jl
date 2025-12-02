@@ -21,7 +21,8 @@ import ClimaOcean.DataWrangling:
     latitude_interfaces,
     z_interfaces,
     reversed_vertical_axis,
-    inpainted_metadata_path
+    inpainted_metadata_path,
+    retrieve_data
 
 struct DSForcing
     metadata_filename::String
@@ -76,14 +77,36 @@ struct DSResults
     z_interfaces::Any
 end
 
-function DSResults(metadata_filename, default_download_directory; date_time)
+"""
+    DSResults(metadata_filename, default_download_directory; start_date_time)
+
+Load and save info from a NetCDF file.
+
+# Arguments
+- `metadata_filename::String`  
+    Name of the NetCDF file.
+
+- `default_download_directory::String`  
+    Directory where the file is stored.
+
+# Keyword Arguments
+- `start_date_time::DateTime`  
+    DateTime of the first record in the file at  
+    `joinpath(default_download_directory, metadata_filename)`.
+
+"""
+function DSResults(
+    metadata_filename::String,
+    default_download_directory::String;
+    start_date_time::DateTime
+)
     reversed_vertical_axis = false
     filepath = joinpath(default_download_directory, metadata_filename)
     ds = NCDataset(filepath)
     longitude_interfaces = (ds["λ_faa"][1], ds["λ_faa"][end])
     latitude_interfaces = (ds["φ_afa"][1], ds["φ_afa"][end])
-    array_size = Dict(:tracers => size(ds["T"])[1:3], :u_velocity => size(ds["u"])[1:3], :v_velocity => size(ds["v"])[1:3])
-    all_dates = date_time .+ Second.(ds["time"][:])
+    array_size = size(ds["T"])[1:3]  # that is for a grid, so size should be for tracers
+    all_dates = start_date_time .+ Second.(ds["time"][:])
     first_date = all_dates[1]
     last_date = all_dates[end]
     z_interfaces = ds["z_aaf"][:]
@@ -128,17 +151,9 @@ default_download_directory(ds::Union{DSResults, DSForcing}) = ds.default_downloa
 reversed_vertical_axis(ds::Union{DSResults, DSForcing}) = ds.reversed_vertical_axis
 longitude_interfaces(ds::Union{DSResults, DSForcing}) = ds.longitude_interfaces
 latitude_interfaces(ds::Union{DSResults, DSForcing}) = ds.latitude_interfaces
-Base.size(ds::DSForcing) = ds.size
-Base.size(ds::DSForcing, variable) = size(ds)
-function Base.size(ds::DSResults, variable) 
-    if variable == :u_velocity
-        return ds.size[:u_velocity]
-    elseif variable == :v_velocity
-        return ds.size[:v_velocity]
-    else
-        return ds.size[:tracers]
-    end
-end
+
+Base.size(ds::Union{DSResults, DSForcing}) = ds.size
+Base.size(ds::Union{DSResults, DSForcing}, variable) = size(ds)
 
 all_dates(ds::Union{DSResults, DSForcing}, args...) = ds.all_dates
 first_date(ds::Union{DSResults, DSForcing}, args...) = ds.first_date
@@ -174,5 +189,22 @@ function inpainted_metadata_filename(metadata::Union{MetadatumResults, Metadatum
 end
 
 inpainted_metadata_path(metadata::Union{MetadatumResults, MetadatumForcing}) = joinpath(metadata.dir, inpainted_metadata_filename(metadata))
+
+"""
+    retrieve_data(metadata)
+    
+Retrieve data from netcdf file according to `metadata`.
+"""
+function retrieve_data(metadata::Union{Metadatum{V} where V<:DSResults, Metadatum{V} where V<:DSForcing})
+    path = metadata_path(metadata)
+    name = dataset_variable_name(metadata)
+    # NetCDF shenanigans
+    ds = Dataset(path)
+    # find a proper datetime index - that is a difference
+    i = findfirst(==(metadata.dates), metadata.dataset.all_dates)
+    data = ds[name][:, :, :, i]
+    close(ds)
+    return data
+end
 
 end  # module

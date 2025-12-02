@@ -22,7 +22,7 @@ tracers = (:T, :S, :e, :ϵ)
 dataset = DSResults(
     "snapshots_ocean.nc",
     joinpath(homedir(), "FjordSim_results", "oslofjord");
-    date_time = DateTime(2025, 1, 1),
+    start_date_time = DateTime(2025, 1, 1),
 )
 initial_conditions = (
     T = Metadatum(:temperature; dataset, date = last_date(dataset, :temperature)),

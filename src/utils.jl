@@ -18,7 +18,14 @@ function progress(sim)
             maximum(abs, interior(v)),
             maximum(abs, interior(w)))
 
-    step_time = 1e-9 * (time_ns() - wall_time[])
+
+    # Initialize wall_time on first iteration
+    if iteration(sim) == 0
+        wall_time[] = time_ns()
+        step_time = 0.0
+    else
+        step_time = 1e-9 * (time_ns() - wall_time[])
+    end
 
     msg = @sprintf("Iter: %d, time: %s, Δt: %s", iteration(sim), prettytime(sim), prettytime(sim.Δt))
     msg *= @sprintf(", max|u|: (%.2e, %.2e, %.2e) m s⁻¹, extrema(T): (%.2f, %.2f) ᵒC, wall time: %s",

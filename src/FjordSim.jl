@@ -10,31 +10,58 @@ export
     # simulations
     coupled_hydrostatic_simulation,
     # utils
-    recursive_merge, progress
+    recursive_merge, progress,
+    # atmosphere
+    NORA3PrescribedAtmosphere,
+    MultiYearNORA3
 
 using Oceananigans
 using Oceananigans.BoundaryConditions
 using Oceananigans.Units
 using Oceananigans.Utils
 using ClimaOcean
+using ClimaOcean.DataWrangling.JRA55: compute_bounding_nodes, infer_longitudinal_topology
 using NCDatasets
 using Adapt
 
 import Oceananigans.Advection: cell_advection_timescale
+import ClimaOcean.DataWrangling.JRA55: compute_bounding_indices
 
+## some ClimaOcean "fixes"
 # to allow time step adjusting in OceanSeaIceModel
 cell_advection_timescale(model::OceanSeaIceModel) = cell_advection_timescale(model.ocean.model)
 
-include("atmosphere.jl")
+# Fix ClimaOcean for the custom longitude and latitude
+# this is called from set! and uses grid to find the locations,
+# which are 1 index more than necessary
+function compute_bounding_indices(longitude::Nothing, latitude::Nothing, grid, LX, LY, λc, φc)
+    λbounds = compute_bounding_nodes(longitude, grid, LX, λnodes)
+    φbounds = compute_bounding_nodes(latitude, grid, LY, φnodes)
+
+    i₁, i₂ = compute_bounding_indices(λbounds, λc)
+    j₁, j₂ = compute_bounding_indices(φbounds, φc)
+    TX = infer_longitudinal_topology(λbounds)
+
+    # to prevent taking larger than grid areas
+    i₁ = (i₂ - i₁ >= grid.Nx) ? (i₂ - grid.Nx + 1) : i₁
+    j₁ = (j₂ - j₁ >= grid.Ny) ? (j₂ - grid.Ny + 1) : j₁
+
+    return i₁, i₂, j₁, j₂, TX
+end
+##
+
+include("FDatasets.jl")
+include("Utils.jl")
+include("NORA3.jl")
+
+using .FDatasets
+using .Utils
+using .NORA3
+
 include("boundary_conditions.jl")
 include("forcing.jl")
 include("grid.jl")
 include("turbulence.jl")
-include("utils.jl")
-
-include("FDatasets.jl")
-
-using .FDatasets
 
 function coupled_hydrostatic_simulation(
     grid,

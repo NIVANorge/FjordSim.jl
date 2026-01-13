@@ -2,6 +2,8 @@ module NORA3
 
 export NORA3PrescribedAtmosphere
 
+using FjordSim.Utils: compute_faces
+
 using Oceananigans
 using Oceananigans.Units
 using Oceananigans.BoundaryConditions: fill_halo_regions!
@@ -10,6 +12,7 @@ using Oceananigans.Fields: interpolate!
 using Oceananigans.OutputReaders: Cyclical, TotallyInMemory, AbstractInMemoryBackend, FlavorOfFTS, time_indices
 using ClimaOcean
 using ClimaOcean.OceanSeaIceModels: PrescribedAtmosphere, TwoBandDownwellingRadiation
+using ClimaOcean.DataWrangling: compute_native_date_range, Metadata, metadata_path, native_times
 using Adapt
 using NCDatasets
 using JLD2
@@ -17,6 +20,18 @@ using Dates
 
 import Oceananigans.Fields: set!
 import Oceananigans.OutputReaders: new_backend, update_field_time_series!
+import ClimaOcean: all_dates
+
+NORA3_variable_names = (
+    :freshwater_flux,
+    :specific_humidity,
+    :sea_level_pressure,
+    :downwelling_longwave_radiation,
+    :downwelling_shortwave_radiation,
+    :temperature,
+    :eastward_velocity,
+    :northward_velocity,
+)
 
 struct MultiYearNORA3
     metadata_filename::String
@@ -28,19 +43,34 @@ end
 function MultiYearNORA3(metadata_filename::String, default_download_directory::String)
     filepath = joinpath(default_download_directory, metadata_filename)
     ds = NCDataset(filepath)
-    array_size = size(ds["x_wind_10m"])[1:2]
+    array_size = size(ds["air_temperature_2m"])[1:2]
     all_dates = ds["time"][:]
     close(ds)
 
     return MultiYearNORA3(metadata_filename, default_download_directory, array_size, all_dates)
 end  # function
 
-const NORA3Metadata{D} = Metadata{<:MultiYearNORA3,D}
+available_variables(::MultiYearNORA3) = NORA3_variable_names
 
-Base.size(metadata::NORA3Metadata) = metadata.dataset.size
+const NORA3Metadata{D} = Metadata{<:MultiYearNORA3,D}
+const NORA3Metadatum = Metadatum{<:MultiYearNORA3}
+Base.size(metadata::NORA3Metadata) = (metadata.dataset.size..., length(metadata.dates))
+Base.size(::NORA3Metadatum) = (metadata.dataset.size..., 1)
 
 is_three_dimensional(data::NORA3Metadata) = false
-location(::JRA55Metadata) = (Center, Center, Center)
+location(::NORA3Metadata) = (Center, Center, Center)
+dataset_variable_name(data::NORA3Metadata) = NORA3_dataset_variable_names[data.name]
+
+NORA3_dataset_variable_names = Dict(
+    :freshwater_flux => "precipitation",   # Freshwater fluxes
+    :specific_humidity => "specific_humidity_2m",     # Surface specific humidity
+    :sea_level_pressure => "air_pressure_at_sea_level",      # Sea level pressure
+    :downwelling_longwave_radiation => "lwrad",     # Downwelling longwave radiation
+    :downwelling_shortwave_radiation => "swrad",     # Downwelling shortwave radiation
+    :temperature => "air_temperature_2m",      # Near-surface air temperature
+    :eastward_velocity => "x_wind_10m",      # Eastward near-surface wind
+    :northward_velocity => "y_wind_10m",      # Northward near-surface wind
+)
 
 all_dates(ds::MultiYearNORA3, name) = ds.all_dates
 all_dates(ds::MultiYearNORA3) = ds.all_dates
@@ -67,185 +97,118 @@ const NORA3NetCDFFTS = FlavorOfFTS{<:Any,<:Any,<:Any,<:Any,<:NORA3NetCDFBackend}
 
 new_backend(b::NORA3NetCDFBackend, start, length) = NORA3NetCDFBackend(start, length, b.metadata)
 
+function NORA3_time_indices(ds::MultiYearNORA3, dates, name)
+    nora3_all_dates = all_dates(ds, name)
+    indices = Int[]
+
+    for date in dates
+        index = findfirst(x -> x == date, nora3_all_dates)
+        !isnothing(index) && push!(indices, index)
+    end
+
+    return indices
+end
+
 function NORA3FieldTimeSeries(variable_name::Symbol, architecture, FT; dataset, start_date, end_date, kw...)
 
     native_dates = all_dates(dataset, variable_name)
     dates = compute_native_date_range(native_dates, start_date, end_date)
-    metadata = Metadata(variable_name; dataset, dates, dataset.default_download_directory)
+    metadata = Metadata(variable_name; dataset, dates, dir = dataset.default_download_directory)
 
     return NORA3FieldTimeSeries(metadata, architecture, FT; kw...)
 end
 
+function set!(fts::NORA3NetCDFFTS, backend=fts.backend)
+
+    metadata = backend.metadata
+    filepath = joinpath(metadata.dataset.default_download_directory, metadata.dataset.metadata_filename)
+    ds = Dataset(filepath)
+
+    nn   = time_indices(fts)
+    nn   = collect(nn)
+    name = dataset_variable_name(fts.backend.metadata)
+
+    if issorted(nn)
+        data = ds[name][:, :, nn]
+    else
+        # The time indices may be cycling past 1; eg ti = [6, 7, 8, 1].
+        # However, DiskArrays does not seem to support loading data with unsorted
+        # indices. So to handle this, we load the data in chunks, where each chunk's
+        # indices are sorted, and then glue the data together.
+        m = findfirst(n -> n == 1, nn)
+        n1 = nn[1:m-1]
+        n2 = nn[m:end]
+
+        data1 = ds[name][:, :, n1]
+        data2 = ds[name][:, :, n2]
+        data = cat(data1, data2, dims=3)
+    end
+
+    close(ds)
+
+    copyto!(interior(fts, :, :, 1, :), data)
+    fill_halo_regions!(fts)
+
+    return nothing
+end
+
 function NORA3FieldTimeSeries(
-    metadata::NORA3Metadata, architecture, FT;
-    latitude = nothing,
-    longitude = nothing,
-    backend = InMemory(),
+    metadata::NORA3Metadata,
+    architecture,
+    FT;
+    backend = NORA3NetCDFBackend(10),
     time_indexing = Cyclical(),
 )
 
-    # Cannot use `TotallyInMemory` backend with MultiYearJRA55 dataset
-    if metadata.dataset isa MultiYearJRA55 && backend isa TotallyInMemory
-        msg = string("The `InMemory` backend is not supported for the MultiYearJRA55 dataset.")
-        throw(ArgumentError(msg))
-    end
-
-    # First thing: we download the dataset!
-    download_dataset(metadata)
-
-    # Regularize the backend in case of `JRA55NetCDFBackend`
-    if backend isa JRA55NetCDFBackend
-        if backend.metadata isa Nothing
-            backend = JRA55NetCDFBackend(backend.length, metadata)
-        end
-
-        if backend.length > length(metadata)
-            backend = JRA55NetCDFBackend(backend.start, length(metadata), metadata)
-        end
-    end
-
-    # Unpack metadata details
     dataset = metadata.dataset
     name = metadata.name
-    time_indices = JRA55_time_indices(dataset, metadata.dates, name)
 
     # Change the metadata to reflect the actual time indices
+    time_indices = NORA3_time_indices(dataset, metadata.dates, name)
     dates = all_dates(dataset, name)[time_indices]
     metadata = Metadata(metadata.name; dataset = metadata.dataset, dates, dir = metadata.dir)
 
+    if backend.metadata isa Nothing
+        backend = NORA3NetCDFBackend(backend.start, backend.length, metadata)
+    end
+
     shortname = dataset_variable_name(metadata)
-    variable_name = metadata.name
-
-    filepath = metadata_path(metadata) # Might be multiple paths!!!
-    filepath = filepath isa AbstractArray ? first(filepath) : filepath
-
-    # OnDisk backends do not support time interpolation!
-    # Disallow OnDisk for JRA55 dataset loading
-    if ((backend isa InMemory) && !isnothing(backend.length)) || backend isa OnDisk
-        msg = string(
-            "We cannot load the JRA55 dataset with a $(backend) backend. Use `InMemory()` or `JRA55NetCDFBackend(N)` instead.",
-        )
-        throw(ArgumentError(msg))
-    end
-
-    if !(variable_name ∈ JRA55_variable_names)
-        variable_strs = Tuple("  - :$name \n" for name in JRA55_variable_names)
-        variables_msg = prod(variable_strs)
-
-        msg = string(
-            "The variable :$variable_name is not provided by the JRA55-do dataset!",
-            '\n',
-            "The variables provided by the JRA55-do dataset are:",
-            '\n',
-            variables_msg,
-        )
-
-        throw(ArgumentError(msg))
-    end
-
-    # Record some important user decisions
-    totally_in_memory = backend isa TotallyInMemory
-
-    # Determine default time indices
-    if totally_in_memory
-        # In this case, the whole time series is in memory.
-        # Either the time series is short, or we are doing a limited-area
-        # simulation, like in a single column. So, we conservatively
-        # set a default `time_indices = 1:2`.
-        time_indices_in_memory = time_indices
-        native_fts_architecture = architecture
-    else
-        # In this case, part or all of the time series will be stored in a file.
-        # Note: if the user has provided a grid, we will have to preprocess the
-        # .nc JRA55 data into a .jld2 file. In this case, `time_indices` refers
-        # to the time_indices that we will preprocess;
-        # by default we choose all of them. The architecture is only the
-        # architecture used for preprocessing, which typically will be CPU()
-        # even if we would like the final FieldTimeSeries on the GPU.
-        time_indices_in_memory = 1:length(backend)
-        native_fts_architecture = architecture
-    end
+    filepath = joinpath(metadata.dataset.default_download_directory, metadata.dataset.metadata_filename)
 
     ds = Dataset(filepath)
-
-    # Note that each file should have the variables
-    #   - ds["time"]:     time coordinate
-    #   - ds["lon"]:      longitude at the location of the variable
-    #   - ds["lat"]:      latitude at the location of the variable
-    #   - ds["lon_bnds"]: bounding longitudes between which variables are averaged
-    #   - ds["lat_bnds"]: bounding latitudes between which variables are averaged
-    #   - ds[shortname]: the variable data
-
-    # Nodes at the variable location
-    λc = ds["lon"][:]
-    φc = ds["lat"][:]
-
-    # Interfaces for the "native" JRA55 grid
-    λn = Array(ds["lon_bnds"][1, :])
-    φn = Array(ds["lat_bnds"][1, :])
-
-    # The netCDF coordinates lon_bnds and lat_bnds do not include
-    # the last interfaces, so we push them here.
-    push!(φn, 90)
-    push!(λn, λn[1] + 360)
-
-    i₁, i₂, j₁, j₂, TX = compute_bounding_indices(longitude, latitude, nothing, Center, Center, λc, φc)
-
-    λr = λn[i₁:i₂+1]
-    φr = φn[j₁:j₂+1]
-    Nrx = length(λr) - 1
-    Nry = length(φr) - 1
+    latitude = compute_faces(ds["lat"][:])
+    longitude = compute_faces(ds["lon"][:])
     close(ds)
 
+    Nrx = length(longitude) - 1
+    Nry = length(latitude) - 1
     N = (Nrx, Nry)
     H = min.(N, (3, 3))
 
-    JRA55_native_grid = LatitudeLongitudeGrid(
-        native_fts_architecture,
+    grid = LatitudeLongitudeGrid(
+        architecture,
         FT;
         halo = H,
         size = N,
-        longitude = λr,
-        latitude = φr,
-        topology = (TX, Bounded, Flat),
+        longitude = longitude,
+        latitude = latitude,
+        topology = (Bounded, Bounded, Flat),
     )
-
-    boundary_conditions = FieldBoundaryConditions(JRA55_native_grid, (Center(), Center(), nothing))
-    start_time = first_date(metadata.dataset, metadata.name)
+    boundary_conditions = FieldBoundaryConditions(grid, (Center(), Center(), nothing))
+    start_time = first_date(metadata.dataset)
     times = native_times(metadata; start_time)
+    fts = FieldTimeSeries{Center,Center,Nothing}(
+        grid,
+        times;
+        backend,
+        time_indexing,
+        boundary_conditions,
+        path = filepath,
+        name = shortname,
+    )
+    set!(fts)
 
-    if backend isa JRA55NetCDFBackend
-        fts = FieldTimeSeries{Center,Center,Nothing}(
-            JRA55_native_grid,
-            times;
-            backend,
-            time_indexing,
-            boundary_conditions,
-            path = filepath,
-            name = shortname,
-        )
-
-        set!(fts)
-        return fts
-    else
-        fts = FieldTimeSeries{Center,Center,Nothing}(
-            JRA55_native_grid,
-            times;
-            time_indexing,
-            backend,
-            boundary_conditions,
-        )
-
-        # Fill the data in a GPU-friendly manner
-        ds = Dataset(filepath)
-        data = ds[shortname][i₁:i₂, j₁:j₂, time_indices_in_memory]
-        close(ds)
-
-        copyto!(interior(fts, :, :, 1, :), data)
-        fill_halo_regions!(fts)
-
-        return fts
-    end
+    return fts
 end
 
 function NORA3PrescribedAtmosphere(
@@ -268,12 +231,11 @@ function NORA3PrescribedAtmosphere(
     Ta = NORA3FieldTimeSeries(:temperature, architecture, FT; kw...)
     qa = NORA3FieldTimeSeries(:specific_humidity, architecture, FT; kw...)
     pa = NORA3FieldTimeSeries(:sea_level_pressure, architecture, FT; kw...)
-    Fra = NORA3FieldTimeSeries(:rain_freshwater_flux, architecture, FT; kw...)
-    Fsn = NORA3FieldTimeSeries(:snow_freshwater_flux, architecture, FT; kw...)
+    Fra = NORA3FieldTimeSeries(:freshwater_flux, architecture, FT; kw...)
     Ql = NORA3FieldTimeSeries(:downwelling_longwave_radiation, architecture, FT; kw...)
     Qs = NORA3FieldTimeSeries(:downwelling_shortwave_radiation, architecture, FT; kw...)
 
-    freshwater_flux = (rain = Fra, snow = Fsn)
+    freshwater_flux = (rain = Fra,)
 
     times = ua.times
     grid = ua.grid

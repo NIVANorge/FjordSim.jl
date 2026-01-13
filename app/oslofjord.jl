@@ -1,6 +1,6 @@
-using Dates
+using Dates: DateTime
 using Oceananigans
-using Oceananigans.Units
+using Oceananigans.Units  # : second, seconds, minute, minutes, hour, hours, day, days
 using ClimaOcean
 using SeawaterPolynomials.TEOS10
 using FjordSim
@@ -48,13 +48,14 @@ forcing = forcing_from_file(;
 tbbc = top_bottom_boundary_conditions(; grid = grid, bottom_drag_coefficient = 0.003)
 sobc = (v = (south = OpenBoundaryCondition(nothing),),)
 boundary_conditions = map(x -> FieldBoundaryConditions(; x...), recursive_merge(tbbc, sobc))
-atmosphere = JRA55PrescribedAtmosphere(
-    arch,
-    FT;
-    latitude = (58.98, 59.94),
-    longitude = (10.18, 11.03),
-    dir = joinpath(homedir(), "FjordSim_data", "JRA55"),
-)
+# atmosphere = JRA55PrescribedAtmosphere(
+#     arch,
+#     FT;
+#     latitude = (58.98, 59.94),
+#     longitude = (10.18, 11.03),
+#     dir = joinpath(homedir(), "FjordSim_data", "JRA55"),
+# )
+atmosphere = NORA3PrescribedAtmosphere()
 downwelling_radiation = Radiation(arch, FT; ocean_emissivity = 0.96, ocean_albedo = 0.1)
 sea_ice = FreezingLimitedOceanTemperature()
 biogeochemistry = nothing

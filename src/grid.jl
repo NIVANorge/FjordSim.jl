@@ -1,11 +1,5 @@
 import Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid
 
-function compute_faces(centers)
-    spacing = diff(centers)[1]  # Assuming uniform spacing
-    faces = vcat([centers[1] - spacing / 2], (centers[1:end-1] .+ centers[2:end]) / 2, [centers[end] + spacing / 2])
-    return faces
-end
-
 """
 Return a grid from bathymetry from a netcdf file.
 A netcdf file should have 4 variables:

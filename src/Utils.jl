@@ -1,8 +1,18 @@
+module Utils
+
+export compute_faces, progress, safe_execute, extract_z_faces, netcdf_to_jld2, save_fts, recursive_merge
+
 using Oceananigans.Fields: interior
 using Oceananigans.OutputReaders: FieldTimeSeries, OnDisk
 using Oceananigans.Utils: prettytime
 using JLD2: @save
 using Printf: @sprintf
+
+function compute_faces(centers)
+    spacing = diff(centers)[1]  # Assuming uniform spacing
+    faces = vcat([centers[1] - spacing / 2], (centers[1:end-1] .+ centers[2:end]) / 2, [centers[end] + spacing / 2])
+    return faces
+end
 
 wall_time = Ref(time_ns())
 
@@ -14,15 +24,18 @@ function progress(sim)
     Tmax = maximum(interior(T))
     Tmin = minimum(interior(T))
 
-    umax = (maximum(abs, interior(u)),
-            maximum(abs, interior(v)),
-            maximum(abs, interior(w)))
+    umax = (maximum(abs, interior(u)), maximum(abs, interior(v)), maximum(abs, interior(w)))
 
     step_time = 1e-9 * (time_ns() - wall_time[])
 
     msg = @sprintf("Iter: %d, time: %s, Δt: %s", iteration(sim), prettytime(sim), prettytime(sim.Δt))
-    msg *= @sprintf(", max|u|: (%.2e, %.2e, %.2e) m s⁻¹, extrema(T): (%.2f, %.2f) ᵒC, wall time: %s",
-                    umax..., Tmax, Tmin, prettytime(step_time))
+    msg *= @sprintf(
+        ", max|u|: (%.2e, %.2e, %.2e) m s⁻¹, extrema(T): (%.2f, %.2f) ᵒC, wall time: %s",
+        umax...,
+        Tmax,
+        Tmin,
+        prettytime(step_time)
+    )
 
     @info msg
 
@@ -87,7 +100,7 @@ function recursive_merge(nt1::NamedTuple, nt2::NamedTuple)
     all_keys = union(keys(nt1), keys(nt2))
 
     # Initialize an empty NamedTuple for the result
-    result_pairs = Pair{Symbol, Any}[]
+    result_pairs = Pair{Symbol,Any}[]
 
     for key in all_keys
         val1 = get(nt1, key, nothing)
@@ -106,3 +119,5 @@ function recursive_merge(nt1::NamedTuple, nt2::NamedTuple)
     end
     return (; result_pairs...)
 end
+
+end # module

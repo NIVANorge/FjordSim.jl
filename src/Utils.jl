@@ -2,6 +2,7 @@ module Utils
 
 export compute_faces, progress, safe_execute, extract_z_faces, netcdf_to_jld2, save_fts, recursive_merge
 
+using Oceananigans
 using Oceananigans.Fields: interior
 using Oceananigans.OutputReaders: FieldTimeSeries, OnDisk
 using Oceananigans.Utils: prettytime

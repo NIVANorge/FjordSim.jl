@@ -9,7 +9,7 @@ using Oceananigans.Units
 using Oceananigans.BoundaryConditions: fill_halo_regions!
 using Oceananigans.Grids: λnodes, φnodes, on_architecture
 using Oceananigans.Fields: interpolate!
-using Oceananigans.OutputReaders: Cyclical, TotallyInMemory, AbstractInMemoryBackend, FlavorOfFTS, time_indices
+using Oceananigans.OutputReaders: Cyclical, TotallyInMemory, AbstractInMemoryBackend, FlavorOfFTS, time_indices, FieldTimeSeries
 using ClimaOcean
 using ClimaOcean.OceanSeaIceModels: PrescribedAtmosphere, TwoBandDownwellingRadiation
 using ClimaOcean.DataWrangling: compute_native_date_range, Metadata, metadata_path, native_times
@@ -68,8 +68,8 @@ NORA3_dataset_variable_names = Dict(
     :downwelling_longwave_radiation => "lwrad",     # Downwelling longwave radiation
     :downwelling_shortwave_radiation => "swrad",     # Downwelling shortwave radiation
     :temperature => "air_temperature_2m",      # Near-surface air temperature
-    :eastward_velocity => "x_wind_10m",      # Eastward near-surface wind
-    :northward_velocity => "y_wind_10m",      # Northward near-surface wind
+    :eastward_velocity => "u_wind_10m",      # Eastward near-surface wind
+    :northward_velocity => "v_wind_10m",      # Northward near-surface wind
 )
 
 all_dates(ds::MultiYearNORA3, name) = ds.all_dates
@@ -235,10 +235,10 @@ function NORA3PrescribedAtmosphere(
     Ql = NORA3FieldTimeSeries(:downwelling_longwave_radiation, architecture, FT; kw...)
     Qs = NORA3FieldTimeSeries(:downwelling_shortwave_radiation, architecture, FT; kw...)
 
-    freshwater_flux = (rain = Fra,)
-
     times = ua.times
     grid = ua.grid
+
+    freshwater_flux = (rain = Fra, snow = FieldTimeSeries{Center, Center, Nothing}(grid, times))
 
     velocities = (u = ua, v = va)
 

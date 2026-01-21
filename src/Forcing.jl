@@ -1,9 +1,18 @@
-using Oceananigans.OutputReaders: Cyclical, AbstractInMemoryBackend, FlavorOfFTS, time_indices
-using Dates: Second
-using Oceananigans.Operators: Ax, Ay, Az, volume
+module Forcing
 
+using Oceananigans
+using Oceananigans.OutputReaders: Cyclical, AbstractInMemoryBackend, FlavorOfFTS, time_indices
+using Oceananigans.Operators: Ax, Ay, Az, volume
+using Oceananigans: fill_halo_regions!, nodes, interior, Time
+using Dates: Second
+using Adapt
+using NCDatasets
+
+import Oceananigans: on_architecture
 import Oceananigans.Fields: set!
 import Oceananigans.OutputReaders: new_backend
+
+export forcing_from_file
 
 """ Custom backend for FieldTimeSeries """
 struct NetCDFBackend <: AbstractInMemoryBackend{Int}
@@ -133,7 +142,7 @@ end
 
 regularize_forcing(forcing::ForcingFromFile, field, field_name, model_field_names) = forcing
 
-function native_times_to_seconds(native_times, start_time=native_times[1])
+function native_times_to_seconds(native_times, start_time = native_times[1])
     times = []
     for native_time in native_times
         time = native_time - start_time
@@ -161,9 +170,9 @@ function load_from_netcdf(; path::String, var_name::String, grid_size::Tuple, ti
 end
 
 """ Update data in the FieldTimeSeries, e.g. in ForcingFromFile forcing structures. """
-function set!(fts::NetCDFFTS, path::String=fts.path, name::String=fts.name)
+function set!(fts::NetCDFFTS, path::String = fts.path, name::String = fts.name)
     ti = time_indices(fts)
-    data, _ = load_from_netcdf(; path, var_name=name, grid_size=size(fts)[1:end-1], time_indices_in_memory=ti)
+    data, _ = load_from_netcdf(; path, var_name = name, grid_size = size(fts)[1:end-1], time_indices_in_memory = ti)
 
     copyto!(interior(fts, :, :, :, :), data)
     fill_halo_regions!(fts)
@@ -182,18 +191,11 @@ function forcing_get_tuple(filepath, var_name, grid, time_indices_in_memory, bac
     grid_size_tupled = size.(nodes(grid, (LX(), LY(), LZ())))
     grid_size = Tuple(x[1] for x in grid_size_tupled)
 
-    data, times = load_from_netcdf(; path=filepath, var_name, grid_size, time_indices_in_memory)
+    data, times = load_from_netcdf(; path = filepath, var_name, grid_size, time_indices_in_memory)
     dataλ, timesλ =
-        load_from_netcdf(; path=filepath, var_name=var_name * "_lambda", grid_size, time_indices_in_memory)
+        load_from_netcdf(; path = filepath, var_name = var_name * "_lambda", grid_size, time_indices_in_memory)
 
-    fts = FieldTimeSeries{LX,LY,LZ}(
-        grid,
-        times;
-        backend,
-        time_indexing=Cyclical(),
-        path=filepath,
-        name=var_name,
-    )
+    fts = FieldTimeSeries{LX,LY,LZ}(grid, times; backend, time_indexing = Cyclical(), path = filepath, name = var_name)
     copyto!(interior(fts, :, :, :, :), data)
     fill_halo_regions!(fts)
 
@@ -201,9 +203,9 @@ function forcing_get_tuple(filepath, var_name, grid, time_indices_in_memory, bac
         grid,
         timesλ;
         backend,
-        time_indexing=Cyclical(),
-        path=filepath,
-        name=var_name * "_lambda",
+        time_indexing = Cyclical(),
+        path = filepath,
+        name = var_name * "_lambda",
     )
     copyto!(interior(ftsλ, :, :, :, :), dataλ)
     fill_halo_regions!(ftsλ)
@@ -235,3 +237,5 @@ function forcing_from_file(; grid, filepath, tracers)
 
     return result
 end
+
+end # module

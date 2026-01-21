@@ -53,13 +53,14 @@ end
 include("FDatasets.jl")
 include("Utils.jl")
 include("NORA3.jl")
+include("Forcing.jl")
 
 using .FDatasets
 using .Utils
 using .NORA3
+using .Forcing
 
 include("boundary_conditions.jl")
-include("forcing.jl")
 include("grid.jl")
 include("turbulence.jl")
 

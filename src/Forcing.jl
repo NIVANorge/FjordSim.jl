@@ -1,9 +1,10 @@
 module Forcing
 
 using Oceananigans
+using Oceananigans.Units: Time
 using Oceananigans.OutputReaders: Cyclical, AbstractInMemoryBackend, FlavorOfFTS, time_indices
 using Oceananigans.Operators: Ax, Ay, Az, volume
-using Oceananigans: fill_halo_regions!, nodes, interior, Time
+using Oceananigans: fill_halo_regions!, nodes, interior
 using Dates: Second
 using Adapt
 using NCDatasets
@@ -29,60 +30,30 @@ Base.summary(backend::NetCDFBackend) = string("NetCDFBackend(", backend.start, "
 const NetCDFFTS = FlavorOfFTS{<:Any,<:Any,<:Any,<:Any,<:NetCDFBackend}
 
 # Variable names for restoreable data (to be used in CUDA kernels)
-struct Temperature end
-struct Salinity end
-struct UVelocity end
-struct VVelocity end
-struct Contaminant end
-struct OXYDEP_NUT end
-struct OXYDEP_PHY end
-struct OXYDEP_HET end
-struct OXYDEP_O₂ end
-struct OXYDEP_DOM end
+struct T end
+struct S end
+struct u end
+struct v end
 
-const oceananigans_fieldname = Dict(
-    :T => Temperature(),
-    :S => Salinity(),
-    :u => UVelocity(),
-    :v => VVelocity(),
-    :C => Contaminant(),
-    :NUT => OXYDEP_NUT(),
-    :P => OXYDEP_PHY(),
-    :HET => OXYDEP_HET(),
-    :O₂ => OXYDEP_O₂(),
-    :DOM => OXYDEP_DOM(),
+const OCEANANIGANS_FIELDNAME = Dict(
+    :T => T(),
+    :S => S(),
+    :u => u(),
+    :v => v(),
 )
 
 const DATA_LOCATION = Dict(
-    Temperature() => (Center, Center, Center),
-    Salinity() => (Center, Center, Center),
-    UVelocity() => (Face, Center, Center),
-    VVelocity() => (Center, Face, Center),
-    Contaminant() => (Center, Center, Center),
-    OXYDEP_NUT() => (Center, Center, Center),
-    OXYDEP_PHY() => (Center, Center, Center),
-    OXYDEP_HET() => (Center, Center, Center),
-    OXYDEP_O₂() => (Center, Center, Center),
-    OXYDEP_DOM() => (Center, Center, Center),
+    T() => (Center, Center, Center),
+    S() => (Center, Center, Center),
+    u() => (Face, Center, Center),
+    v() => (Center, Face, Center),
 )
 
 # fields[:VARIABLE] doesn't work in CUDA kernels
-@inline Base.getindex(fields, i, j, k, ::Temperature) = @inbounds fields.T[i, j, k]
-@inline Base.getindex(fields, i, j, k, ::Salinity) = @inbounds fields.S[i, j, k]
-@inline Base.getindex(fields, i, j, k, ::UVelocity) = @inbounds fields.u[i, j, k]
-@inline Base.getindex(fields, i, j, k, ::VVelocity) = @inbounds fields.v[i, j, k]
-@inline Base.getindex(fields, i, j, k, ::Contaminant) = @inbounds fields.C[i, j, k]
-@inline Base.getindex(fields, i, j, k, ::OXYDEP_NUT) = @inbounds fields.NUT[i, j, k]
-@inline Base.getindex(fields, i, j, k, ::OXYDEP_PHY) = @inbounds fields.P[i, j, k]
-@inline Base.getindex(fields, i, j, k, ::OXYDEP_HET) = @inbounds fields.HET[i, j, k]
-@inline Base.getindex(fields, i, j, k, ::OXYDEP_O₂) = @inbounds fields.O₂[i, j, k]
-@inline Base.getindex(fields, i, j, k, ::OXYDEP_DOM) = @inbounds fields.DOM[i, j, k]
-
-Base.summary(::Temperature) = "temperature"
-Base.summary(::Salinity) = "salinity"
-Base.summary(::Contaminant) = "contaminant"
-Base.summary(::UVelocity) = "u_velocity"
-Base.summary(::VVelocity) = "v_velocity"
+@inline Base.getindex(fields, i, j, k, ::T) = @inbounds fields.T[i, j, k]
+@inline Base.getindex(fields, i, j, k, ::S) = @inbounds fields.S[i, j, k]
+@inline Base.getindex(fields, i, j, k, ::u) = @inbounds fields.u[i, j, k]
+@inline Base.getindex(fields, i, j, k, ::v) = @inbounds fields.v[i, j, k]
 
 """ A custom forcing callable structure """
 struct ForcingFromFile{FTS,V}
@@ -186,7 +157,7 @@ with forcing values and forcing 'lambdas'.
 By default both FieldTimeSeries keep only 2 times indices in memory.
 """
 function forcing_get_tuple(filepath, var_name, grid, time_indices_in_memory, backend)
-    field_name = oceananigans_fieldname[Symbol(var_name)]
+    field_name = OCEANANIGANS_FIELDNAME[Symbol(var_name)]
     LX, LY, LZ = DATA_LOCATION[field_name]
     grid_size_tupled = size.(nodes(grid, (LX(), LY(), LZ())))
     grid_size = Tuple(x[1] for x in grid_size_tupled)

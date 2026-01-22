@@ -29,31 +29,28 @@ Base.summary(backend::NetCDFBackend) = string("NetCDFBackend(", backend.start, "
 
 const NetCDFFTS = FlavorOfFTS{<:Any,<:Any,<:Any,<:Any,<:NetCDFBackend}
 
-# Variable names for restoreable data (to be used in CUDA kernels)
-struct T end
-struct S end
-struct u end
-struct v end
+function get_data_location(var::Symbol)
+    if var in (:u,)
+        return (Face, Center, Center)
+    elseif var in (:v,)
+        return (Center, Face, Center)
+    else
+        return (Center, Center, Center)
+    end
+end
 
-const OCEANANIGANS_FIELDNAME = Dict(
-    :T => T(),
-    :S => S(),
-    :u => u(),
-    :v => v(),
-)
+# Runtime generation of dictionaries based on forcing_variables_names
+function get_oceananigans_fieldname(vars)
+    Dict(Symbol(var) => Val{Symbol(var)}() for var in vars)
+end
 
-const DATA_LOCATION = Dict(
-    T() => (Center, Center, Center),
-    S() => (Center, Center, Center),
-    u() => (Face, Center, Center),
-    v() => (Center, Face, Center),
-)
+function get_data_location_dict(vars)
+    Dict(Val{Symbol(var)}() => get_data_location(Symbol(var)) for var in vars)
+end
 
+# Generic Base.getindex for any variable using Val types
 # fields[:VARIABLE] doesn't work in CUDA kernels
-@inline Base.getindex(fields, i, j, k, ::T) = @inbounds fields.T[i, j, k]
-@inline Base.getindex(fields, i, j, k, ::S) = @inbounds fields.S[i, j, k]
-@inline Base.getindex(fields, i, j, k, ::u) = @inbounds fields.u[i, j, k]
-@inline Base.getindex(fields, i, j, k, ::v) = @inbounds fields.v[i, j, k]
+@inline Base.getindex(fields, i, j, k, ::Val{name}) where {name} = @inbounds getfield(fields, name)[i, j, k]
 
 """ A custom forcing callable structure """
 struct ForcingFromFile{FTS,V}
@@ -156,9 +153,17 @@ Return a custom ForcingFromFile forcing, which is a structure keeping 2 FieldTim
 with forcing values and forcing 'lambdas'.
 By default both FieldTimeSeries keep only 2 times indices in memory.
 """
-function forcing_get_tuple(filepath, var_name, grid, time_indices_in_memory, backend)
-    field_name = OCEANANIGANS_FIELDNAME[Symbol(var_name)]
-    LX, LY, LZ = DATA_LOCATION[field_name]
+function forcing_get_tuple(
+    filepath,
+    var_name,
+    grid,
+    time_indices_in_memory,
+    backend,
+    oceananigans_fieldname,
+    data_location,
+)
+    field_name = oceananigans_fieldname[Symbol(var_name)]
+    LX, LY, LZ = data_location[field_name]
     grid_size_tupled = size.(nodes(grid, (LX(), LY(), LZ())))
     grid_size = Tuple(x[1] for x in grid_size_tupled)
 
@@ -198,10 +203,21 @@ function forcing_from_file(; grid, filepath, tracers)
     forcing_variables_names = (map(String, tracers) ∪ ("u", "v")) ∩ keys(ds)
     close(ds)
 
+    oceananigans_fieldname = get_oceananigans_fieldname(forcing_variables_names)
+    data_location = get_data_location_dict(forcing_variables_names)
+
     backend = NetCDFBackend(2)
     time_indices_in_memory = (1, length(backend))
     result = mapreduce(
-        var_name -> forcing_get_tuple(filepath, var_name, grid, time_indices_in_memory, backend),
+        var_name -> forcing_get_tuple(
+            filepath,
+            var_name,
+            grid,
+            time_indices_in_memory,
+            backend,
+            oceananigans_fieldname,
+            data_location,
+        ),
         merge,
         forcing_variables_names,
     )

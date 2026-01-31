@@ -22,7 +22,8 @@ import ClimaOcean.DataWrangling:
     z_interfaces,
     reversed_vertical_axis,
     inpainted_metadata_path,
-    retrieve_data
+    retrieve_data,
+    default_inpainting
 
 struct DSForcing
     metadata_filename::String
@@ -205,6 +206,11 @@ function retrieve_data(metadata::Union{Metadatum{V} where V<:DSResults, Metadatu
     data = ds[name][:, :, :, i]
     close(ds)
     return data
+end
+
+function default_inpainting(metadata::Union{MetadatumResults})
+    # no inpainting
+    return nothing
 end
 
 end  # module

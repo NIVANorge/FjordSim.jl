@@ -1,6 +1,6 @@
 using Dates: DateTime
 using Oceananigans
-using Oceananigans.Units  # : second, seconds, minute, minutes, hour, hours, day, days
+using Oceananigans.Units
 using ClimaOcean
 using SeawaterPolynomials.TEOS10
 using FjordSim
@@ -20,7 +20,7 @@ tracer_advection = (T = WENO(), S = WENO(), e = nothing, ϵ = nothing)
 momentum_advection = WENOVectorInvariant(FT)
 tracers = (:T, :S, :e, :ϵ)
 # dataset = DSResults(
-#     "snapshots_ocean.nc",
+#     "snapshots_ocean_1.nc",
 #     joinpath(homedir(), "FjordSim_results", "oslofjord");
 #     start_date_time = DateTime(2025, 1, 1),
 # )

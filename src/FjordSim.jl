@@ -27,7 +27,7 @@ using Adapt
 import Oceananigans.Advection: cell_advection_timescale
 import ClimaOcean.DataWrangling.JRA55: compute_bounding_indices
 
-## some ClimaOcean "fixes"
+# some ClimaOcean "fixes"
 # to allow time step adjusting in OceanSeaIceModel
 cell_advection_timescale(model::OceanSeaIceModel) = cell_advection_timescale(model.ocean.model)
 
@@ -48,7 +48,6 @@ function compute_bounding_indices(longitude::Nothing, latitude::Nothing, grid, L
 
     return i₁, i₂, j₁, j₂, TX
 end
-##
 
 include("FDatasets.jl")
 include("Utils.jl")
@@ -62,7 +61,6 @@ using .Forcing
 
 include("boundary_conditions.jl")
 include("grid.jl")
-include("turbulence.jl")
 
 function coupled_hydrostatic_simulation(
     grid,

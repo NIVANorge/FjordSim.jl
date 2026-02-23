@@ -13,32 +13,32 @@ grid =
     ImmersedBoundaryGrid(joinpath(homedir(), "FjordSim_data", "oslofjord", "bathymetry_105to232.nc"), arch, (7, 7, 7))
 buoyancy = SeawaterBuoyancy(FT, equation_of_state = TEOS10EquationOfState(FT))
 closure = (
-    TKEDissipationVerticalDiffusivity(minimum_tke = 7e-6),
+    CATKEVerticalDiffusivity(minimum_tke = 7e-6),
     Oceananigans.TurbulenceClosures.HorizontalScalarBiharmonicDiffusivity(ν = 15, κ = 10),
 )
 tracer_advection = (T = WENO(), S = WENO(), e = nothing, ϵ = nothing)
 momentum_advection = WENOVectorInvariant(FT)
 tracers = (:T, :S, :e, :ϵ)
-# dataset = DSResults(
-#     "snapshots_ocean_1.nc",
-#     joinpath(homedir(), "FjordSim_results", "oslofjord");
-#     start_date_time = DateTime(2025, 1, 1),
-# )
-# initial_conditions = (
-#     T = Metadatum(:temperature; dataset, date = last_date(dataset, :temperature)),
-#     S = Metadatum(:salinity; dataset, date = last_date(dataset, :salinity)),
-#     u = Metadatum(
-#         :u_velocity;
-#         dataset,
-#         date = last_date(dataset, :u_velocity),
-#     ),
-#     v = Metadatum(
-#         :v_velocity;
-#         dataset,
-#         date = last_date(dataset, :v_velocity),
-#     ),
-# )
-initial_conditions = (T = 5.0, S = 33.0)
+dataset = DSResults(
+    "snapshots_ocean_2.nc",
+    joinpath(homedir(), "FjordSim_results", "oslofjord");
+    start_date_time = DateTime(2025, 1, 1),
+)
+initial_conditions = (
+    T = Metadatum(:temperature; dataset, date = last_date(dataset, :temperature)),
+    S = Metadatum(:salinity; dataset, date = last_date(dataset, :salinity)),
+    u = Metadatum(
+        :u_velocity;
+        dataset,
+        date = last_date(dataset, :u_velocity),
+    ),
+    v = Metadatum(
+        :v_velocity;
+        dataset,
+        date = last_date(dataset, :v_velocity),
+    ),
+)
+# initial_conditions = (T = 5.0, S = 33.0)
 free_surface = SplitExplicitFreeSurface(grid, cfl = 0.7)
 coriolis = HydrostaticSphericalCoriolis(FT)
 forcing = forcing_from_file(;

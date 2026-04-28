@@ -20,7 +20,7 @@ Thermodynamics = "b60c26fb-14c3-4610-9d3e-2d17fe7ff00c"
 
 [compat]
 Adapt = "4"
-ClimaOcean = "0.8"
+ClimaOcean = "0.8, 0.9"
 Dates = "1.10"
 JLD2 = "0.6.2"
 NCDatasets = "0.14.9"
@@ -29,8 +29,8 @@ Oceananigans = "0.102, 0.103"
 Printf = "1.10"
 SeawaterPolynomials = "0.3"
 Statistics = "1.10"
-julia = "1.10"
 Thermodynamics = "0.14"
+julia = "1.10"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"

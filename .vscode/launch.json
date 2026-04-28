@@ -15,7 +15,7 @@
             "type": "julia",
             "request": "launch",
             "name": "Oslofjord",
-            "program": "${workspaceFolder}/app/oslofjord.jl",
+            "program": "${workspaceFolder}/examples/oslofjord.jl",
             "stopOnEntry": false,
             "juliaAdditionalArgs": [
                 "-O0"

@@ -19,27 +19,27 @@ using Oceananigans
 using Oceananigans.BoundaryConditions
 using Oceananigans.Units
 using Oceananigans.Utils
-using ClimaOcean
-using ClimaOcean.DataWrangling.JRA55: compute_bounding_nodes, infer_longitudinal_topology
+using NumericalEarth
+using NumericalEarth.DataWrangling.JRA55: compute_bounding_nodes, infer_longitudinal_topology
 using NCDatasets
 using Adapt
 
 import Oceananigans.Advection: cell_advection_timescale
 import Oceananigans: initialize!
-import ClimaOcean.DataWrangling.JRA55: compute_bounding_indices
+import NumericalEarth.DataWrangling.JRA55: compute_bounding_indices
 
-# some ClimaOcean "fixes"
+# some NumericalEarth fixes
 # to allow time step adjusting in OceanSeaIceModel
 # cell_advection_timescale(model::OceanSeaIceModel) = cell_advection_timescale(model.ocean.model)
 
-# Fix ClimaOcean StateExchanger initialize! compatibility (v0.9 API change)
-# ClimaOcean internals call initialize!(exchanger) but the method signature requires initialize!(exchanger, model)
-# function initialize!(exchanger::ClimaOcean.OceanSeaIceModels.InterfaceComputations.StateExchanger)
+# Fix NumericalEarth StateExchanger initialize! compatibility
+# NumericalEarth internals call initialize!(exchanger) but the method signature requires initialize!(exchanger, model)
+# function initialize!(exchanger::NumericalEarth.OceanSeaIceModels.InterfaceComputations.StateExchanger)
 #     # Fallback that does nothing; the actual initialization happens elsewhere
 #     return nothing
 # end
 
-# Fix ClimaOcean for the custom longitude and latitude
+# Fix NumericalEarth for the custom longitude and latitude
 # this is called from set! and uses grid to find the locations,
 # which are 1 index more than necessary
 function compute_bounding_indices(longitude::Nothing, latitude::Nothing, grid, LX, LY, λc, φc)

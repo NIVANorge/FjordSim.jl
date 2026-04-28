@@ -1,7 +1,7 @@
 using Dates: DateTime
 using Oceananigans
 using Oceananigans.Units
-using ClimaOcean
+using NumericalEarth
 using SeawaterPolynomials.TEOS10
 using FjordSim
 using FjordSim.FDatasets

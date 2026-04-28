@@ -6,10 +6,10 @@ using Dates
 
 using NCDatasets
 using Oceananigans
-using ClimaOcean.DataWrangling: Metadatum, metadata_path
+using NumericalEarth.DataWrangling: Metadatum, metadata_path
 
 import Oceananigans: location
-import ClimaOcean.DataWrangling:
+import NumericalEarth.DataWrangling:
     metadata_filename,
     default_download_directory,
     all_dates,

@@ -1,5 +1,5 @@
 using Oceananigans.BoundaryConditions: FluxBoundaryCondition
-using ClimaOcean.Oceans: u_quadratic_bottom_drag, v_quadratic_bottom_drag
+using NumericalEarth.Oceans: u_quadratic_bottom_drag, v_quadratic_bottom_drag
 
 """ Return a named tuple with boundary conditions """
 function top_bottom_boundary_conditions(; grid, bottom_drag_coefficient)

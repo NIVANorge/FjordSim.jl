@@ -10,10 +10,10 @@ using Oceananigans.BoundaryConditions: fill_halo_regions!
 using Oceananigans.Grids: λnodes, φnodes, on_architecture
 using Oceananigans.Fields: interpolate!
 using Oceananigans.OutputReaders: Cyclical, TotallyInMemory, AbstractInMemoryBackend, FlavorOfFTS, time_indices, FieldTimeSeries
-using ClimaOcean
-using ClimaOcean: PrescribedAtmosphere
-using ClimaOcean.Atmospheres: TwoBandDownwellingRadiation
-using ClimaOcean.DataWrangling: compute_native_date_range, Metadata, metadata_path, native_times
+using NumericalEarth
+using NumericalEarth: PrescribedAtmosphere
+using NumericalEarth.Atmospheres: TwoBandDownwellingRadiation
+using NumericalEarth.DataWrangling: compute_native_date_range, Metadata, metadata_path, native_times
 using Adapt
 using NCDatasets
 using JLD2
@@ -21,7 +21,7 @@ using Dates
 
 import Oceananigans.Fields: set!
 import Oceananigans.OutputReaders: new_backend, update_field_time_series!
-import ClimaOcean: all_dates
+import NumericalEarth: all_dates
 
 NORA3_variable_names = (
     :freshwater_flux,

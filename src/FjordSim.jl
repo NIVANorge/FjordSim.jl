@@ -25,11 +25,19 @@ using NCDatasets
 using Adapt
 
 import Oceananigans.Advection: cell_advection_timescale
+import Oceananigans: initialize!
 import ClimaOcean.DataWrangling.JRA55: compute_bounding_indices
 
 # some ClimaOcean "fixes"
 # to allow time step adjusting in OceanSeaIceModel
-cell_advection_timescale(model::OceanSeaIceModel) = cell_advection_timescale(model.ocean.model)
+# cell_advection_timescale(model::OceanSeaIceModel) = cell_advection_timescale(model.ocean.model)
+
+# Fix ClimaOcean StateExchanger initialize! compatibility (v0.9 API change)
+# ClimaOcean internals call initialize!(exchanger) but the method signature requires initialize!(exchanger, model)
+# function initialize!(exchanger::ClimaOcean.OceanSeaIceModels.InterfaceComputations.StateExchanger)
+#     # Fallback that does nothing; the actual initialization happens elsewhere
+#     return nothing
+# end
 
 # Fix ClimaOcean for the custom longitude and latitude
 # this is called from set! and uses grid to find the locations,
@@ -84,8 +92,7 @@ function coupled_hydrostatic_simulation(
     isdir(results_dir) || mkpath(results_dir)
 
     println("Start compiling HydrostaticFreeSurfaceModel")
-    ocean_model = HydrostaticFreeSurfaceModel(;
-        grid,
+    ocean_model = HydrostaticFreeSurfaceModel(grid;
         buoyancy,
         closure,
         tracer_advection,

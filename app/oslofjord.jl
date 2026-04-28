@@ -16,9 +16,9 @@ closure = (
     CATKEVerticalDiffusivity(minimum_tke = 7e-6),
     Oceananigans.TurbulenceClosures.HorizontalScalarBiharmonicDiffusivity(ν = 15, κ = 10),
 )
-tracer_advection = (T = WENO(), S = WENO(), e = nothing, ϵ = nothing)
+tracer_advection = (T = WENO(), S = WENO())
 momentum_advection = WENOVectorInvariant(FT)
-tracers = (:T, :S, :e, :ϵ)
+tracers = (:T, :S)
 dataset = DSResults(
     "snapshots_ocean_2.nc",
     joinpath(homedir(), "FjordSim_results", "oslofjord");

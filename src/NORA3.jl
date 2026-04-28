@@ -11,7 +11,8 @@ using Oceananigans.Grids: λnodes, φnodes, on_architecture
 using Oceananigans.Fields: interpolate!
 using Oceananigans.OutputReaders: Cyclical, TotallyInMemory, AbstractInMemoryBackend, FlavorOfFTS, time_indices, FieldTimeSeries
 using ClimaOcean
-using ClimaOcean.OceanSeaIceModels: PrescribedAtmosphere, TwoBandDownwellingRadiation
+using ClimaOcean: PrescribedAtmosphere
+using ClimaOcean.Atmospheres: TwoBandDownwellingRadiation
 using ClimaOcean.DataWrangling: compute_native_date_range, Metadata, metadata_path, native_times
 using Adapt
 using NCDatasets

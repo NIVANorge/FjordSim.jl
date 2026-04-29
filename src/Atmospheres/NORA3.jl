@@ -1,8 +1,8 @@
 module NORA3
 
-export NORA3PrescribedAtmosphere
+export NORA3PrescribedAtmosphere, MultiYearNORA3
 
-using FjordSim.Utils: compute_faces
+using ...Utils: compute_faces
 
 using Oceananigans
 using Oceananigans.Units

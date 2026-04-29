@@ -1,5 +1,7 @@
 module Grid
 
+export ImmersedBoundaryGrid
+
 using Oceananigans
 using NCDatasets
 

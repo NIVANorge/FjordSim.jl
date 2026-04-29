@@ -1,4 +1,4 @@
-module FjordSim 
+module FjordSim
 
 export
     # oceananigans methods
@@ -10,7 +10,9 @@ export
     # simulations
     coupled_hydrostatic_simulation,
     # utils
-    recursive_merge, progress, cell_advection_timescale_coupled_model,
+    recursive_merge,
+    progress,
+    cell_advection_timescale_coupled_model,
     # atmosphere
     NORA3PrescribedAtmosphere,
     MultiYearNORA3
@@ -47,18 +49,17 @@ end
 
 include("FDatasets.jl")
 include("Utils.jl")
-include("NORA3.jl")
+include("Atmospheres/Atmospheres.jl")
 include("Forcing.jl")
+include("BoundaryConditions.jl")
+include("Grid.jl")
 
 using .FDatasets
 using .Utils
-using .NORA3
+using .Atmospheres
 using .Forcing
-
-include("boundary_conditions.jl")
-include("Grid.jl")
-
-using .Grid: ImmersedBoundaryGrid
+using .BoundaryConditions
+using .Grid
 
 function coupled_hydrostatic_simulation(
     grid,
@@ -76,13 +77,14 @@ function coupled_hydrostatic_simulation(
     downwelling_radiation,
     sea_ice,
     biogeochemistry;
-    results_dir=joinpath(homedir(), "FjordSim_results"),
-    stop_time=365days,
+    results_dir = joinpath(homedir(), "FjordSim_results"),
+    stop_time = 365days,
 )
     isdir(results_dir) || mkpath(results_dir)
 
     println("Start compiling HydrostaticFreeSurfaceModel")
-    ocean_model = HydrostaticFreeSurfaceModel(grid;
+    ocean_model = HydrostaticFreeSurfaceModel(
+        grid;
         buoyancy,
         closure,
         tracer_advection,
@@ -98,8 +100,8 @@ function coupled_hydrostatic_simulation(
     set!(ocean_model; initial_conditions...)
     Δt = 1second
     ocean_sim = Simulation(ocean_model; Δt, stop_time)
-    interfaces = ComponentInterfaces(atmosphere, ocean_sim, sea_ice; radiation=downwelling_radiation)
-    coupled_model = OceanSeaIceModel(ocean_sim, sea_ice; atmosphere, radiation=downwelling_radiation, interfaces)
+    interfaces = ComponentInterfaces(atmosphere, ocean_sim, sea_ice; radiation = downwelling_radiation)
+    coupled_model = OceanSeaIceModel(ocean_sim, sea_ice; atmosphere, radiation = downwelling_radiation, interfaces)
     println("Initialized coupled model")
     coupled_simulation = Simulation(coupled_model; Δt, stop_time)
     return coupled_simulation

@@ -1,3 +1,8 @@
+module BoundaryConditions
+
+export top_bottom_boundary_conditions
+
+using Oceananigans
 using Oceananigans.BoundaryConditions: FluxBoundaryCondition
 using NumericalEarth.Oceans: u_quadratic_bottom_drag, v_quadratic_bottom_drag
 
@@ -20,3 +25,5 @@ function top_bottom_boundary_conditions(; grid, bottom_drag_coefficient)
         S = (top = FluxBoundaryCondition(Jˢ),),
     )
 end
+
+end  # module BoundaryConditions

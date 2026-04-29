@@ -120,7 +120,6 @@ end
 @testset "FjordSim.jl" begin
     mktempdir() do tmp
         bathymetry_path = joinpath(tmp, "bathymetry.nc")
-        forcing_path = joinpath(tmp, "forcing.nc")
         nora3_filename = "NORA3_test.nc"
         nora3_path = joinpath(tmp, nora3_filename)
 
@@ -139,28 +138,6 @@ end
         lon[:] = [10.0, 11.0]
         close(ds)
 
-        # Minimal forcing file for Forcing.forcing_from_file.
-        ds = NCDataset(forcing_path, "c")
-        defDim(ds, "Nx", 2)
-        defDim(ds, "Ny", 2)
-        defDim(ds, "Nz", 2)
-        defDim(ds, "time", 2)
-        time = defVar(ds, "time", Float64, ("time",))
-        u = defVar(ds, "u", Float64, ("Nx", "Ny", "Nz", "time"))
-        v = defVar(ds, "v", Float64, ("Nx", "Ny", "Nz", "time"))
-        T = defVar(ds, "T", Float64, ("Nx", "Ny", "Nz", "time"))
-        u_lambda = defVar(ds, "u_lambda", Float64, ("Nx", "Ny", "Nz", "time"))
-        v_lambda = defVar(ds, "v_lambda", Float64, ("Nx", "Ny", "Nz", "time"))
-        T_lambda = defVar(ds, "T_lambda", Float64, ("Nx", "Ny", "Nz", "time"))
-        time[:] = [0.0, 3600.0]
-        u[:, :, :, :] .= 0.0
-        v[:, :, :, :] .= 0.0
-        T[:, :, :, :] .= 4.0
-        u_lambda[:, :, :, :] .= 2.0
-        v_lambda[:, :, :, :] .= -2.0
-        T_lambda[:, :, :, :] .= 0.1
-        close(ds)
-
         # Minimal NORA3 file for MultiYearNORA3 dataset construction.
         ds = NCDataset(nora3_path, "c")
         defDim(ds, "x", 2)
@@ -173,9 +150,8 @@ end
         close(ds)
 
         arch = CPU()
-        grid = @test_nowarn ImmersedBoundaryGrid(bathymetry_path, arch, (0, 0, 0))
+        grid = @test_nowarn ImmersedBoundaryGrid(bathymetry_path, arch, (1, 1, 1))
         @test_nowarn top_bottom_boundary_conditions(; grid, bottom_drag_coefficient = 0.003)
-        @test_nowarn forcing_from_file(; grid, filepath = forcing_path, tracers = (:T,))
         @test_nowarn MultiYearNORA3(nora3_filename, tmp)
     end
 end

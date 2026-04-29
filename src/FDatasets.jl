@@ -147,6 +147,8 @@ Variable_location = Dict(
 const MetadatumForcing = Metadatum{<:DSForcing,<:Any,<:Any}
 const MetadatumResults = Metadatum{<:DSResults,<:Any,<:Any}
 
+# Metadatum constructors query metadata_filename(dataset, ...) with extra context arguments.
+metadata_filename(ds::Union{DSResults, DSForcing}, args...) = ds.metadata_filename
 metadata_filename(metadata::Union{MetadatumForcing, MetadatumResults}) = metadata.dataset.metadata_filename
 default_download_directory(ds::Union{DSResults, DSForcing}) = ds.default_download_directory
 reversed_vertical_axis(ds::Union{DSResults, DSForcing}) = ds.reversed_vertical_axis

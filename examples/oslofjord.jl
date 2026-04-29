@@ -5,6 +5,7 @@ using NumericalEarth
 using SeawaterPolynomials.TEOS10
 using FjordSim
 using FjordSim.FDatasets
+using CUDA  # it should be here to make GPU() not throw an error
 
 const FT = Oceananigans.defaults.FloatType
 

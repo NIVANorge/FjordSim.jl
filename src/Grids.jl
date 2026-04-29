@@ -3,6 +3,7 @@ module Grids
 export ImmersedBoundaryGrid
 
 using Oceananigans
+using Oceananigans.BoundaryConditions: fill_halo_regions!
 using NCDatasets
 
 import Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid

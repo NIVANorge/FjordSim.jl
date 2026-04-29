@@ -22,6 +22,7 @@ using Dates
 import Oceananigans.Fields: set!
 import Oceananigans.OutputReaders: new_backend, update_field_time_series!
 import NumericalEarth: all_dates
+import NumericalEarth.DataWrangling: metadata_filename
 
 NORA3_variable_names = (
     :freshwater_flux,
@@ -77,6 +78,7 @@ all_dates(ds::MultiYearNORA3, name) = ds.all_dates
 all_dates(ds::MultiYearNORA3) = ds.all_dates
 first_date(ds::MultiYearNORA3) = first(all_dates(ds))
 last_date(ds::MultiYearNORA3) = last(all_dates(ds))
+metadata_filename(ds::MultiYearNORA3, args...) = ds.metadata_filename
 
 # this is field data series stuff to get data during simulation
 struct NORA3NetCDFBackend{M} <: AbstractInMemoryBackend{Int}

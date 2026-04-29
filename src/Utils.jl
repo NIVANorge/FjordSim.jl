@@ -1,13 +1,23 @@
 module Utils
 
-export compute_faces, progress, safe_execute, extract_z_faces, netcdf_to_jld2, save_fts, recursive_merge
+export compute_faces,
+    progress,
+    safe_execute,
+    extract_z_faces,
+    netcdf_to_jld2,
+    save_fts,
+    recursive_merge,
+    cell_advection_timescale_coupled_model
 
 using Oceananigans
 using Oceananigans.Fields: interior
 using Oceananigans.OutputReaders: FieldTimeSeries, OnDisk
 using Oceananigans.Utils: prettytime
+using Oceananigans.Advection: cell_advection_timescale
 using JLD2: @save
 using Printf: @sprintf
+
+cell_advection_timescale_coupled_model(coupled_model) = cell_advection_timescale(coupled_model.ocean.model)
 
 function compute_faces(centers)
     spacing = diff(centers)[1]  # Assuming uniform spacing

@@ -56,7 +56,9 @@ using .NORA3
 using .Forcing
 
 include("boundary_conditions.jl")
-include("grid.jl")
+include("Grid.jl")
+
+using .Grid: ImmersedBoundaryGrid
 
 function coupled_hydrostatic_simulation(
     grid,

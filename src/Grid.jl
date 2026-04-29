@@ -1,4 +1,10 @@
+module Grid
+
+using Oceananigans
+using NCDatasets
+
 import Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid
+using ..Utils: compute_faces
 
 """
 Return a grid from bathymetry from a netcdf file.
@@ -26,3 +32,5 @@ function ImmersedBoundaryGrid(filepath::String, arch, halo)
     fill_halo_regions!(bathymetry)
     return ImmersedBoundaryGrid(underlying_grid, PartialCellBottom(bathymetry); active_cells_map=true)
 end
+
+end  # module Grid

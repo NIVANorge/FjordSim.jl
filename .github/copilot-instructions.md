@@ -13,7 +13,7 @@ These instructions apply to the whole repository unless a prompt explicitly says
 
 - Keep one Julia module per file in `src/` and maintain explicit `export` lists.
 - Follow existing naming style: functions in `snake_case`; modules/types in `PascalCase`.
-- Name module files to match their module/type names in `PascalCase` (for example, `Grid.jl` for `module Grid`).
+- Name module files to match their module/type names in `PascalCase` (for example, `Grids.jl` for `module Grids`).
 - Prefer implicit imports like `using .ModuleName` in parent modules, and manage visibility with explicit `export` lists in each module.
 - Prefer keyword arguments for user-facing configurability; keep required core inputs explicit.
 - Match local file style for imports (`using` vs `import`) and only `import` functions you extend.

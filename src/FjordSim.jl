@@ -52,14 +52,14 @@ include("Utils.jl")
 include("Atmospheres/Atmospheres.jl")
 include("Forcing.jl")
 include("BoundaryConditions.jl")
-include("Grid.jl")
+include("Grids.jl")
 
 using .FDatasets
 using .Utils
 using .Atmospheres
 using .Forcing
 using .BoundaryConditions
-using .Grid
+using .Grids
 
 function coupled_hydrostatic_simulation(
     grid,

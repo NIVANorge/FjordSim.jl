@@ -1,4 +1,4 @@
-module Grid
+module Grids
 
 export ImmersedBoundaryGrid
 
@@ -35,4 +35,4 @@ function ImmersedBoundaryGrid(filepath::String, arch, halo)
     return ImmersedBoundaryGrid(underlying_grid, PartialCellBottom(bathymetry); active_cells_map=true)
 end
 
-end  # module Grid
+end  # module Grids

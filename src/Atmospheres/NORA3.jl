@@ -1,6 +1,6 @@
 module NORA3
 
-export NORA3PrescribedAtmosphere, MultiYearNORA3
+export NORA3PrescribedAtmosphere, NORA3PrescribedRadiation, MultiYearNORA3
 
 using ...Utils: compute_faces
 
@@ -12,7 +12,7 @@ using Oceananigans.Fields: interpolate!
 using Oceananigans.OutputReaders: Cyclical, TotallyInMemory, AbstractInMemoryBackend, FlavorOfFTS, time_indices, FieldTimeSeries
 using NumericalEarth
 using NumericalEarth: PrescribedAtmosphere
-using NumericalEarth.Atmospheres: TwoBandDownwellingRadiation
+using NumericalEarth.Radiations: PrescribedRadiation, SurfaceRadiationProperties, default_stefan_boltzmann_constant
 using NumericalEarth.DataWrangling: compute_native_date_range, Metadata, metadata_path, native_times
 using Adapt
 using NCDatasets
@@ -235,8 +235,6 @@ function NORA3PrescribedAtmosphere(
     qa = NORA3FieldTimeSeries(:specific_humidity, architecture, FT; kw...)
     pa = NORA3FieldTimeSeries(:sea_level_pressure, architecture, FT; kw...)
     Fra = NORA3FieldTimeSeries(:freshwater_flux, architecture, FT; kw...)
-    Ql = NORA3FieldTimeSeries(:downwelling_longwave_radiation, architecture, FT; kw...)
-    Qs = NORA3FieldTimeSeries(:downwelling_shortwave_radiation, architecture, FT; kw...)
 
     times = ua.times
     grid = ua.grid
@@ -249,25 +247,57 @@ function NORA3PrescribedAtmosphere(
 
     pressure = pa
 
-    downwelling_radiation = TwoBandDownwellingRadiation(shortwave = Qs, longwave = Ql)
-
     FT = eltype(ua)
     surface_layer_height = convert(FT, surface_layer_height)
 
-    auxiliary_freshwater_flux = nothing
     atmosphere = PrescribedAtmosphere(
         grid,
         times;
         velocities,
         freshwater_flux,
-        auxiliary_freshwater_flux,
         tracers,
-        downwelling_radiation,
         surface_layer_height,
         pressure,
     )
 
     return atmosphere
+end # function
+
+"""
+    NORA3PrescribedRadiation([architecture = CPU(), FT = Float32];
+                             dataset = MultiYearNORA3("NORA3.nc", joinpath(homedir(), "FjordSim_data", "NORA3")),
+                             start_date = first_date(dataset),
+                             end_date = last_date(dataset),
+                             backend = NORA3NetCDFBackend(10),
+                             time_indexing = Cyclical(),
+                             ocean_surface = SurfaceRadiationProperties(0.05, 0.97),
+                             sea_ice_surface = SurfaceRadiationProperties(0.7, 1.0),
+                             stefan_boltzmann_constant = default_stefan_boltzmann_constant,
+                             other_kw...)
+
+Return a `PrescribedRadiation` backed by NORA3 downwelling shortwave and
+longwave `NORA3FieldTimeSeries`.
+"""
+function NORA3PrescribedRadiation(
+    architecture = CPU(),
+    FT = Float32;
+    dataset = MultiYearNORA3("NORA3.nc", joinpath(homedir(), "FjordSim_data", "NORA3")),
+    start_date = first_date(dataset),
+    end_date = last_date(dataset),
+    backend = NORA3NetCDFBackend(10),
+    time_indexing = Cyclical(),
+    ocean_surface = SurfaceRadiationProperties(0.05, 0.97),
+    sea_ice_surface = SurfaceRadiationProperties(0.7, 1.0),
+    stefan_boltzmann_constant = default_stefan_boltzmann_constant,
+    other_kw...,
+)
+    kw = (; time_indexing, backend, start_date, end_date, dataset)
+    kw = merge(kw, other_kw)
+
+    Qs = NORA3FieldTimeSeries(:downwelling_shortwave_radiation, architecture, FT; kw...)
+    Ql = NORA3FieldTimeSeries(:downwelling_longwave_radiation,  architecture, FT; kw...)
+
+    return PrescribedRadiation(Qs, Ql; ocean_surface, sea_ice_surface, stefan_boltzmann_constant)
 end # function
 
 end # module

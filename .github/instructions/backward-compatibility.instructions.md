@@ -41,6 +41,7 @@ recursive_merge                   # utility for dict merging
 progress                          # logging callback
 cell_advection_timescale_coupled_model
 NORA3PrescribedAtmosphere         # atmospheric boundary layer
+NORA3PrescribedRadiation          # downwelling SW/LW radiation from NORA3
 MultiYearNORA3                    # NORA3 metadata container
 
 # Submodules (often re-exported):
@@ -48,7 +49,7 @@ MultiYearNORA3                    # NORA3 metadata container
 # FDatasets: DSForcing, DSResults, last_date
 # BoundaryConditions: top_bottom_boundary_conditions
 # Grids: ImmersedBoundaryGrid
-# Atmospheres: NORA3PrescribedAtmosphere, MultiYearNORA3
+# Atmospheres: NORA3PrescribedAtmosphere, NORA3PrescribedRadiation, MultiYearNORA3
 ```
 
 ## Hard Rules

@@ -50,7 +50,7 @@ boundary_conditions = map(x -> FieldBoundaryConditions(; x...), recursive_merge(
 #     dir = joinpath(homedir(), "FjordSim_data", "JRA55"),
 # )
 atmosphere = NORA3PrescribedAtmosphere(arch)
-downwelling_radiation = Radiation(arch, FT; ocean_emissivity = 0.96, ocean_albedo = 0.1)
+downwelling_radiation = NORA3PrescribedRadiation(arch)
 sea_ice = FreezingLimitedOceanTemperature()
 biogeochemistry = nothing
 results_dir = joinpath(homedir(), "FjordSim_results", "oslofjord")

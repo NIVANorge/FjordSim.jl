@@ -1,6 +1,6 @@
 # FjordSim Public API Catalog
 
-**Last Updated:** April 29, 2026  
+**Last Updated:** May 6, 2026  
 **Purpose:** Maintain a precise record of all exported interfaces (functions, types, and their signatures) to ensure backward compatibility and catch breaking changes before they reach users.
 
 ---
@@ -19,6 +19,7 @@
 | `progress` | Function | See [Utils module](#utils-module) | Re-export from Utils |
 | `cell_advection_timescale_coupled_model` | Function | See [Utils module](#utils-module) | Re-export from Utils |
 | `NORA3PrescribedAtmosphere` | Type/Struct | See [Atmospheres module](#atmospheres-module) | Re-export from Atmospheres |
+| `NORA3PrescribedRadiation` | Function | See [Atmospheres module](#atmospheres-module) | Re-export from Atmospheres |
 | `MultiYearNORA3` | Type/Struct | See [Atmospheres module](#atmospheres-module) | Re-export from Atmospheres |
 
 ---
@@ -101,7 +102,8 @@
 
 | Symbol | Type | Signature | Purpose |
 |--------|------|-----------|---------|
-| `NORA3PrescribedAtmosphere` | Type | See NORA3 submodule | *Signature not yet extracted* |
+| `NORA3PrescribedAtmosphere` | Function | `NORA3PrescribedAtmosphere([architecture=CPU(), FT=Float32]; dataset, start_date, end_date, backend, time_indexing, surface_layer_height, other_kw...) -> PrescribedAtmosphere` | Build prescribed atmosphere from NORA3 reanalysis data |
+| `NORA3PrescribedRadiation` | Function | `NORA3PrescribedRadiation([architecture=CPU(), FT=Float32]; dataset, start_date, end_date, backend, time_indexing, ocean_surface, sea_ice_surface, stefan_boltzmann_constant, other_kw...) -> PrescribedRadiation` | Build prescribed radiation (shortwave + longwave) from NORA3 data |
 | `MultiYearNORA3` | Struct | `MultiYearNORA3(metadata_filename::String, default_download_directory::String)` | Metadata container for NORA3 atmosphere data |
 
 **MultiYearNORA3 Fields:**
@@ -159,7 +161,11 @@ If you must change an existing exported interface:
 
 This section is reserved for documenting any breaking changes, removals, or significant API evolution:
 
-- *(None yet recorded; to be populated as the library evolves)*
+#### May 6, 2026 — NumericalEarth 0.4 compatibility update
+
+- **New export `NORA3PrescribedRadiation`**: downwelling shortwave/longwave radiation is now a separate top-level component (`PrescribedRadiation`) following the NumericalEarth 0.4 API. Previously `TwoBandDownwellingRadiation` was constructed inside `NORA3PrescribedAtmosphere` and passed as a `PrescribedAtmosphere` keyword; that API was removed upstream.
+- **`NORA3PrescribedAtmosphere` internal change** (non-breaking): no longer constructs radiation internally. Users must now also call `NORA3PrescribedRadiation(arch)` and pass the result as the `radiation` argument to `OceanSeaIceModel` / `coupled_hydrostatic_simulation`.
+- **`coupled_hydrostatic_simulation` internal change** (non-breaking): removed manual `ComponentInterfaces` construction; fixed `OceanSeaIceModel(sea_ice, ocean; ...)` argument order per NumericalEarth 0.4.
 
 ---
 

@@ -15,6 +15,7 @@ using Oceananigans.BoundaryConditions: FluxBoundaryCondition
         :progress,
         :cell_advection_timescale_coupled_model,
         :NORA3PrescribedAtmosphere,
+        :NORA3PrescribedRadiation,
         :MultiYearNORA3,
     ]
 

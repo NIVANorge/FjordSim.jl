@@ -15,6 +15,7 @@ export
     cell_advection_timescale_coupled_model,
     # atmosphere
     NORA3PrescribedAtmosphere,
+    NORA3PrescribedRadiation,
     MultiYearNORA3
 
 using Oceananigans
@@ -100,8 +101,7 @@ function coupled_hydrostatic_simulation(
     set!(ocean_model; initial_conditions...)
     Δt = 1second
     ocean_sim = Simulation(ocean_model; Δt, stop_time)
-    interfaces = ComponentInterfaces(atmosphere, ocean_sim, sea_ice; radiation = downwelling_radiation)
-    coupled_model = OceanSeaIceModel(ocean_sim, sea_ice; atmosphere, radiation = downwelling_radiation, interfaces)
+    coupled_model = OceanSeaIceModel(sea_ice, ocean_sim; atmosphere, radiation = downwelling_radiation)
     println("Initialized coupled model")
     coupled_simulation = Simulation(coupled_model; Δt, stop_time)
     return coupled_simulation

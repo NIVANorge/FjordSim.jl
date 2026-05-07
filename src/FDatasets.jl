@@ -107,7 +107,7 @@ function DSResults(
     longitude_interfaces = (ds["λ_faa"][1], ds["λ_faa"][end])
     latitude_interfaces = (ds["φ_afa"][1], ds["φ_afa"][end])
     array_size = size(ds["T"])[1:3]  # that is for a grid, so size should be for tracers
-    all_dates = start_date_time .+ Second.(ds["time"][:])
+    all_dates = start_date_time .+ Millisecond.(round.(Int, ds["time"][:] .* 1000))
     first_date = all_dates[1]
     last_date = all_dates[end]
     z_interfaces = ds["z_aaf"][:]

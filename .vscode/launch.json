@@ -21,5 +21,15 @@
                 "-O0"
             ]
         },
+        {
+            "type": "julia",
+            "request": "launch",
+            "name": "bathymetry_prepare",
+            "program": "${workspaceFolder}/scripts/bathymetry_prepare.jl",
+            "stopOnEntry": false,
+            "juliaAdditionalArgs": [
+                "-O0"
+            ]
+        },
     ]
 }

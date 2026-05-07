@@ -3,7 +3,7 @@
         "ALL_MODULES_EXCEPT_MAIN",   
         "-FjordSim.",   
         "-Oceananigans.",
-        "-ClimaOcean.",
+        "-NumericalEarth.",
     ],
     "julia.lint.call": false,
 }

@@ -12,6 +12,7 @@ export
     # utils
     recursive_merge,
     progress,
+    progress_callback,
     cell_advection_timescale_coupled_model,
     # atmosphere
     NORA3PrescribedAtmosphere,

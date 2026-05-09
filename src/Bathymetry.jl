@@ -54,9 +54,9 @@ NetCDF derived from Geonorge generalized depth contours.
 struct GeonorgeBathymetry <: AbstractStaticBathymetry
     metadata_filename::String
     default_download_directory::String
-    longitude_interfaces::NTuple{2, Float64}
-    latitude_interfaces::NTuple{2, Float64}
-    size::NTuple{3, Int}
+    longitude_interfaces::NTuple{2,Float64}
+    latitude_interfaces::NTuple{2,Float64}
+    size::NTuple{3,Int}
 end
 
 const GeonorgeBathymetryMetadatum = Metadatum{<:GeonorgeBathymetry}
@@ -84,7 +84,8 @@ end
 
 """
     prepare_geonorge_bathymetry(target_grid; output_path, raw_dir=download_bathymetry_cache,
-                                raw_resolution_factor=4, padding_cells=2, regrid_kw...)
+                                raw_resolution_factor=4, padding_cells=2,
+                                cache=true, regrid_kw...)
 
 Download open Geonorge generalized depth contours, build a regional
 NumericalEarth-style raw bathymetry dataset in scratch storage, regrid it onto
@@ -95,7 +96,14 @@ NetCDF file compatible with `FjordSim.Grids.ImmersedBoundaryGrid`.
 - `output_path`: Destination for the processed FjordSim bathymetry NetCDF.
 - `raw_dir`: Scratch directory used for the downloaded archive and regional raw dataset.
 - `raw_resolution_factor`: Native raw-grid refinement relative to `target_grid`.
+    This controls the resolution of the intermediate regional raw bathymetry NetCDF
+    built from the Geonorge contours before NumericalEarth regrids it onto
+    `target_grid`. Larger values produce a finer temporary source grid but do not
+    change the size of the final FjordSim grid.
 - `padding_cells`: Number of target-grid cell widths added around the requested region.
+- `cache`: If `true` (default), reuse both the downloaded Geonorge inputs and
+    NumericalEarth's on-disk bathymetry cache. Set to `false` to redownload the
+    contour shapefiles, rebuild the regional raw NetCDF, and force regridding.
 - `regrid_kw...`: Forwarded directly to `NumericalEarth.regrid_bathymetry`.
 
 # Returns
@@ -107,20 +115,18 @@ function prepare_geonorge_bathymetry(
     raw_dir::String = download_bathymetry_cache,
     raw_resolution_factor::Int = 4,
     padding_cells::Int = 2,
+    cache::Bool = true,
     regrid_kw...,
 )
     raw_resolution_factor >= 1 || throw(ArgumentError("raw_resolution_factor must be >= 1"))
     padding_cells >= 0 || throw(ArgumentError("padding_cells must be >= 0"))
+    :cache in keys(regrid_kw) &&
+        throw(ArgumentError("Pass `cache` directly to prepare_geonorge_bathymetry, not via `regrid_kw...`."))
 
-    dataset = geonorge_dataset(
-        target_grid;
-        raw_dir,
-        raw_resolution_factor,
-        padding_cells,
-    )
+    dataset = geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_cells, cache)
 
     metadata = Metadatum(:bottom_height; dataset)
-    bottom_height = NumericalEarth.regrid_bathymetry(target_grid, metadata; regrid_kw...)
+    bottom_height = NumericalEarth.regrid_bathymetry(target_grid, metadata; cache, regrid_kw...)
     write_bathymetry_file(output_path, target_grid, bottom_height)
 
     return (; dataset, raw_path = metadata_path(metadata), output_path, bottom_height)
@@ -173,12 +179,12 @@ function write_bathymetry_file(filepath::String, target_grid, bottom_height)
 end
 
 """
-    geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_cells)
+    geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_cells, cache)
 
 Construct the regional raw bathymetry dataset wrapper used as input to
 `NumericalEarth.regrid_bathymetry`.
 """
-function geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_cells)
+function geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_cells, cache)
     isdir(raw_dir) || mkpath(raw_dir)
 
     Nx, Ny, _ = size(target_grid)
@@ -193,8 +199,8 @@ function geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_c
     raw_filename = geonorge_raw_filename(longitude, latitude, raw_size)
     raw_path = joinpath(raw_dir, raw_filename)
 
-    if !isfile(raw_path)
-        shapefiles = ensure_geonorge_contours!(raw_dir)
+    if !cache || !isfile(raw_path)
+        shapefiles = ensure_geonorge_contours!(raw_dir; force = !cache)
         write_native_bathymetry(raw_path, shapefiles; longitude, latitude, size = raw_size)
     end
 
@@ -202,15 +208,17 @@ function geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_c
 end
 
 """
-    ensure_geonorge_contours!(raw_dir)
+    ensure_geonorge_contours!(raw_dir; force=false)
 
 Download and extract the Geonorge generalized contour shapefiles into `raw_dir`
-if they are not already present. Returns sorted `.shp` paths.
+if they are not already present. If `force=true`, redownload the archive and
+overwrite the extracted shapefiles. Returns sorted `.shp` paths.
 """
-function ensure_geonorge_contours!(raw_dir)
+function ensure_geonorge_contours!(raw_dir; force::Bool = false)
     zip_path = joinpath(raw_dir, GEONORGE_DYBDEDATA_ZIP)
-    if !isfile(zip_path)
+    if force || !isfile(zip_path)
         @info "Downloading Geonorge generalized depth contours to $raw_dir..."
+        force && isfile(zip_path) && rm(zip_path; force = true)
         Downloads.download(GEONORGE_DYBDEDATA_URL, zip_path)
     end
 
@@ -218,11 +226,15 @@ function ensure_geonorge_contours!(raw_dir)
     reader = ZipFile.Reader(zip_path)
     try
         for file in reader.files
-            keep = endswith(file.name, ".shp") || endswith(file.name, ".shx") || endswith(file.name, ".dbf") || endswith(file.name, ".prj")
+            keep =
+                endswith(file.name, ".shp") ||
+                endswith(file.name, ".shx") ||
+                endswith(file.name, ".dbf") ||
+                endswith(file.name, ".prj")
             keep || continue
 
             destination = joinpath(raw_dir, basename(file.name))
-            if !isfile(destination)
+            if force || !isfile(destination)
                 open(destination, "w") do io
                     write(io, read(file))
                 end
@@ -322,14 +334,25 @@ Grid the sampled point dataset onto a regular native bathymetry raster.
 """
 function grid_point_dataset(point_dataset; longitude, latitude, Nx, Ny)
     options = [
-        "-of", "MEM",
-        "-a", "invdistnn:power=2:smoothing=0.2:max_points=16:min_points=1:nodata=0",
-        "-zfield", "z",
-        "-txe", string(longitude[1]), string(longitude[2]),
-        "-tye", string(latitude[1]), string(latitude[2]),
-        "-outsize", string(Nx), string(Ny),
-        "-a_srs", "EPSG:4326",
-        "-l", "bathymetry_points",
+        "-of",
+        "MEM",
+        "-a",
+        "invdistnn:power=2:smoothing=0.2:max_points=16:min_points=1:nodata=0",
+        "-zfield",
+        "z",
+        "-txe",
+        string(longitude[1]),
+        string(longitude[2]),
+        "-tye",
+        string(latitude[1]),
+        string(latitude[2]),
+        "-outsize",
+        string(Nx),
+        string(Ny),
+        "-a_srs",
+        "EPSG:4326",
+        "-l",
+        "bathymetry_points",
     ]
 
     ArchGDAL.gdalgrid(point_dataset, options) do raster_dataset
@@ -378,7 +401,7 @@ function add_linestring_points!(point_layer, line, transform, bottom_height)
     npoints = ArchGDAL.ngeom(line)
     added = 0
 
-    for point_index in 0:npoints-1
+    for point_index = 0:npoints-1
         x, y, _ = ArchGDAL.getpoint(line, point_index)
         point = ArchGDAL.createpoint(x, y)
         ArchGDAL.transform!(point, transform)

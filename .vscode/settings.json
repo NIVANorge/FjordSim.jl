@@ -6,4 +6,7 @@
         "-NumericalEarth.",
     ],
     "julia.lint.call": false,
+    "chat.tools.terminal.autoApprove": {
+        "julia": true
+    },
 }

@@ -46,9 +46,10 @@ output_path = joinpath(homedir(), "FjordSim_data", "oslofjord", "bathymetry_105t
 result = prepare_geonorge_bathymetry(
     grid;
     output_path,
-    raw_resolution_factor = 4,
+    raw_resolution_factor = 2,
     padding_cells = 2,
-    interpolation_passes = 8,
+    include_contours = false,
+    interpolation_passes = 4,
     major_basins = 1,
     cache = true,
 )
@@ -68,6 +69,16 @@ figure = Figure(size = (1000, 700))
 axis = Axis(figure[1, 1]; xlabel = "Longitude", ylabel = "Latitude", title = "Oslofjord Bathymetry")
 
 plot = heatmap!(axis, longitude, latitude, bathymetry_data; colormap = :deep, colorrange = extrema(bathymetry_data))
+land_mask = ifelse.(bathymetry_data .>= 0, 1.0f0, NaN32)
+heatmap!(
+    axis,
+    longitude,
+    latitude,
+    land_mask;
+    colormap = [:ivory, :ivory],
+    colorrange = (0, 1),
+    nan_color = RGBAf(0, 0, 0, 0),
+)
 Colorbar(figure[1, 2], plot; label = "Bottom height (m)")
 contour!(
     axis,
@@ -77,6 +88,15 @@ contour!(
     levels = -collect(25:25:300),
     color = (:white, 0.35),
     linewidth = 1,
+)
+contour!(
+    axis,
+    longitude,
+    latitude,
+    bathymetry_data;
+    levels = [0.0],
+    color = :black,
+    linewidth = 4,
 )
 save(plot_path, figure)
 

@@ -1,4 +1,5 @@
 using FjordSim
+using FjordSim.Bathymetry: write_bathymetry_file
 using Test
 using NCDatasets
 using Oceananigans
@@ -39,6 +40,8 @@ using Oceananigans.BoundaryConditions: FluxBoundaryCondition
         mod = getfield(FjordSim, module_name)
         @test isdefined(mod, sym)  # All submodule exports must be defined
     end
+
+    @test isdefined(FjordSim, :Bathymetry)
 end
 
 @testset "Backward Compatibility — Function Signatures" begin
@@ -154,5 +157,34 @@ end
         grid = @test_nowarn ImmersedBoundaryGrid(bathymetry_path, arch, (1, 1, 1))
         @test_nowarn top_bottom_boundary_conditions(; grid, bottom_drag_coefficient = 0.003)
         @test_nowarn MultiYearNORA3(nora3_filename, tmp)
+    end
+end
+
+@testset "Bathymetry writer" begin
+    mktempdir() do tmp
+        arch = CPU()
+        z_faces = [-20.0, -10.0, 0.0]
+        grid = LatitudeLongitudeGrid(
+            arch;
+            size = (2, 3, 2),
+            halo = (1, 1, 1),
+            longitude = (10.0, 12.0),
+            latitude = (59.0, 62.0),
+            z = z_faces,
+        )
+
+        bottom_height = Field{Center, Center, Nothing}(grid)
+        set!(bottom_height, [-15.0 -16.0 -17.0; -18.0 -19.0 -20.0])
+
+        bathymetry_path = joinpath(tmp, "bathymetry_written.nc")
+        @test_nowarn write_bathymetry_file(bathymetry_path, grid, bottom_height)
+
+        ds = NCDataset(bathymetry_path)
+        @test ds["lon"][:] == [10.5, 11.5]
+        @test ds["lat"][:] == [59.5, 60.5, 61.5]
+        @test ds["h"][:, :] == Float32[-15.0 -16.0 -17.0; -18.0 -19.0 -20.0]
+        close(ds)
+
+        @test_nowarn ImmersedBoundaryGrid(bathymetry_path, arch, (1, 1, 1))
     end
 end

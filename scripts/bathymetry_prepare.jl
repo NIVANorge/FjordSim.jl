@@ -1,8 +1,8 @@
 using Oceananigans
 using Oceananigans.Units
-using Dates
 using CUDA
-import NumericalEarth
+using FjordSim
+using FjordSim.Bathymetry
 
 arch = GPU()
 
@@ -37,4 +37,18 @@ grid = LatitudeLongitudeGrid(
     z = z_faces,
 )
 
-bathymetry = NumericalEarth.regrid_bathymetry(grid)
+output_path = joinpath(homedir(), "FjordSim_data", "oslofjord", "bathymetry_105to232.nc")
+
+result = prepare_geonorge_bathymetry(
+    grid;
+    output_path,
+    raw_resolution_factor = 4,
+    padding_cells = 2,
+    interpolation_passes = 8,
+    major_basins = 1,
+)
+
+bathymetry = result.bottom_height
+
+@info "Raw Geonorge bathymetry saved to $(result.raw_path)"
+@info "Processed FjordSim bathymetry saved to $(result.output_path)"

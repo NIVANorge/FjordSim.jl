@@ -42,16 +42,18 @@ grid = LatitudeLongitudeGrid(
 )
 
 output_path = joinpath(homedir(), "FjordSim_data", "oslofjord", "bathymetry_105to232+.nc")
+geodatabase_path = joinpath(homedir(), "FjordSim_data", "oslofjord", "Basisdata_0000_Norge_25833_Dybdedata_FGDB.gdb")
 
 result = prepare_geonorge_bathymetry(
     grid;
     output_path,
+    geodatabase_path,
     raw_resolution_factor = 2,
     padding_cells = 2,
     include_contours = false,
-    interpolation_passes = 4,
+    interpolation_passes = 1,
     major_basins = 1,
-    cache = true,
+    cache = false,
 )
 
 bathymetry = result.bottom_height

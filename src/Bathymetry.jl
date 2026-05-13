@@ -22,8 +22,6 @@ import NumericalEarth.DataWrangling:
     metadata_filename,
     reversed_vertical_axis
 
-const DEFAULT_GEONORGE_GEODATABASE_PATH =
-    joinpath(homedir(), "FjordSim_data", "oslofjord", "Basisdata_0000_Norge_25833_Dybdedata_FGDB.gdb")
 const GEONORGE_LAND_LAYERS = ("landareal", "skjer")
 # NumericalEarth bathymetry regridding constructs a native grid with halo = (10, 10, 1).
 # Keep the generated raw dataset comfortably larger than that minimum.
@@ -80,7 +78,7 @@ function download_dataset(metadata::GeonorgeBathymetryMetadatum)
 end
 
 """
-    prepare_geonorge_bathymetry(target_grid; output_path, raw_dir=download_bathymetry_cache,
+    prepare_geonorge_bathymetry(target_grid; output_path, geodatabase_path, raw_dir=download_bathymetry_cache,
                                 raw_resolution_factor=4, padding_cells=2,
                                 include_contours=true, cache=true, regrid_kw...)
 
@@ -91,6 +89,7 @@ NetCDF file compatible with `FjordSim.Grids.ImmersedBoundaryGrid`.
 
 # Keyword arguments
 - `output_path`: Destination for the processed FjordSim bathymetry NetCDF.
+- `geodatabase_path`: Path to the local Geonorge Sjøkart FileGDB database.
 - `raw_dir`: Scratch directory used for the intermediate regional raw dataset.
 - `raw_resolution_factor`: Native raw-grid refinement relative to `target_grid`.
     This controls the resolution of the intermediate regional raw bathymetry NetCDF
@@ -112,6 +111,7 @@ A named tuple with `dataset`, `raw_path`, `output_path`, and `bottom_height`.
 function prepare_geonorge_bathymetry(
     target_grid;
     output_path::String,
+    geodatabase_path::String,
     raw_dir::String = download_bathymetry_cache,
     raw_resolution_factor::Int = 4,
     padding_cells::Int = 2,
@@ -123,8 +123,10 @@ function prepare_geonorge_bathymetry(
     padding_cells >= 0 || throw(ArgumentError("padding_cells must be >= 0"))
     :cache in keys(regrid_kw) &&
         throw(ArgumentError("Pass `cache` directly to prepare_geonorge_bathymetry, not via `regrid_kw...`."))
+    isdir(geodatabase_path) ||
+        error("Local Geonorge bathymetry geodatabase not found at $geodatabase_path.")
 
-    dataset = geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_cells, include_contours, cache)
+    dataset = geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_cells, include_contours, cache, geodatabase_path)
 
     metadata = Metadatum(:bottom_height; dataset)
     bottom_height = NumericalEarth.regrid_bathymetry(target_grid, metadata; cache, regrid_kw...)
@@ -197,12 +199,12 @@ function write_bathymetry_file(filepath::String, target_grid, bottom_height)
 end
 
 """
-    geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_cells, include_contours, cache)
+    geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_cells, include_contours, cache, geodatabase_path)
 
 Construct the regional raw bathymetry dataset wrapper used as input to
 `NumericalEarth.regrid_bathymetry`.
 """
-function geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_cells, include_contours, cache)
+function geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_cells, include_contours, cache, geodatabase_path)
     isdir(raw_dir) || mkpath(raw_dir)
 
     Nx, Ny, _ = size(target_grid)
@@ -218,24 +220,13 @@ function geonorge_dataset(target_grid; raw_dir, raw_resolution_factor, padding_c
     raw_path = joinpath(raw_dir, raw_filename)
 
     if !cache || !isfile(raw_path)
-        geodatabase_path = geonorge_geodatabase_path()
         write_native_bathymetry(raw_path, geodatabase_path; longitude, latitude, size = raw_size, include_contours)
     end
 
     return GeonorgeBathymetry(raw_filename, raw_dir, longitude, latitude, raw_size)
 end
 
-"""
-    geonorge_geodatabase_path()
 
-Return the local FileGDB used as the source for Geonorge Sjøkart bathymetry.
-"""
-function geonorge_geodatabase_path()
-    isdir(DEFAULT_GEONORGE_GEODATABASE_PATH) ||
-        error("Local Geonorge bathymetry geodatabase not found at $(DEFAULT_GEONORGE_GEODATABASE_PATH).")
-
-    return DEFAULT_GEONORGE_GEODATABASE_PATH
-end
 
 """
     write_native_bathymetry(filepath, geodatabase_path; longitude, latitude, size, include_contours=true)

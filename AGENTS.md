@@ -8,6 +8,10 @@ Behavioral guidelines to reduce common LLM coding mistakes, derived from [Andrej
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
+## Repository Instructions
+
+Before repo work, scan `.github/**/*.md` and apply any relevant instructions found there.
+
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
@@ -67,3 +71,14 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+## 5. Other guidelines
+
+Always use Context7 for:
+- library documentation
+- API references
+- framework version-specific behavior
+- SDK examples
+- current best practices
+
+Prefer Context7 over stale pretrained knowledge when available.

@@ -31,5 +31,25 @@
                 "-O0"
             ]
         },
+        {
+            "type": "julia",
+            "request": "launch",
+            "name": "download norkyst",
+            "program": "${workspaceFolder}/scripts/forcing_download_norkyst.jl",
+            "stopOnEntry": false,
+            "juliaAdditionalArgs": [
+                "--project=${workspaceFolder}",
+                "-O0"
+            ],
+            "env": {
+                "FJORDSIM_RUN_MAIN": "1"
+            },
+            "args":[
+                "--year",
+                "2020",
+                "--output-dir",
+                "~/FjordSim_data/drammensfjorden"
+            ]
+        },
     ]
 }

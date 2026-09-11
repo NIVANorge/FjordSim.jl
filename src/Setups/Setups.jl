@@ -15,7 +15,7 @@ using Dates: DateTime
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using NumericalEarth: FreezingLimitedOceanTemperature
 
-using ..Configs: FjordConfig
+using ..Configs: FjordConfig, fjord_data_root, fjord_results_root
 using ..Utils: progress
 using ..Grids: EvenGrid
 using ..Bathymetry: DybdedataConfig, GEONORGE_DYBDEDATA_GDB

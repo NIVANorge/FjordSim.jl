@@ -16,8 +16,8 @@ downloaders skip a month already present. The boundary band and the NVE caches a
 `docs/setups.md`.
 """
 function drammensfjorden()
-    data_root = joinpath(homedir(), "FjordSim_data", "drammensfjorden")
-    oslofjorden_data_root = joinpath(homedir(), "FjordSim_data", "oslofjorden")
+    data_root = fjord_data_root("drammensfjorden")
+    oslofjorden_data_root = fjord_data_root("oslofjorden")
     FT = Oceananigans.defaults.FloatType
 
     return FjordConfig(
@@ -152,7 +152,7 @@ function drammensfjorden()
         # SimulationConfig itself has no hooks — everything below dispatches through one of its
         # four nested configs instead.
         simulation_config = SimulationConfig(
-            results_root       = joinpath(homedir(), "FjordSim_results", "drammensfjorden"),
+            results_root       = fjord_results_root("drammensfjorden"),
             architecture       = :auto,
             # Overloads coupled_simulation and model_tracers.
             model              = CoupledHydrostaticSimulation(

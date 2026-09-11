@@ -47,6 +47,22 @@ julia --project -m FjordSim run_simulation --config oslofjorden
 julia --project -m FjordSim --help
 ```
 
+### Running on GCP
+
+`run_simulation` needs a GPU. `gcp/fjordsim-gcp` runs any step of any setup on a GCE VM and moves
+data to and from a bucket; `gcp/README.md` is the full workflow, including the IAM roles to request.
+
+```bash
+gcp/fjordsim-gcp build                                                   # image -> Artifact Registry
+gcp/fjordsim-gcp push-data drammensfjorden                               # prepared *.nc -> bucket
+gcp/fjordsim-gcp run --config oslofjorden --steps run_simulation --gpu   # launch, then self-delete
+gcp/fjordsim-gcp run --config oslofjorden --steps download_atmosphere,prepare_atmosphere
+gcp/fjordsim-gcp pull-results oslofjorden
+```
+
+`--dry-run` prints the `gcloud` call and the rendered startup script without creating anything.
+Nothing is hardcoded: project, bucket, registry and machine shapes all come from `gcp/config.env`.
+
 `--config` is the only option, and it is required — there is no default setup. It takes a
 registered setup name (`FjordSim.Setups.SETUPS`) or a path to an out-of-tree `.jl` config file
 whose last expression is a `FjordConfig`. Every other knob, including which device the forcing
@@ -233,7 +249,11 @@ forcings.
 
 - Bathymetry convention: `h < 0` = below sea level (bottom height), `h >= 0` = land.
 - Data files default to `~/FjordSim_data/<fjord>/` and results to `~/FjordSim_results/<fjord>/`,
-  the latter from the simulation config's `results_root`.
+  the latter from the simulation config's `results_root`. A setup must build both with
+  `fjord_data_root("<fjord>")` / `fjord_results_root("<fjord>")` (`src/Configs.jl`) rather than
+  `joinpath(homedir(), ...)`: those read `FJORDSIM_DATA_ROOT` / `FJORDSIM_RESULTS_ROOT`, which is
+  what lets one setup run unchanged on a laptop and on a cloud VM's staging disk. A setup sharing
+  another fjord's downloads passes that other name, so a relocation moves both.
 - Open-boundary convention: the domain is open on any subset of its four lateral edges — none, one,
   or all four for a region in the open ocean — named once by the boundary data config's `open_edges`
   and read through the `open_edges` accessor as a `Vector{Symbol}`, empty for a setup naming no

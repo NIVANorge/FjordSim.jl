@@ -12,7 +12,9 @@ that should not live in the package can instead be a standalone `.jl` file whose
 a `FjordConfig`, passed as `--config path/to/it.jl` and loaded by `fjord_config`.
 
 Data paths are built from a per-setup `data_root` under `~/FjordSim_data/<fjord>/`, computed inside
-the setup function with `homedir()`; the config fields naming files (`output_file`, `plot_file`,
+the setup function by `fjord_data_root("<fjord>")` — which reads `FJORDSIM_DATA_ROOT` for the parent
+and falls back to `homedir()`, so one variable relocates every setup at once and a container can
+stage its inputs anywhere; the config fields naming files (`output_file`, `plot_file`,
 `geodatabase_file`, `output_directory`) are names relative to `data_root`, and setting one to an
 absolute path relocates just that file — which is how a single FileGDB copy is shared across fjords.
 A nested config carries its own `data_root` too, so it can be relocated independently, and both

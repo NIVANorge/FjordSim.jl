@@ -3,7 +3,7 @@ module NORA3
 export NORA3PrescribedAtmosphere, NORA3PrescribedRadiation, MultiYearNORA3
 
 using ...Utils: compute_faces
-using ...Configs: AbstractAtmosphereConfig, atmosphere_path
+using ...Configs: AbstractAtmosphereConfig, atmosphere_path, fjord_data_root
 
 using Oceananigans
 using Oceananigans.BoundaryConditions: fill_halo_regions!
@@ -38,7 +38,7 @@ const NORA3_FILE = "NORA3.nc"
 `MultiYearNORA3` for the default NORA3 reanalysis file at
 `~/FjordSim_data/NORA3/NORA3.nc`.
 """
-default_nora3_dataset() = MultiYearNORA3(NORA3_FILE, joinpath(homedir(), "FjordSim_data", "NORA3"))
+default_nora3_dataset() = MultiYearNORA3(NORA3_FILE, fjord_data_root("NORA3"))
 
 const NORA3_variable_names = (
     :freshwater_flux,

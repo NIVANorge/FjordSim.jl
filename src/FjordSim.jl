@@ -43,6 +43,8 @@ export
     plot_boundaries,
     plot_atmosphere,
     # path resolution, defined on the config supertypes
+    fjord_data_root,
+    fjord_results_root,
     bathymetry_path,
     forcing_path,
     forcing_directory,

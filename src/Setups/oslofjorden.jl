@@ -39,7 +39,7 @@ needs that padding at both ends — files prepared against the old 12:00-anchore
 rejected by `validate_time_coverage` until those three steps have been re-run.
 """
 function oslofjorden()
-    data_root = joinpath(homedir(), "FjordSim_data", "oslofjorden")
+    data_root = fjord_data_root("oslofjorden")
     FT = Oceananigans.defaults.FloatType
 
     # FjordConfig is what the driver-level generics (run_simulation(), download_forcing(), etc.)
@@ -281,7 +281,7 @@ function oslofjorden()
         # SimulationConfig itself has no hooks — everything below dispatches through one of its
         # four nested configs instead.
         simulation_config = SimulationConfig(
-            results_root       = joinpath(homedir(), "FjordSim_results", "oslofjorden"),
+            results_root       = fjord_results_root("oslofjorden"),
             architecture       = :auto,
             # CoupledHydrostaticSimulation overloads coupled_simulation and model_tracers — the
             # model hooks build_simulation calls, dispatching on this config's type.

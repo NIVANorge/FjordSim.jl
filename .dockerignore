@@ -1,0 +1,15 @@
+# The build context is the package plus its manifest; everything below is either large,
+# machine-local, or reconstructible, and none of it is read by the image.
+.git
+.github
+.vscode
+docs
+artifacts
+debug
+test
+*.png
+*.log
+
+# Deliberately NOT ignored: Manifest.toml. It is git-ignored (see .gitignore) but must reach the
+# image, so the container resolves to the same package versions as the machine that built it.
+# See gcp/README.md, "Reproducibility".

@@ -28,7 +28,12 @@ Julia **1.12 or newer** is required: the `-m FjordSim` command form used through
 Julia 1.12's package entry point.
 
 A GPU is not strictly required — `architecture = :auto` falls back to the CPU — but running a
-simulation without one is impractically slow. Preparing the input data is fine on a laptop.
+simulation without one is impractically slow. Preparing the input data is fine on CPU. If you
+have no GPU to hand, `gcp/README.md` runs any step of any setup on a Google Cloud VM.
+
+Data lives under `~/FjordSim_data/<fjord>/` and results under `~/FjordSim_results/<fjord>/`. Set
+`FJORDSIM_DATA_ROOT` or `FJORDSIM_RESULTS_ROOT` to move either parent — which is how the same
+setup runs unchanged against a laptop's home directory and a cloud VM's staging disk.
 
 ## Quick start: Oslofjorden
 

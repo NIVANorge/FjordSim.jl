@@ -37,6 +37,8 @@ include("utilities.jl")
             :river_forcing_path,
             :plot_path,
             :bathymetry_path,
+            :fjord_data_root,
+            :fjord_results_root,
             :prepare_bathymetry,
             :prepare_forcing,
             :download_forcing,
@@ -819,6 +821,31 @@ end
         @test config.atmosphere_config.years == [2020, 2021]
     end
 
+    @testset "data and results roots" begin
+        # Unset, the helpers reproduce the `~/FjordSim_data/<fjord>/` layout every setup spelled
+        # with `homedir()` before, so relocating is opt-in and the default is unchanged.
+        withenv("FJORDSIM_DATA_ROOT" => nothing, "FJORDSIM_RESULTS_ROOT" => nothing) do
+            @test fjord_data_root("oslofjorden") ==
+                  joinpath(homedir(), "FjordSim_data", "oslofjorden")
+            @test fjord_results_root("oslofjorden") ==
+                  joinpath(homedir(), "FjordSim_results", "oslofjorden")
+        end
+
+        # The environment names the parent and the argument names the fjord under it, so one
+        # variable moves every setup at once while a setup still states which fjord it is.
+        withenv("FJORDSIM_DATA_ROOT" => "/mnt/data", "FJORDSIM_RESULTS_ROOT" => "/mnt/results") do
+            @test fjord_data_root("oslofjorden") == "/mnt/data/oslofjorden"
+            @test fjord_results_root("drammensfjorden") == "/mnt/results/drammensfjorden"
+        end
+
+        # The two are independent: relocating inputs must not drag results along with them.
+        withenv("FJORDSIM_DATA_ROOT" => "/mnt/data", "FJORDSIM_RESULTS_ROOT" => nothing) do
+            @test fjord_data_root("oslofjorden") == "/mnt/data/oslofjorden"
+            @test fjord_results_root("oslofjorden") ==
+                  joinpath(homedir(), "FjordSim_results", "oslofjorden")
+        end
+    end
+
     @testset "extensibility" begin
         data_root = joinpath(tempdir(), "fjordsim_extensibility_test")
 
@@ -1059,9 +1086,19 @@ end
         @test_throws ArgumentError fjord_config(not_a_config)
     end
 
+    # A field naming a file or directory is a name relative to the setup's own `data_root`, unless
+    # it is absolute — which is how a setup shares another fjord's download instead of fetching its
+    # own copy, and is what `drammensfjorden()` does with Oslofjord's FileGDB, NorKyst and NORA3
+    # files. An absolute one must still resolve to itself and stay inside the data tree, so sharing
+    # cannot become "points anywhere".
+    resolves_from(resolved, field, own_root, tree) =
+        isabspath(field) ? resolved == field && startswith(resolved, tree) :
+        startswith(resolved, own_root)
+
     for name in setup_names()
         config = fjord_config(name)
-        data_root = joinpath(homedir(), "FjordSim_data", name)
+        data_root = fjord_data_root(name)
+        data_tree = dirname(data_root)
 
         @test config isa FjordConfig
         # Every field is concrete or parameterized. `isconcretetype(typeof(config))` would be
@@ -1069,7 +1106,35 @@ end
         @test all(isconcretetype, fieldtypes(typeof(config)))
         @test config.bathymetry_config.data_root == data_root
         @test config.forcing_config.data_root == data_root
-        @test startswith(forcing_directory(config.forcing_config), data_root)
+
+        # Asserted for every field that can be shared, not just one of them: checking only the
+        # forcing directory is what let drammensfjorden start sharing Oslofjord's NorKyst download
+        # while the FileGDB and NORA3 fields it shares the same way went unpinned.
+        @test resolves_from(
+            forcing_directory(config.forcing_config),
+            config.forcing_config.output_directory,
+            data_root,
+            data_tree,
+        )
+        @test resolves_from(
+            geodatabase_path(config.bathymetry_config),
+            config.bathymetry_config.geodatabase_file,
+            data_root,
+            data_tree,
+        )
+        if !isnothing(config.atmosphere_config)
+            @test resolves_from(
+                atmosphere_directory(config.atmosphere_config),
+                config.atmosphere_config.output_directory,
+                data_root,
+                data_tree,
+            )
+        end
+
+        # What a setup *produces* is never shared: two fjords writing one prepared file would have
+        # each overwrite the other's, since the name carries no fjord in it.
+        @test startswith(forcing_path(config.forcing_config), data_root)
+        @test startswith(bathymetry_path(config.bathymetry_config), data_root)
 
         # Built inside the function, so the scratch path `__init__` fills in is already there. A
         # config built at precompile time would carry an empty `raw_directory` instead.
@@ -1118,6 +1183,25 @@ end
                 config.simulation_config.results_root,
                 config.bathymetry_config.data_root,
             )
+        end
+    end
+
+    # Every registered setup reads its roots from the environment, which is what lets one config
+    # run against a laptop's home directory and a cloud VM's staging disk without being edited.
+    # Asserted over all of them, since a setup spelling `homedir()` directly would run against the
+    # wrong disk in a container and only fail once it could not find its inputs.
+    withenv("FJORDSIM_DATA_ROOT" => "/mnt/data", "FJORDSIM_RESULTS_ROOT" => "/mnt/results") do
+        for name in setup_names()
+            config = fjord_config(name)
+
+            @test config.bathymetry_config.data_root == joinpath("/mnt/data", name)
+            if !isnothing(config.simulation_config)
+                @test config.simulation_config.results_root == joinpath("/mnt/results", name)
+            end
+
+            # A setup sharing another fjord's downloads by absolute path must follow the move too,
+            # or a relocated Drammensfjord would look for Oslofjord's FileGDB back under `~`.
+            @test startswith(geodatabase_path(config.bathymetry_config), "/mnt/data/")
         end
     end
 end

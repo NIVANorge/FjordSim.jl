@@ -221,29 +221,31 @@ end
 The `NamedTuple` the two coefficient functions read: the domain's extent, its cell size, the ramp
 width, the two coefficients, and one `1.0`/`0.0` multiplier per lateral edge.
 
-Every entry is a `Float64`, including the edge switches, so the tuple is concretely typed and the
-kernel branch-free. The cell sizes are the nominal `Δλ` and `Δφ` of the underlying grid, which is
-what `width_cells` counts.
+Every entry is the grid's own `eltype`, including the edge switches, so the tuple is concretely
+typed and the kernel branch-free without ever mixing in `Float64` alongside `Float32` field data.
+The cell sizes are the nominal `Δλ` and `Δφ` of the underlying grid, which is what `width_cells`
+counts.
 """
 function sponge_parameters(config::BoundarySponge, grid, edges)
+    FT = eltype(grid)
     λ_west, λ_east = x_domain(grid)
     φ_south, φ_north = y_domain(grid)
     Nx, Ny, _ = size(grid)
 
     return (;
-        λ_west = Float64(λ_west),
-        λ_east = Float64(λ_east),
-        φ_south = Float64(φ_south),
-        φ_north = Float64(φ_north),
-        Δλ = Float64(λ_east - λ_west) / Nx,
-        Δφ = Float64(φ_north - φ_south) / Ny,
-        width = Float64(config.width_cells),
-        ν = config.viscosity,
-        κ = config.diffusivity,
-        south = (:south in edges) * 1.0,
-        north = (:north in edges) * 1.0,
-        west = (:west in edges) * 1.0,
-        east = (:east in edges) * 1.0,
+        λ_west = FT(λ_west),
+        λ_east = FT(λ_east),
+        φ_south = FT(φ_south),
+        φ_north = FT(φ_north),
+        Δλ = FT(λ_east - λ_west) / Nx,
+        Δφ = FT(φ_north - φ_south) / Ny,
+        width = FT(config.width_cells),
+        ν = convert(FT, config.viscosity),
+        κ = convert(FT, config.diffusivity),
+        south = (:south in edges) * one(FT),
+        north = (:north in edges) * one(FT),
+        west = (:west in edges) * one(FT),
+        east = (:east in edges) * one(FT),
     )
 end
 

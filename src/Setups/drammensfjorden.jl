@@ -18,6 +18,7 @@ downloaders skip a month already present. The boundary band and the NVE caches a
 function drammensfjorden()
     data_root = fjord_data_root("drammensfjorden")
     oslofjorden_data_root = fjord_data_root("oslofjorden")
+    Oceananigans.defaults.FloatType = Float32
     FT = Oceananigans.defaults.FloatType
 
     return FjordConfig(

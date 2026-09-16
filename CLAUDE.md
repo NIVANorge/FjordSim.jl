@@ -43,6 +43,11 @@ julia --project -m FjordSim prepare_atmosphere --config oslofjorden
 # Build and run the coupled simulation (needs every prepare step the setup configures, plus a GPU)
 julia --project -m FjordSim run_simulation --config oslofjorden
 
+# Score a finished run against observations, writing tables and figures to <results_root>/validation/
+# Only Kartverket water level is fetched automatically; the NIVA-held programmes want a reader
+# subtyping `AbstractObservationConfig` (see docs/adding-a-source.md).
+julia --project -m FjordSim validate_simulation --config oslofjorden_validation
+
 # The subcommands and the setups they accept
 julia --project -m FjordSim --help
 ```
@@ -148,8 +153,11 @@ read it before changing any of these:
 10. **Simulations** (`src/Simulations.jl`) — `SimulationConfig`, `build_simulation`/`run_simulation`,
     writers, callbacks, looping, checkpointing, initial conditions.
 11. **Setups** (`src/Setups/`) — the built-in fjords; see `docs/setups.md`.
-12. **CLI** (`src/CLI.jl`) — subcommand dispatch, logging.
-13. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
+12. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
+    observation sources, skill and tidal statistics, and the comparison figures. `StationWriter`
+    (in `Simulations`) is what a run writes for it.
+13. **CLI** (`src/CLI.jl`) — subcommand dispatch, logging.
+14. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
 
 ## Setups
 
@@ -195,6 +203,19 @@ forcings.
 - Extend functions via `function Mod.foo(...) ... end` — never `import Mod: foo` to extend
 - Exports go at the top of each module file, before other code
 - Keep imports explicit so the dependency surface stays auditable
+
+## Tests
+
+- **Tests are general, never setup-specific.** Never assert a value a setup states — a grid size, a
+  box, a year, a `start_date`, a station list, which dataset it picks. Those are the setup author's
+  to change, and a test that pins them turns every scientific choice into a test failure. Assert the
+  *conventions* a setup getting it wrong would break, over `setup_names()`, the way the "Setups"
+  testset already does.
+- Build fixtures from `test/utilities.jl` (`test_simulation_config`, `immersed_test_grid`, ...)
+  rather than reading a registered setup with `fjord_config`.
+- **Do not test plotting.** No test asserts that a figure was drawn or how it looks.
+- The suite is offline: write a fixture file rather than fetching one. Anything needing the network
+  is a manual integration check, not a test.
 
 ## Code Style
 

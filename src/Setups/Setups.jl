@@ -1,6 +1,6 @@
 module Setups
 
-export fjord_config, setup_names, oslofjorden, drammensfjorden
+export fjord_config, setup_names, oslofjorden, oslofjorden_validation, drammensfjorden
 
 import Oceananigans        # for `Oceananigans.defaults.FloatType`
 using Oceananigans:
@@ -10,7 +10,7 @@ using Oceananigans:
     WENO,
     WENOVectorInvariant
 using Oceananigans.TurbulenceClosures: HorizontalScalarBiharmonicDiffusivity
-using Oceananigans.Units: day, days, hour, hours, minutes, second
+using Oceananigans.Units: day, days, hour, hours, minute, minutes, second
 using Dates: DateTime
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using NumericalEarth: FreezingLimitedOceanTemperature
@@ -20,7 +20,13 @@ using ..Utils: progress
 using ..Grids: EvenGrid
 using ..Bathymetry: DybdedataConfig, GEONORGE_DYBDEDATA_GDB
 using ..Atmospheres: NORA3Config
-using ..Forcing: NorKystConfig, NVERiversConfig, NVERiver, NorKystBoundariesConfig
+using ..Forcing:
+    NorKystConfig,
+    NorKystHindcastConfig,
+    NVERiversConfig,
+    NVERiver,
+    NorKystBoundariesConfig,
+    NorKystHindcastBoundariesConfig
 using ..BoundaryConditions:
     AirSeaFluxes, QuadraticBottomDrag, OpenLateralBoundaryFromData, MergedBoundaryConditions
 using ..Simulations:
@@ -30,6 +36,9 @@ using ..Simulations:
     BoundarySponge,
     SnapshotWriter,
     FieldSnapshotWriter,
+    Station,
+    StationWriter,
+    FieldStationWriter,
     CheckpointWriter,
     ProgressCallback,
     AdaptiveTimeStep,
@@ -37,6 +46,7 @@ using ..Simulations:
     FromResults
 
 include("oslofjorden.jl")
+include("oslofjorden_validation.jl")
 include("drammensfjorden.jl")
 
 # Each setup is a function rather than a `const FjordConfig`, and building one at load time would
@@ -52,6 +62,7 @@ include("drammensfjorden.jl")
 # the function barrier.
 const SETUPS = Dict{String,Function}(
     "oslofjorden" => oslofjorden,
+    "oslofjorden_validation" => oslofjorden_validation,
     "drammensfjorden" => drammensfjorden,
 )
 

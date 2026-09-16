@@ -7,6 +7,9 @@ export SimulationConfig,
     BoundarySponge,
     SnapshotWriter,
     FieldSnapshotWriter,
+    Station,
+    StationWriter,
+    FieldStationWriter,
     CheckpointWriter,
     ProgressCallback,
     AdaptiveTimeStep,
@@ -26,9 +29,10 @@ using Oceananigans
 using Oceananigans: fields
 using Oceananigans.Utils: prettytime
 using Oceananigans.TimeSteppers: reset!, update_state!
-using Oceananigans.Grids: x_domain, y_domain, node
+using Oceananigans.Grids: x_domain, y_domain, node, λnodes, φnodes, znodes, Center, Face
 using NumericalEarth
 using Dates: DateTime, Second
+using Printf: @sprintf
 using NCDatasets
 
 using ..Configs
@@ -59,7 +63,8 @@ using ..Forcing:
     interpolation_architecture,
     boundary_series,
     boundary_date_range,
-    RIVERS_ONLY_ATTRIBUTE
+    RIVERS_ONLY_ATTRIBUTE,
+    column_wet_levels
 using ..BoundaryConditions: field_boundary_conditions
 
 """
@@ -535,6 +540,186 @@ function FieldSnapshotWriter(; name, output_file, variables, interval, overwrite
         Tuple(Symbol(variable) for variable in variables),
         Float64(interval),
         Bool(overwrite_existing),
+    )
+end
+
+"""
+    Station(; name, longitude, latitude)
+
+One observation site a run writes a time series at, named by the position the observation was
+actually taken at rather than by a grid index.
+
+Snapping to the grid is deliberately left to attach time, where the grid exists, so that the offset
+between the two can be logged. The reports this setup is validated against make the point
+themselves — METreport 11/2017 Fig. 11 notes that "the true position of Station Km1 is a little to
+the west" of where the model results were extracted — and a comparison that does not record how far
+a station moved cannot be read honestly.
+
+# Fields
+- `name`: what the station is called in the source the observations come from, e.g. `"OF-1"` or
+  `"Km1"`. Used in the output filename and the `output_writers` key, via `station_tag`.
+- `longitude`, `latitude`: degrees east and north.
+"""
+struct Station
+    name::String
+    longitude::Float64
+    latitude::Float64
+end
+
+Station(; name, longitude, latitude) = Station(String(name), Float64(longitude), Float64(latitude))
+
+# Norwegian letters mapped to their conventional ASCII transliterations before anything else is
+# stripped, so `TØ-1` and `Ø-1` stay distinguishable (`TO_1`, `O_1`) where a blanket
+# non-alphanumeric substitution would collapse them towards each other.
+const STATION_TAG_SUBSTITUTIONS = ('Æ' => "AE", 'æ' => "ae", 'Ø' => "O", 'ø' => "o", 'Å' => "A", 'å' => "a")
+
+"""
+    station_tag(station)
+
+`station.name` reduced to a filename- and `Symbol`-safe ASCII token.
+"""
+function station_tag(station::Station)
+    name = station.name
+    for (character, replacement) in STATION_TAG_SUBSTITUTIONS
+        name = replace(name, character => replacement)
+    end
+
+    tag = replace(name, r"[^A-Za-z0-9]+" => "_")
+    tag = strip(tag, '_')
+    isempty(tag) && throw(ArgumentError("Station name $(repr(station.name)) reduces to an empty tag."))
+
+    return tag
+end
+
+"""
+    StationWriter(; name, output_file, variables, stations, interval, overwrite_existing, search_radius = 10)
+
+A NetCDF time series of whole water-column profiles at named positions, on a `TimeInterval`
+schedule. One file per station.
+
+The counterpart of `SnapshotWriter` for validation rather than for maps. A snapshot of the full
+domain costs `Nx * Ny * Nz` per record, so the cadence a model-observation comparison needs — hourly
+for a current meter, ten-minutely for a tide gauge — is unaffordable over a multi-year window,
+while the same cadence at a dozen points is nothing. `oslofjorden_validation()` writes 59 GB of
+daily 3D fields and about 150 MB of station series beside them.
+
+One `NetCDFWriter` per station rather than one for all of them, because Oceananigans takes a single
+`indices` per file and a station is `indices = (i, j, :)`. So this writer occupies one
+`output_writers` key per station — `writer_keys` reports them all, which is what keeps
+`validate_writers` able to catch a collision.
+
+# Fields
+- `name`: the stem of the `output_writers` keys, each suffixed with the station's `station_tag`.
+- `output_file`: resolved by `results_path` and then suffixed per station, so one writer named
+  `moorings.nc` writes `moorings_<tag>_Km1.nc`, `moorings_<tag>_Kn2.nc` and so on.
+- `variables`: field names as `Symbol`s, resolved against the model by `snapshot_outputs` exactly as
+  a `SnapshotWriter`'s are.
+- `stations`: the positions to write at.
+- `interval`, `overwrite_existing`: the schedule and the clobber policy.
+- `search_radius`: how many cells out to look for water when a station's own cell is dry. Stations
+  sit at the coast — a beach thermometer, a mooring in a narrow sound — and at a couple of hundred
+  metres per cell several of them land on the wrong side of the model coastline. A station with no
+  water in reach is dropped with a warning rather than failing the run, since one unusable station
+  is not a reason to lose a multi-week simulation.
+"""
+struct StationWriter{V<:Tuple{Vararg{Symbol}}} <: AbstractWriterConfig
+    name::Symbol
+    output_file::String
+    variables::V
+    stations::Vector{Station}
+    interval::Float64
+    overwrite_existing::Bool
+    search_radius::Int
+end
+
+function StationWriter(;
+    name,
+    output_file,
+    variables,
+    stations,
+    interval,
+    overwrite_existing,
+    search_radius = 10,
+)
+    return StationWriter(
+        validate_station_writer(name, output_file, variables, stations, interval, search_radius)...,
+        Bool(overwrite_existing),
+        Int(search_radius),
+    )
+end
+
+"""
+    FieldStationWriter(; name, output_file, variables, stations, interval, overwrite_existing, search_radius = 10)
+
+The same idea as `StationWriter`, written to JLD2 instead of NetCDF.
+
+It exists for the same reason `FieldSnapshotWriter` does: Oceananigans' NetCDF writer cannot emit a
+`(Center, Center, Nothing)` user output at all, so the free surface `η` — the one field a tide gauge
+comparison is *about* — has to go somewhere else. The split is by what a format can hold, not by
+subject.
+"""
+struct FieldStationWriter{V<:Tuple{Vararg{Symbol}}} <: AbstractWriterConfig
+    name::Symbol
+    output_file::String
+    variables::V
+    stations::Vector{Station}
+    interval::Float64
+    overwrite_existing::Bool
+    search_radius::Int
+end
+
+function FieldStationWriter(;
+    name,
+    output_file,
+    variables,
+    stations,
+    interval,
+    overwrite_existing,
+    search_radius = 10,
+)
+    return FieldStationWriter(
+        validate_station_writer(name, output_file, variables, stations, interval, search_radius)...,
+        Bool(overwrite_existing),
+        Int(search_radius),
+    )
+end
+
+"""
+    validate_station_writer(name, output_file, variables, stations, interval, search_radius)
+
+The five fields both station writers share, checked and converted. Returns them in field order, so
+each constructor splats this and appends its own remaining two.
+
+Duplicate station tags are rejected here rather than at attach time: two stations whose names
+reduce to one tag would write to one file and occupy one `output_writers` key, and the second would
+silently replace the first.
+"""
+function validate_station_writer(name, output_file, variables, stations, interval, search_radius)
+    interval > 0 ||
+        throw(ArgumentError("A station writer's `interval` must be positive, got $interval."))
+    isempty(variables) &&
+        throw(ArgumentError("Station writer :$name names no `variables` to write."))
+    isempty(stations) &&
+        throw(ArgumentError("Station writer :$name names no `stations` to write at."))
+    search_radius >= 0 || throw(
+        ArgumentError("A station writer's `search_radius` must not be negative, got $search_radius."),
+    )
+
+    sites = collect(Station, stations)
+    tags = map(station_tag, sites)
+    allunique(tags) || throw(
+        ArgumentError(
+            "Station writer :$name has stations whose names reduce to the same tag: " *
+            "$(join(sort(tags), ", ")). Two stations under one tag write to one file.",
+        ),
+    )
+
+    return (
+        Symbol(name),
+        String(output_file),
+        Tuple(Symbol(variable) for variable in variables),
+        sites,
+        Float64(interval),
     )
 end
 
@@ -1130,6 +1315,8 @@ struct NamesNoOutputFile <: OutputPathTrait end
 output_path_trait(::AbstractWriterConfig) = NamesNoOutputFile()
 output_path_trait(::SnapshotWriter) = NamesOutputFile()
 output_path_trait(::FieldSnapshotWriter) = NamesOutputFile()
+output_path_trait(::StationWriter) = NamesOutputFile()
+output_path_trait(::FieldStationWriter) = NamesOutputFile()
 
 """
     reported_paths(writer, config, loop)
@@ -1163,6 +1350,11 @@ that would silently replace one another in the same dictionary.
 writer_keys(writer::AbstractWriterConfig) = writer_keys(output_path_trait(writer), writer)
 writer_keys(::NamesOutputFile, writer) = (writer.name,)
 writer_keys(::NamesNoOutputFile, ::AbstractWriterConfig) = ()
+
+# One key per station rather than one per writer, so `validate_writers` still catches two writers
+# that would replace each other — a station writer occupies as many slots as it places stations.
+writer_keys(writer::Union{StationWriter,FieldStationWriter}) =
+    Tuple(station_writer_key(writer, station) for station in writer.stations)
 
 """
     checkpoint_prefix(loop)
@@ -1259,8 +1451,8 @@ end
 
 The fields `writer.variables` names, as the `NamedTuple` an output writer consumes.
 
-Shared by `SnapshotWriter` and `FieldSnapshotWriter`: which names a model has, and the error naming
-the ones it does not, are the same question whatever the file format.
+Shared by all four output writers: which names a model has, and the error naming the ones it does
+not, are the same question whatever the file format and whatever part of the domain is written.
 
 Resolved through `Oceananigans.fields`, the model's own flattened view of its velocities, free
 surface, tracers and auxiliary fields — so a setup that adds a biogeochemical tracer, or names `w`,
@@ -1272,7 +1464,10 @@ on. The asymmetry is deliberate and worth keeping: that function serves two kind
 variable sets legitimately differ and which no config named, while here the setup wrote the name
 down. An over-eager error costs a typo fix; a silently dropped variable costs a whole run.
 """
-function snapshot_outputs(writer::Union{SnapshotWriter,FieldSnapshotWriter}, ocean_model)
+function snapshot_outputs(
+    writer::Union{SnapshotWriter,FieldSnapshotWriter,StationWriter,FieldStationWriter},
+    ocean_model,
+)
     available = fields(ocean_model)
     unknown = filter(name -> !haskey(available, name), writer.variables)
 
@@ -1363,6 +1558,273 @@ function attach_writer!(
 
     return simulation
 end
+
+# One station snapped to the grid: where it asked to be, where it landed, how far that moved it
+# and how deep the model is there. Concretely typed, like every other record in this module.
+const PlacedStation =
+    @NamedTuple{station::Station, i::Int, j::Int, offset::Float64, depth::Float64}
+
+"""
+    station_cells(writer, grid)
+
+Snap each of `writer.stations` to a wet surface cell of `grid`, as a vector of
+`(station, i, j, offset_cells, depth)`. Stations with no water within `writer.search_radius` cells
+are dropped with a warning.
+
+`column_wet_levels` is what decides what "wet" means, which is the same `water_mask` that
+`prepare_forcing` writes the forcing file against and that `river_cells` places river mouths with —
+so a station, a river and a forcing cell all agree on where the coastline is.
+
+Unlike a river, a station is *not* required to be coastal. A river has to enter at the shoreline or
+its freshwater appears in the middle of the fjord; an ADCP mooring in the deepest part of a transect
+has the opposite requirement. So the search is over water rather than over coastline, and the two
+helpers stay separate for that reason rather than by accident.
+"""
+function station_cells(writer, grid)
+    surface, levels = column_wet_levels(grid)
+    longitudes = Array(λnodes(grid, Center()))
+    latitudes = Array(φnodes(grid, Center()))
+    depths = Array(znodes(grid, Face()))
+    longitude_bounds = x_domain(grid)
+    latitude_bounds = y_domain(grid)
+
+    placed = PlacedStation[]
+    for station in writer.stations
+        label = "station $(station.name)"
+
+        # Against the grid's own face bounds, not the centre nodes: a station in the outer half
+        # of an edge cell is inside the domain, and comparing it to `first(longitudes)` — the
+        # centre of that cell — would reject it as outside.
+        if !(longitude_bounds[1] <= station.longitude <= longitude_bounds[2]) ||
+           !(latitude_bounds[1] <= station.latitude <= latitude_bounds[2])
+            @warn "Skipping $label: position is outside the grid" station.longitude station.latitude
+            continue
+        end
+
+        i = argmin(abs.(longitudes .- station.longitude))
+        j = argmin(abs.(latitudes .- station.latitude))
+
+        nearest = nearest_water_cell(surface, i, j, writer.search_radius)
+        if isnothing(nearest)
+            @warn "Skipping $label: no water cell within $(writer.search_radius) cells of ($i, $j)"
+            continue
+        end
+
+        wet = levels[nearest[1], nearest[2]]
+        push!(
+            placed,
+            (
+                station = station,
+                i = nearest[1],
+                j = nearest[2],
+                offset = nearest[3],
+                depth = -depths[length(depths) - wet],
+            ),
+        )
+    end
+
+    isempty(placed) && @warn "Station writer :$(writer.name) placed none of its stations."
+    return placed
+end
+
+"""
+    nearest_water_cell(mask, i, j, radius)
+
+The water cell closest to `(i, j)`, as `(i, j, distance)`, searching rings of growing radius out to
+`radius` cells. Returns `nothing` when no ring holds one.
+
+`nearest_coastal_cell`'s counterpart for a site that wants open water rather than shoreline; ties
+break the same way, by the iteration order.
+"""
+function nearest_water_cell(mask, i, j, radius)
+    checkbounds(Bool, mask, i, j) && mask[i, j] && return (i, j, 0.0)
+
+    for ring = 1:radius
+        best = nothing
+
+        for dj = -ring:ring, di = -ring:ring
+            distance = sqrt(di^2 + dj^2)
+            ring - 1//2 <= distance <= ring + 1//2 || continue
+            checkbounds(Bool, mask, i + di, j + dj) || continue
+            mask[i + di, j + dj] || continue
+            if isnothing(best) || distance < best[3]
+                best = (i + di, j + dj, distance)
+            end
+        end
+
+        isnothing(best) || return best
+    end
+
+    return nothing
+end
+
+"""
+    station_output_path(writer, config, loop, station)
+
+Where one station's file goes: the writer's own run-tagged path with the station's tag appended to
+the stem, so `moorings.nc` becomes `moorings_<run tag>_Km1.nc`.
+"""
+function station_output_path(writer, config::AbstractSimulationConfig, loop, station::Station)
+    base = loop_output_path(writer, config, loop)
+    directory, file = splitdir(base)
+    stem, extension = splitext(file)
+    return joinpath(directory, string(stem, "_", station_tag(station), extension))
+end
+
+"""
+    report_station_cells(writer, placed, grid)
+
+Log where every station actually landed: its grid indices, the model's water depth there, and how
+far the snap moved it in cells and in metres.
+
+The offset is the number a reader of the validation needs and the one no other record holds. At a
+couple of hundred metres per cell, a station in a narrow sound can be placed a kilometre from where
+its instrument sat, and a disagreement that large is a property of the comparison rather than of the
+model.
+"""
+function report_station_cells(writer, placed, grid)
+    isempty(placed) && return nothing
+
+    longitudes = Array(λnodes(grid, Center()))
+    latitudes = Array(φnodes(grid, Center()))
+
+    @info "Station writer :$(writer.name) placed $(length(placed))/$(length(writer.stations)) stations"
+    for site in placed
+        longitude = longitudes[site.i]
+        latitude = latitudes[site.j]
+        metres = haversine_distance(site.station.longitude, site.station.latitude, longitude, latitude)
+        @info @sprintf(
+            "  %-16s (%3d, %3d)  %7.4fN %7.4fE  depth %6.1f m  moved %4.1f cells, %5.0f m",
+            site.station.name, site.i, site.j, latitude, longitude, site.depth, site.offset, metres
+        )
+    end
+
+    return nothing
+end
+
+"""
+    haversine_distance(longitude1, latitude1, longitude2, latitude2)
+
+Great-circle distance in metres between two points in degrees. Only used to report how far a station
+moved when it was snapped to the grid.
+"""
+function haversine_distance(longitude1, latitude1, longitude2, latitude2)
+    radius = 6371008.8
+    φ1, φ2 = deg2rad(latitude1), deg2rad(latitude2)
+    Δφ = φ2 - φ1
+    Δλ = deg2rad(longitude2 - longitude1)
+    a = sin(Δφ / 2)^2 + cos(φ1) * cos(φ2) * sin(Δλ / 2)^2
+    return 2 * radius * asin(min(one(a), sqrt(a)))
+end
+
+"""
+    attach_writer!(simulation, writer::StationWriter, config, loop)
+
+Attach one `NetCDFWriter` per placed station to the ocean sub-simulation, each writing the whole
+water column at that station's `(i, j)`.
+
+The run's `start_date` goes in as a global attribute exactly as `SnapshotWriter` records it, since a
+station file's `time` is seconds from its own run's zero and carries no calendar either. The
+station's own metadata goes in beside it, so a file can be matched to observations without the
+config that produced it.
+"""
+function attach_writer!(simulation, writer::StationWriter, config::AbstractSimulationConfig, loop)
+    ocean_sim = simulation.model.ocean
+    grid = ocean_sim.model.grid
+    placed = station_cells(writer, grid)
+    report_station_cells(writer, placed, grid)
+
+    for site in placed
+        key = station_writer_key(writer, site.station)
+        haskey(ocean_sim.output_writers, key) && close(pop!(ocean_sim.output_writers, key))
+
+        filepath = station_output_path(writer, config, loop, site.station)
+        mkpath(dirname(filepath))
+
+        ocean_sim.output_writers[key] = NetCDFWriter(
+            ocean_sim.model,
+            snapshot_outputs(writer, ocean_sim.model);
+            filename = filepath,
+            schedule = TimeInterval(writer.interval),
+            indices = (site.i, site.j, :),
+            overwrite_existing = writer.overwrite_existing,
+            global_attributes = station_attributes(config, site, grid),
+        )
+    end
+
+    return simulation
+end
+
+"""
+    attach_writer!(simulation, writer::FieldStationWriter, config, loop)
+
+`StationWriter`'s attach in JLD2. `JLD2Writer` takes the same `indices`, so the only differences are
+the format and that Oceananigans' JLD2 layout has nowhere to put the station metadata — it is
+logged by `report_station_cells` and recoverable from the filename's station tag.
+"""
+function attach_writer!(
+    simulation,
+    writer::FieldStationWriter,
+    config::AbstractSimulationConfig,
+    loop,
+)
+    ocean_sim = simulation.model.ocean
+    grid = ocean_sim.model.grid
+    placed = station_cells(writer, grid)
+    report_station_cells(writer, placed, grid)
+
+    for site in placed
+        key = station_writer_key(writer, site.station)
+        haskey(ocean_sim.output_writers, key) && close(pop!(ocean_sim.output_writers, key))
+
+        filepath = station_output_path(writer, config, loop, site.station)
+        mkpath(dirname(filepath))
+
+        ocean_sim.output_writers[key] = JLD2Writer(
+            ocean_sim.model,
+            snapshot_outputs(writer, ocean_sim.model);
+            filename = filepath,
+            schedule = TimeInterval(writer.interval),
+            indices = (site.i, site.j, :),
+            overwrite_existing = writer.overwrite_existing,
+            with_halos = false,
+        )
+    end
+
+    return simulation
+end
+
+"""
+    station_attributes(config, site, grid)
+
+The global attributes a station NetCDF carries: the run's `start_date`, and where the station asked
+to be against where it ended up.
+"""
+function station_attributes(config::AbstractSimulationConfig, site, grid)
+    longitude = Array(λnodes(grid, Center()))[site.i]
+    latitude = Array(φnodes(grid, Center()))[site.j]
+
+    return Dict(
+        RESULTS_START_DATE_ATTRIBUTE => string(config.start_date),
+        "station_name" => site.station.name,
+        "station_longitude" => site.station.longitude,
+        "station_latitude" => site.station.latitude,
+        "model_longitude" => longitude,
+        "model_latitude" => latitude,
+        "model_depth" => site.depth,
+        "snap_offset_cells" => site.offset,
+        "snap_offset_metres" =>
+            haversine_distance(site.station.longitude, site.station.latitude, longitude, latitude),
+    )
+end
+
+"""
+    station_writer_key(writer, station)
+
+The `output_writers` key one station occupies: the writer's name and the station's tag.
+"""
+station_writer_key(writer, station::Station) =
+    Symbol(writer.name, :_, station_tag(station))
 
 """
     attach_writer!(simulation, writer::CheckpointWriter, config, loop)

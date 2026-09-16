@@ -195,3 +195,56 @@ Required fields are listed in each supertype's docstring in `src/Configs.jl`. Pa
 `atmosphere_directory`, `results_path`, `plot_path`) and the plots come for free. A missing
 required hook surfaces as a `MethodError` naming it, which the "Config extensibility" testset
 asserts.
+
+## Observations — `AbstractObservationConfig`
+
+The one supertype in `src/Validation/`, and the only one whose subtypes run *after* a simulation
+rather than before it. Same shape as every source above: subtype it, overload the hooks, and nothing
+in the scoring or plotting code changes.
+
+| Hook | Required | Default |
+|---|---|---|
+| `observation_stations(config)` | yes | — |
+| `observation_series(config, station, variable; window)` | yes | — |
+| `download_observations(config, window)` | no | no-op |
+| `observations_directory(config)` | no | `joinpath(data_root, output_directory)` |
+
+Required fields: `data_root` and `output_directory`.
+
+Two conventions the hooks rely on, both because a validation sweep asks every source for every
+station and variable it might hold:
+
+- **`observation_series` returns `nothing`, not an error, for a pair it has nothing for.** Most
+  combinations are empty — an instrument that was in the water for ten weeks of a two-year run, a
+  station outside a programme's remit — and that is a blank row rather than a failure.
+- **`download_observations` defaults to a no-op.** A source read from files someone supplies has
+  nothing to fetch and should not have to say so. `KartverketSeaLevel` is the only built-in source
+  that fetches, because it is the only observation programme in the FjordOs evaluation that is
+  public; the rest are held by their owners and want a reader, not a client.
+
+Every source returns the same `ObservationSeries` — `(station, variable, times, depths, values,
+units, source)`, with `values` shaped `(time, depth)` — which is what lets `Metrics.jl` stay ignorant
+of where a number came from. Profiles are interpolated onto one depth axis at read time, since no
+instrument samples the same depths twice and a Hovmøller diagram needs a rectangular array;
+`interpolate_to_depths` does not extrapolate, so a shallow cast cannot invent deep water.
+
+`variable` is the FjordSim field name the observation is scored against — `"T"`, `"S"`, `"u"`,
+`"v"`, `"eta"` — not the source's own name for it, so unit and naming conversions belong inside the
+adapter where a mistake is visible.
+
+## Station output — `StationWriter` and `FieldStationWriter`
+
+Not a new supertype: both are `AbstractWriterConfig`s, listed in the writer table above. They are
+mentioned here because a validation needs them and they are the only writers that do not write the
+whole domain.
+
+Each takes a `stations::Vector{Station}` of lon/lat positions and writes `indices = (i, j, :)` — one
+whole water column per station, one file each. Snapping to the grid happens at attach time, where
+the grid exists, and `report_station_cells` logs the grid indices, the model depth and the offset in
+cells and metres for every station. That offset is the number a reader of the validation needs and
+nothing else records: at a couple of hundred metres per cell a station in a narrow sound can be
+placed a kilometre from its instrument, and a disagreement that large is a property of the
+comparison rather than of the model.
+
+`writer_keys` is overloaded to report one `output_writers` key per station, so `validate_writers`
+still catches two writers that would replace each other.

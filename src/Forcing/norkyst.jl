@@ -21,6 +21,17 @@ const NORKYST_VARIABLE_NAMES = Dict(
 const NORKYST_PROJECTION_VARIABLE = "projection_stere"
 
 """
+    AbstractNorKystConfig <: AbstractForcingConfig
+
+Supertype of the NorKyst-800m forcing configs. Two collections carry the same variables on the
+same kind of polar-stereographic grid — the operational archive (`NorKystConfig`, 2017 onwards)
+and the Norkyst-v3 hindcast (`NorKystHindcastConfig`, 2012 onwards) — so `forcing_variable_names`,
+`forcing_time_steps`, `forcing_source_grid` and `subset_ranges` are written once here. What differs
+is where the files live and how they are named, which is what each subtype states.
+"""
+abstract type AbstractNorKystConfig <: AbstractForcingConfig end
+
+"""
     NorKystConfig
 
 Configuration for downloading and subsetting NorKyst-800m reanalysis data.
@@ -52,7 +63,7 @@ The open edge is not here, and neither is the open-boundary dataset: both belong
 `AbstractBoundaryDataConfig` a setup names on its `FjordConfig`. `prepare_forcing` takes the edge as
 a keyword.
 """
-Base.@kwdef mutable struct NorKystConfig{R} <: AbstractForcingConfig
+Base.@kwdef mutable struct NorKystConfig{R} <: AbstractNorKystConfig
     data_root::String
     output_directory::String
     output_file::String = "forcing.nc"
@@ -74,19 +85,19 @@ forcing_monthly_filename(config::NorKystConfig, year, month) =
     "NorKyst-800m_ZDEPTHS_avg_$(year)$(lpad(month, 2, '0')).nc"
 
 """
-    forcing_variable_names(config::NorKystConfig)
+    forcing_variable_names(config::AbstractNorKystConfig)
 
 The NorKyst variables this dataset can supply and the FjordSim forcing names they become.
 """
-forcing_variable_names(config::NorKystConfig) = NORKYST_VARIABLE_NAMES
+forcing_variable_names(config::AbstractNorKystConfig) = NORKYST_VARIABLE_NAMES
 
 """
-    forcing_time_steps(config::NorKystConfig)
+    forcing_time_steps(config::AbstractNorKystConfig)
 
 Every time record of every downloaded monthly file for `config.years`, sorted by date with
 duplicates dropped. Errors if the directory or the files are missing.
 """
-function forcing_time_steps(config::NorKystConfig)
+function forcing_time_steps(config::AbstractNorKystConfig)
     directory = forcing_directory(config)
     isdir(directory) || error(
         "NorKyst directory $directory does not exist. " *
@@ -111,13 +122,13 @@ function forcing_time_steps(config::NorKystConfig)
 end
 
 """
-    forcing_source_grid(config::NorKystConfig, filepath)
+    forcing_source_grid(config::AbstractNorKystConfig, filepath)
 
 Read the projected coordinates, depth levels and projection of a downloaded NorKyst subset.
 Errors unless the projected coordinates are regularly spaced, which `source_field_grid` needs in
 order to express them as a `RectilinearGrid`.
 """
-function forcing_source_grid(config::NorKystConfig, filepath)
+function forcing_source_grid(config::AbstractNorKystConfig, filepath)
     return NCDataset(filepath) do ds
         x = Array{Float64}(ds["X"][:])
         y = Array{Float64}(ds["Y"][:])
@@ -199,14 +210,14 @@ struct NorKystSubset{M<:AbstractArray,S<:Tuple}
 end
 
 """
-    subset_ranges(ds, target_grid, config::NorKystConfig)
+    subset_ranges(ds, target_grid, config::AbstractNorKystConfig)
 
 The NorKyst index window covering the lon/lat domain of `target_grid`.
 
 The bounds come from `x_domain`/`y_domain` rather than a grid config's own fields, so any
 `AbstractGridConfig` works; they are the same face bounds an `EvenGrid` is built from.
 """
-function subset_ranges(ds, target_grid, config::NorKystConfig)
+function subset_ranges(ds, target_grid, config::AbstractNorKystConfig)
     longitude_range = x_domain(target_grid)
     latitude_range = y_domain(target_grid)
 

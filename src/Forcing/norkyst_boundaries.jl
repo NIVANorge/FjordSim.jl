@@ -40,6 +40,20 @@ const NORKYST_GRID_RELATIVE_COMPONENTS = ("ubar", "vbar")
 const NORKYST_GRID_ANGLE_VARIABLE = "angle"
 
 """
+    AbstractNorKystBoundariesConfig <: AbstractBoundaryDataConfig
+
+Supertype of the NorKyst open-boundary configs. The operational archive
+(`NorKystBoundariesConfig`) and the Norkyst-v3 hindcast (`NorKystHindcastBoundariesConfig`) publish
+the same fields on the same polar-stereographic grid with the same projection variable and depth
+axis, so `boundary_time_steps` and `boundary_source_grid` are written once against this type.
+
+What is *not* shared is `boundary_source_slab`: the operational collection needs its barotropic pair
+derotated from ROMS' curvilinear axes and overloads it to do that, while the hindcast publishes the
+pair already derotated and takes the generic default.
+"""
+abstract type AbstractNorKystBoundariesConfig <: AbstractBoundaryDataConfig end
+
+"""
     NorKystBoundariesConfig
 
 Configuration for downloading and subsetting hourly NorKyst-800m data along one open lateral
@@ -73,7 +87,7 @@ overrides `data_root` for that entry only.
 - `parameters`: Source variable names to extract. Required.
 - `years`: Calendar years to download. Required.
 """
-mutable struct NorKystBoundariesConfig <: AbstractBoundaryDataConfig
+mutable struct NorKystBoundariesConfig <: AbstractNorKystBoundariesConfig
     data_root::String
     output_directory::String
     output_file::String
@@ -144,15 +158,15 @@ The NorKyst variables this dataset can supply along a boundary and the FjordSim 
 boundary_variable_names(config::NorKystBoundariesConfig) = NORKYST_BOUNDARY_VARIABLE_NAMES
 
 """
-    boundary_time_steps(config::NorKystBoundariesConfig)
+    boundary_time_steps(config::AbstractNorKystBoundariesConfig)
 
 Every time record of every downloaded monthly file for `config.years`, sorted by date with
 duplicates dropped. Errors if the directory or the files are missing.
 """
-function boundary_time_steps(config::NorKystBoundariesConfig)
+function boundary_time_steps(config::AbstractNorKystBoundariesConfig)
     directory = boundary_data_directory(config)
     isdir(directory) || error(
-        "Hourly NorKyst directory $directory does not exist. " *
+        "NorKyst boundary directory $directory does not exist. " *
         "Run `julia --project -m FjordSim download_boundaries` for this setup first.",
     )
 
@@ -168,20 +182,20 @@ function boundary_time_steps(config::NorKystBoundariesConfig)
     end
 
     isempty(records) &&
-        error("No hourly NorKyst monthly files for years $(config.years) found in $directory.")
+        error("No NorKyst boundary monthly files for years $(config.years) found in $directory.")
     sort!(records; by = record -> record.date)
 
     return unique(record -> record.date, records)
 end
 
 """
-    boundary_source_grid(config::NorKystBoundariesConfig, filepath)
+    boundary_source_grid(config::AbstractNorKystBoundariesConfig, filepath)
 
-Read the projected coordinates, depth levels and projection of a downloaded hourly NorKyst subset.
-Identical in shape to `forcing_source_grid(config::NorKystConfig, filepath)` — the two collections
-share their grid, their projection variable and their depth axis.
+Read the projected coordinates, depth levels and projection of a downloaded NorKyst boundary subset.
+Identical in shape to `forcing_source_grid(config::AbstractNorKystConfig, filepath)` — every NorKyst
+collection shares its grid, its projection variable and its depth axis.
 """
-function boundary_source_grid(config::NorKystBoundariesConfig, filepath)
+function boundary_source_grid(config::AbstractNorKystBoundariesConfig, filepath)
     return NCDataset(filepath) do ds
         x = Array{Float64}(ds["X"][:])
         y = Array{Float64}(ds["Y"][:])
@@ -189,12 +203,12 @@ function boundary_source_grid(config::NorKystBoundariesConfig, filepath)
         proj4 = NCDatasets.variable(ds, NORKYST_PROJECTION_VARIABLE).attrib["proj4"]
 
         length(x) >= 2 && length(y) >= 2 || error(
-            "Hourly NorKyst subset in $filepath is too small to interpolate from: " *
+            "NorKyst boundary subset in $filepath is too small to interpolate from: " *
             "$(length(x))x$(length(y)). Raise the boundary config's `margin`.",
         )
         all(difference -> isapprox(difference, x[2] - x[1]), diff(x)) &&
             all(difference -> isapprox(difference, y[2] - y[1]), diff(y)) ||
-            error("Hourly NorKyst projected coordinates in $filepath are not regularly spaced.")
+            error("NorKyst boundary projected coordinates in $filepath are not regularly spaced.")
 
         return ProjectedSourceGrid(x, y, depths, proj4)
     end

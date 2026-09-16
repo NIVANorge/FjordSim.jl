@@ -178,3 +178,100 @@ which it gets by subtyping `AbstractFreeSurfaceConfig`, `AbstractBoundaryConditi
 `AbstractGridConfig` in the file itself. It is not a runner — it is passed as
 `--config examples/oslofjorden_npzd.jl`, and it shares `oslofjorden()`'s `data_root` so the atmosphere
 prepare steps do not have to run twice.
+
+## `oslofjorden_validation`
+
+`oslofjorden()` with its physics untouched, over the domain and the years the two MET Norway FjordOs
+reports cover, plus the in-run diagnostics a model-observation comparison needs. It exists to answer
+one question quantitatively: how does FjordSim, as it actually stands, score against the same
+observations MET scored their ROMS model against?
+
+The references are Røed et al., *A high-resolution, curvilinear ROMS model for the Oslofjord*,
+METreport 4/2016 (the model and its 1 Apr 2014 – 31 Dec 2015 hindcast), and Hjelmervik et al.,
+*Evaluation of the FjordOs-model*, METreport 11/2017 (the evaluation).
+
+### What differs from `oslofjorden()`, and nothing else does
+
+**The physics is copied verbatim and is not retuned.** That is the point — a validation of a model
+that has drifted from the model being validated is worth nothing. If any closure coefficient
+changes, it changes in `oslofjorden()` first and this setup follows.
+
+**Dataset.** `NorKystHindcastConfig` / `NorKystHindcastBoundariesConfig` instead of the operational
+pair. The operational NorKyst archive at `fou-hi/norkyst800m` begins **2017-02-20** and cannot reach
+this window at all; the Norkyst-v3 hindcast at `romshindcast/norkyst_v3` runs from 2012 and carries
+the same variables on the same grid. The boundary half gains from the change: the hindcast publishes
+`ubar_eastward`/`vbar_northward` already rotated to geographic axes, where the operational
+collection publishes ROMS' grid-relative pair and `NorKystBoundariesConfig` has to derotate it.
+
+**Domain.** 10.00–11.20°E by 58.95–59.93°N at the same cell size (193.8 × 199.1 m), which is 351 ×
+548 against Oslofjord's 240 × 520. Keeping Δx identical is deliberate: the biharmonic coefficients
+are justified by a damping rate that goes as `ν₄·16/Δx⁴`, so changing the resolution without
+re-deriving them would silently invalidate the one number in the file that was measured. Each
+extension buys something specific — east for the Hvaler archipelago, both arms of Glomma's delta and
+station S-9; west for Numedalslågen and station LA-1; south for LA-1 again, which at 59.019°N would
+otherwise sit inside the 16-cell `BoundarySponge`.
+
+**Writers.** Daily 3D snapshots rather than three-hourly — at 4.6 M cells a record is 92 MB, so
+three-hourly over 640 days is ~470 GB against 59 GB — plus four station writers carrying the time
+resolution at about 150 MB total: `η` at 10 minutes at the three tide gauges, `u`/`v` hourly at the
+seven ADCP moorings, `T`/`S`/`e` hourly at the twelve hydrography stations, `T` hourly at the four
+fixed temperature sites.
+
+### Two gates before it runs
+
+Both are settled by measurement, not assumption, and both are marked PROVISIONAL in the file.
+
+1. **`z_faces`.** The provisional list reaches −467 m. Run `prepare_bathymetry`, read the deepest
+   sounding, and regenerate by `oslofjorden()`'s own rule — geometric ratio 1.25 from a 1 m surface
+   cell, capped at 33.5 m, with just enough 33.5 m layers to clear it. Too shallow and the basin is
+   silently truncated; too deep and `sqrt(g·Lz)` buys a shorter barotropic substep for water that is
+   not there. Then re-run `prepare_bathymetry`, since `simulation_grid` reads the file rather than
+   the config.
+2. **`open_edges`.** Provisionally `:south`. Unlike Oslofjord's box, this one does not obviously have
+   land on its other three walls — at 10.00°E the coast near Nevlunghavn leaves water somewhere south
+   of ~59.05°N, and 11.20°E cuts the Hvaler and Singlefjord approach. A closed wall standing in water
+   is a real error: the southwest corner is where METreport 4/2016 §5.1 has the outflow turning west
+   past Store Færder into the Skagerrak. Measure the wet run along each wall from the land mask and
+   open the edges where it is long. The cost decides how far to go — `boundary_domain` takes the
+   *bounding box* of the open edges, so south+east (adjacent) is a corner strip while west+east
+   (opposite) is the whole domain, roughly 110 GB of hourly download over two years against ~5 GB
+   for a single edge.
+
+### What it can and cannot be expected to show
+
+At ~193 m this grid is finer than NorKyst-800 everywhere and much finer in the vertical, but two to
+three times coarser than FjordOs CL in exactly the places FjordOs was built for. **Out of reach at
+any tuning:** the Drøbak Sound (1–2 km wide, six to ten cells here against fifteen to twenty-five
+there), the Drøbak Jetty (two openings ~6 m deep and tens of metres wide — not representable), and
+Svelvik (180 m wide, 11 m deep — one cell), so the sill tidal jets and the Drammensfjord exchange
+will be wrong.
+
+**Should be competitive or better:** tidal elevation, open-fjord currents (Slagen above all), the
+seasonal hydrography at the CTD stations, and deep-water renewal in the inner basins. The
+z-coordinate with `PartialCellBottom` removes the defect both reports complain about most — FjordOs'
+bathymetry had to be smoothed to an rx0 limit until "the observed slopes are everywhere steeper"
+than the model's (METreport 11/2017 Fig. 11) — and the pressure-gradient error that forces it does
+not exist here.
+
+### Scoring it
+
+`julia --project -m FjordSim validate_simulation --config oslofjorden_validation` fetches what it
+can, scores the run's station files against it and writes tables and figures to
+`<results_root>/validation/`.
+
+Only **Kartverket water level** is public, and `default_observations` builds it automatically from
+whichever stations a `FieldStationWriter` records `η` at. The NIVA CTD series, the 2014 Statnett
+ADCP records, the Fagrådet Inner Oslofjord programme, the Scanmar mooring and the beach thermistors
+are all held rather than published, so each wants a reader subtyping `AbstractObservationConfig`
+passed to `validate_simulation` explicitly — see `docs/adding-a-source.md`.
+
+Drifter trajectories and the Godafoss Lagrangian statistics (METreport 11/2017 §4.5–4.6) are **out
+of scope**: FjordSim has no particle tracking.
+
+### Station positions
+
+Exact, from METreport 11/2017 Tables 1 and 2, for the seven ADCP moorings and the ten CTD stations;
+from Kartverket's own register for the three tide gauges. **Approximate, and marked so in the file:**
+Slagen (the report places it only in prose), the Scanmar mooring off Åsgårdstrand, the three beaches,
+and the two Fagrådet basin stations Dk1 and Ep1. `report_station_cells` logs how far each station
+moved when it was snapped, which is the number that says whether an approximate position mattered.

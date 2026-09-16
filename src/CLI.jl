@@ -9,6 +9,7 @@ using ..Atmospheres: prepare_atmosphere, download_atmosphere
 using ..Forcing:
     prepare_forcing, download_forcing, add_rivers, download_boundaries, prepare_boundaries
 using ..Simulations: run_simulation
+using ..Validation: validate_simulation
 
 """
 Every subcommand, named exactly like the function it calls, so `-m FjordSim prepare_forcing` and
@@ -26,6 +27,7 @@ const SUBCOMMANDS = [
     "download_atmosphere" => download_atmosphere,
     "prepare_atmosphere" => prepare_atmosphere,
     "run_simulation" => run_simulation,
+    "validate_simulation" => validate_simulation,
 ]
 
 """
@@ -87,6 +89,10 @@ Subcommands, in the order a setup is prepared and run:
                         prepare_atmosphere if it names an atmosphere. Where it runs
                         is the simulation config's `architecture` field. A setup with no
                         simulation config does nothing.
+  validate_simulation   Score a finished run against observations, writing skill tables and
+                        comparison figures under the setup's results directory. Needs
+                        run_simulation, and reads the station files it wrote. A setup with no
+                        validation config does nothing.
 
 Options:
   --config SETUP   Which setup to prepare. Required. One of: $(join(setup_names(), ", ")).

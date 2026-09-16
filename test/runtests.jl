@@ -1,7 +1,7 @@
 using FjordSim
 using FjordSim.Bathymetry: write_bathymetry_file
-using FjordSim.Configs: open_edges
-using Dates: Date, DateTime, Hour
+using FjordSim.Configs: open_edges, coverage_window
+using Dates: Date, DateFormat, DateTime, Hour, Millisecond, Minute, Month
 using Test
 using ArchGDAL
 using NCDatasets
@@ -112,9 +112,38 @@ include("utilities.jl")
             :ProjectedAtmosphereGrid,
             :AtmosphereRecord,
             :NORA3Config,
+            :NorKystHindcastConfig,
+            :NorKystHindcastBoundariesConfig,
+            :Station,
+            :StationWriter,
+            :FieldStationWriter,
+            # validation
+            :AbstractObservationConfig,
+            :ObservationSeries,
+            :download_observations,
+            :observation_series,
+            :observation_stations,
+            :observations_directory,
+            :KartverketSeaLevel,
+            :SkillMetrics,
+            :skill_metrics,
+            :monthly_statistics,
+            :running_mean,
+            :depth_average,
+            :baroclinic_deviation,
+            :TidalConstituent,
+            :TIDAL_CONSTITUENTS,
+            :HarmonicFit,
+            :harmonic_fit,
+            :reconstruct,
+            :TidalEllipse,
+            :tidal_ellipses,
+            :quantiles,
+            :direction_statistics,
             :fjord_config,
             :setup_names,
             :oslofjorden,
+            :oslofjorden_validation,
             :drammensfjorden,
             # simulation
             :SimulationConfig,
@@ -1069,7 +1098,18 @@ end
         @test all(isconcretetype, fieldtypes(typeof(config)))
         @test config.bathymetry_config.data_root == data_root
         @test config.forcing_config.data_root == data_root
-        @test startswith(forcing_directory(config.forcing_config), data_root)
+
+        # What every setup shares is the *resolution rule*, not the location. `output_directory` is
+        # a name relative to `data_root`, and setting it to an absolute path overrides `data_root`
+        # for that entry alone — which `drammensfjorden` uses deliberately, reading Oslofjord's
+        # already-downloaded NorKyst months instead of fetching the same data under its own root.
+        # Asserting the location instead would make that documented sharing a test failure.
+        forcing_output_directory = config.forcing_config.output_directory
+        if isabspath(forcing_output_directory)
+            @test forcing_directory(config.forcing_config) == forcing_output_directory
+        else
+            @test startswith(forcing_directory(config.forcing_config), data_root)
+        end
 
         # Built inside the function, so the scratch path `__init__` fills in is already there. A
         # config built at precompile time would carry an empty `raw_directory` instead.
@@ -1160,6 +1200,7 @@ end
             "download_atmosphere",
             "prepare_atmosphere",
             "run_simulation",
+            "validate_simulation",
         ]
         for name in subcommands
             @test occursin(name, FjordSim.CLI.USAGE)  # the usage text cannot drift from the table
@@ -4897,4 +4938,560 @@ end
             @test all(isfinite, interior(free_surface.barotropic_velocities.V))
         end
     end
+end
+
+@testset "Validation" begin
+    # `Metrics.jl` is all closed-form, so every test here is against an answer known in advance
+    # rather than against a recorded output.
+
+    @testset "harmonic_fit recovers a synthetic tide" begin
+        # A year at 10 minutes built from four constituents at Viker's observed amplitudes and
+        # phases (METreport 11/2017, Table 3), so a failure here reads in the units the report uses.
+        reference = DateTime(2014, 4, 1)
+        times = [reference + Minute(10n) for n = 0:(365 * 144)]
+        truth = Dict(
+            "M2" => (0.119, 105.0),
+            "S2" => (0.029, 46.0),
+            "N2" => (0.030, 60.0),
+            "O1" => (0.022, 277.0),
+        )
+        constituents = [c for c in TIDAL_CONSTITUENTS if haskey(truth, c.name)]
+        hours(time) = Millisecond(time - reference).value / 3_600_000
+
+        signal = map(times) do time
+            value = 0.05
+            for constituent in constituents
+                amplitude, phase = truth[constituent.name]
+                value += amplitude *
+                         cos(2π / constituent.period_hours * hours(time) - deg2rad(phase))
+            end
+            value
+        end
+
+        fit = harmonic_fit(times, signal; constituents, reference)
+        @test fit.count == length(times)
+        @test fit.mean ≈ 0.05 atol = 1e-6
+        for (index, constituent) in enumerate(constituents)
+            amplitude, phase = truth[constituent.name]
+            @test fit.amplitude[index] ≈ amplitude atol = 1e-5
+            @test fit.phase[index] ≈ phase atol = 1e-3
+        end
+
+        # An exact fit leaves nothing behind, and reconstruction is its inverse — which is what
+        # makes the "residual" of METreport 11/2017 Fig. 8 meaningful.
+        @test fit.residual_std < 1e-9
+        @test maximum(abs, reconstruct(fit, times) .- signal) < 1e-9
+
+        # A record shorter than the longest constituent cannot resolve it, and says so.
+        short = times[1:1000]
+        @test_logs (:warn,) (:warn,) match_mode = :any harmonic_fit(
+            short,
+            signal[1:1000];
+            constituents = TIDAL_CONSTITUENTS,
+            reference,
+        )
+        @test_throws ArgumentError harmonic_fit(times[1:5], signal[1:5]; constituents, reference)
+    end
+
+    @testset "skill_metrics" begin
+        observed = [1.0, 2.0, 3.0, 4.0, 5.0]
+
+        perfect = skill_metrics(observed, observed)
+        @test perfect.count == 5
+        @test perfect.rmse == 0
+        @test perfect.bias == 0
+        @test perfect.correlation ≈ 1
+        @test perfect.willmott ≈ 1
+        @test perfect.murphy ≈ 1
+        @test perfect.std_ratio ≈ 1
+
+        offset = skill_metrics(observed, observed .+ 2)
+        @test offset.bias ≈ 2
+        @test offset.rmse ≈ 2
+        @test offset.centred_rmse ≈ 0 atol = 1e-12
+        # The Taylor decomposition the diagram is drawn from.
+        @test offset.rmse^2 ≈ offset.bias^2 + offset.centred_rmse^2
+
+        # Predicting the observed mean is exactly zero skill on Murphy, by construction.
+        @test skill_metrics(observed, fill(3.0, 5)).murphy ≈ 0 atol = 1e-12
+
+        # Gaps cost their own samples and nothing else.
+        @test skill_metrics([1.0, NaN, 3.0], [1.0, 5.0, 3.0]).count == 2
+        @test skill_metrics([NaN, NaN], [NaN, NaN]).count == 0
+        @test isnan(skill_metrics([NaN, NaN], [NaN, NaN]).rmse)
+        @test_throws DimensionMismatch skill_metrics([1.0], [1.0, 2.0])
+    end
+
+    @testset "barotropic and baroclinic split" begin
+        thicknesses = [10.0, 10.0, 10.0, 10.0]
+        profile = [0.0, 0.2, 0.4, 0.6]
+
+        @test depth_average(profile, thicknesses) ≈ 0.3
+        # METreport 11/2017 eq. 2: the deviation has zero depth average by definition.
+        @test sum(baroclinic_deviation(profile, thicknesses) .* thicknesses) ≈ 0 atol = 1e-12
+        # A dry bottom cell contributes neither value nor thickness.
+        @test depth_average([NaN, 0.2, 0.4, 0.6], thicknesses) ≈ 0.4
+        @test isnan(depth_average(fill(NaN, 4), thicknesses))
+        # Unequal thicknesses weight by what is there, which is what a stretched grid needs.
+        @test depth_average([0.0, 1.0], [30.0, 10.0]) ≈ 0.25
+    end
+
+    @testset "tidal_ellipses" begin
+        reference = DateTime(2014, 4, 1)
+        times = [reference + Minute(10n) for n = 0:(60 * 144)]
+        constituents = [c for c in TIDAL_CONSTITUENTS if c.name == "M2"]
+        ω = 2π / constituents[1].period_hours
+        hours(time) = Millisecond(time - reference).value / 3_600_000
+
+        # A circular current of radius 0.5: both semi-axes are the radius.
+        eastward = harmonic_fit(times, [0.5 * cos(ω * hours(t)) for t in times]; constituents, reference)
+        northward = harmonic_fit(times, [0.5 * sin(ω * hours(t)) for t in times]; constituents, reference)
+        circular = tidal_ellipses(eastward, northward)[1]
+        @test circular.semi_major ≈ 0.5 atol = 1e-6
+        @test abs(circular.semi_minor) ≈ 0.5 atol = 1e-6
+
+        # A rectilinear east-west current: no minor axis, and the major axis along east.
+        flat = tidal_ellipses(eastward, harmonic_fit(times, zeros(length(times)); constituents, reference))[1]
+        @test flat.semi_major ≈ 0.5 atol = 1e-6
+        @test flat.semi_minor ≈ 0 atol = 1e-6
+        @test flat.inclination ≈ 0 atol = 1e-3
+
+        @test_throws ArgumentError tidal_ellipses(
+            eastward,
+            harmonic_fit(times, zeros(length(times));
+                         constituents = [TidalConstituent("S2", 12.0)], reference),
+        )
+    end
+
+    @testset "running_mean" begin
+        reference = DateTime(2014, 4, 1)
+        times = [reference + Hour(n) for n = 0:(60 * 24)]
+        tide = [0.5 * cos(2π / 12.4206 * n) for n = 0:(60 * 24)]
+        trend = [0.001 * n for n = 0:(60 * 24)]
+
+        # 49 hours is four M2 cycles, so the tide goes and the slow signal stays — which is what
+        # METreport 11/2017 eq. 3 uses it for.
+        smoothed = running_mean(times, tide .+ trend, Hour(49))
+        covered = findall(isfinite, smoothed)
+        @test !isempty(covered)
+        @test maximum(abs, smoothed[covered] .- trend[covered]) < 0.01
+        # The half-window at each end is not covered and says so rather than guessing.
+        @test !isfinite(smoothed[1])
+        @test !isfinite(smoothed[end])
+    end
+
+    @testset "quantiles and direction_statistics" begin
+        @test quantiles([1.0, 2.0, 3.0, 4.0, 5.0], [0.0, 0.5, 1.0]) ≈ [1.0, 3.0, 5.0]
+        @test quantiles([3.0, 1.0, 2.0], [0.5]) ≈ [2.0]
+        @test all(isnan, quantiles(Float64[], [0.5]))
+        @test all(isnan, quantiles([NaN, NaN], [0.5]))
+
+        # Compass convention: degrees clockwise from north, towards which the flow goes.
+        speed, direction = direction_statistics([0.0, 1.0, 0.0, -1.0], [1.0, 0.0, -1.0, 0.0])
+        @test speed ≈ ones(4)
+        @test direction ≈ [0.0, 90.0, 180.0, 270.0]
+
+        gappy_speed, gappy_direction = direction_statistics([NaN, 1.0], [1.0, 0.0])
+        @test isnan(gappy_speed[1]) && isnan(gappy_direction[1])
+        @test gappy_speed[2] ≈ 1.0
+    end
+
+    @testset "monthly_statistics" begin
+        times = vcat(
+            [DateTime(2015, 1, 1) + Hour(n) for n = 0:23],
+            [DateTime(2015, 2, 1) + Hour(n) for n = 0:9],
+        )
+        values = vcat(fill(5.0, 24), fill(1.0, 5), fill(3.0, 5))
+
+        statistics = monthly_statistics(times, values)
+        @test statistics[(2015, 1)].count == 24
+        @test statistics[(2015, 1)].mean ≈ 5.0
+        @test statistics[(2015, 1)].variance ≈ 0.0
+        @test statistics[(2015, 2)].count == 10
+        @test statistics[(2015, 2)].mean ≈ 2.0
+        # Gaps are dropped, so the count is what was actually measured — which is the column
+        # METreport 11/2017 Table 6 reports beside the mean for exactly this reason.
+        @test monthly_statistics(times, vcat(fill(NaN, 24), values[25:end]))[(2015, 2)].count == 10
+        @test !haskey(monthly_statistics(times, vcat(fill(NaN, 24), values[25:end])), (2015, 1))
+    end
+
+    @testset "Kartverket sea level adapter" begin
+        station = Station(name = "Oscarsborg", longitude = 10.604861, latitude = 59.678073)
+        config = KartverketSeaLevel(data_root = mktempdir(), stations = [station])
+
+        @test observation_stations(config) == [station]
+        @test startswith(observations_directory(config), config.data_root)
+
+        # The response shape, parsed the way the adapter parses it.
+        xml = """
+        <tide><locationdata><data type="observation" unit="cm">
+        <waterlevel value="95.6" time="2015-01-01T00:00:00+00:00" flag="obs"/>
+        <waterlevel value="-3.2" time="2015-01-01T00:10:00+00:00" flag="obs"/>
+        </data></locationdata></tide>
+        """
+        parsed = FjordSim.Validation.parse_kartverket(xml)
+        @test length(parsed) == 2
+        @test parsed[1] == (DateTime(2015, 1, 1), 95.6)
+        @test parsed[2] == (DateTime(2015, 1, 1, 0, 10), -3.2)
+        # An error page, or anything else without waterlevel elements, is an empty month rather
+        # than an exception.
+        @test isempty(FjordSim.Validation.parse_kartverket("<html>503</html>"))
+
+        # Reading a cached month: centimetres become metres, and only `eta` is served.
+        mkpath(observations_directory(config))
+        write(FjordSim.Validation.kartverket_cache_path(config, station, 2015, 1), xml)
+        window = (DateTime(2015, 1, 1), DateTime(2015, 2, 1))
+
+        series = observation_series(config, station, "eta"; window)
+        @test series isa ObservationSeries
+        @test series.variable == "eta"
+        @test series.units == "m"
+        @test series.depths == [0.0]
+        @test size(series.values) == (2, 1)
+        @test series.values[1, 1] ≈ 0.956
+        @test issorted(series.times)
+        @test isnothing(observation_series(config, station, "T"; window))
+        # A window the cache does not cover yields nothing rather than an empty series.
+        @test isnothing(
+            observation_series(config, station, "eta";
+                               window = (DateTime(2016, 1, 1), DateTime(2016, 2, 1))),
+        )
+
+        @test FjordSim.Validation.months_in(DateTime(2014, 11, 5), DateTime(2015, 2, 3)) ==
+              [(2014, 11), (2014, 12), (2015, 1), (2015, 2)]
+    end
+
+    @testset "CsvObservations" begin
+        directory = mktempdir()
+        stations = [
+            Station(name = "Km1", longitude = 10.627372, latitude = 59.582064),
+            Station(name = "TØ-1", longitude = 10.3550, latitude = 59.2030),
+        ]
+        config = CsvObservations(
+            data_root = directory,
+            variables = ["T", "S"],
+            stations = stations,
+            units = Dict("T" => "degC"),
+            source = "test programme",
+        )
+
+        @test observation_stations(config) == stations
+        path = FjordSim.Validation.csv_observation_path(config, stations[2], "T")
+        # The station tag, not the raw name, so a filename stays ASCII and unambiguous.
+        @test basename(path) == "TO_1_T.csv"
+
+        window = (DateTime(2015, 1, 1), DateTime(2015, 12, 31))
+
+        # Absent files and unclaimed variables are both a quiet `nothing`, because a sweep asks
+        # every source for every pair and most are empty.
+        @test isnothing(observation_series(config, stations[1], "T"; window))
+        @test isnothing(observation_series(config, stations[1], "u"; window))
+
+        # A profile: two casts, three depths each.
+        mkpath(observations_directory(config))
+        write(
+            FjordSim.Validation.csv_observation_path(config, stations[1], "T"),
+            """
+            time,depth,value
+            2015-06-01T12:00:00,0,15.0
+            2015-06-01T12:00:00,10,11.0
+            2015-06-01T12:00:00,50,7.0
+            2015-08-01T12:00:00,0,19.0
+            2015-08-01T12:00:00,10,14.0
+            2015-08-01T12:00:00,50,7.5
+            """,
+        )
+
+        series = observation_series(config, stations[1], "T"; window)
+        @test series isa ObservationSeries
+        @test series.station == "Km1"
+        @test series.units == "degC"
+        @test series.source == "test programme"
+        @test series.times == [DateTime(2015, 6, 1, 12), DateTime(2015, 8, 1, 12)]
+        @test series.depths == [0.0, 10.0, 50.0]
+        @test series.values[1, :] ≈ [15.0, 11.0, 7.0]
+        @test series.values[2, :] ≈ [19.0, 14.0, 7.5]
+
+        # The window clips, and a window outside the record yields nothing at all.
+        clipped = observation_series(
+            config, stations[1], "T";
+            window = (DateTime(2015, 7, 1), DateTime(2015, 12, 31)),
+        )
+        @test length(clipped.times) == 1
+        @test isnothing(
+            observation_series(config, stations[1], "T";
+                               window = (DateTime(2016, 1, 1), DateTime(2016, 2, 1))),
+        )
+
+        # A point series: no depth column at all.
+        write(
+            FjordSim.Validation.csv_observation_path(config, stations[2], "T"),
+            "time,value\n2015-06-01T12:00:00,15.0\n2015-06-01T13:00:00,15.5\n",
+        )
+        point = observation_series(config, stations[2], "T"; window)
+        @test point.depths == [0.0]
+        @test size(point.values) == (2, 1)
+        @test point.values[:, 1] ≈ [15.0, 15.5]
+
+        # A value that will not parse is a gap, not a dropped row: the sample was taken and the
+        # instrument had nothing to say, and dropping it would shorten the record silently.
+        write(
+            FjordSim.Validation.csv_observation_path(config, stations[2], "S"),
+            "time,value\n2015-06-01T12:00:00,33.0\n2015-06-01T13:00:00,\n2015-06-01T14:00:00,33.4\n",
+        )
+        gappy = observation_series(config, stations[2], "S"; window)
+        @test length(gappy.times) == 3
+        @test isnan(gappy.values[2, 1])
+
+        # A header without the required columns is a stated error, not a silent empty read.
+        bad = joinpath(observations_directory(config), "bad.csv")
+        write(bad, "when,what\n2015-01-01,1.0\n")
+        @test_throws ArgumentError FjordSim.Validation.read_observation_csv(bad, ',', nothing)
+
+        # Alternative delimiters and time formats, which is what a Norwegian Excel export gives.
+        semicolon = CsvObservations(
+            data_root = directory, variables = ["T"], stations = stations[1:1],
+            delimiter = ';', time_format = DateFormat("dd.mm.yyyy HH:MM"),
+        )
+        write(
+            FjordSim.Validation.csv_observation_path(semicolon, stations[1], "T"),
+            "time;value\n01.06.2015 12:00;15.0\n",
+        )
+        converted = observation_series(semicolon, stations[1], "T"; window)
+        @test converted.times == [DateTime(2015, 6, 1, 12)]
+        @test converted.values[1, 1] ≈ 15.0
+    end
+
+    @testset "profile interpolation" begin
+        interpolate = FjordSim.Validation.interpolate_to_depths
+        # Linear between samples...
+        @test interpolate([0.0, 10.0], [4.0, 6.0], [0.0, 5.0, 10.0]) ≈ [4.0, 5.0, 6.0]
+        # ...and never beyond them: a shallow cast cannot invent deep water.
+        result = interpolate([0.0, 10.0], [4.0, 6.0], [-1.0, 20.0])
+        @test all(isnan, result)
+        # Unsorted input and missing samples are handled rather than assumed away.
+        @test interpolate([10.0, 0.0], [6.0, 4.0], [5.0]) ≈ [5.0]
+        @test all(isnan, interpolate([0.0, 10.0], [4.0, NaN], [5.0]))
+    end
+end
+
+@testset "Station output" begin
+    # The station writers and their reader, offline: everything here is pure function or a file
+    # written and read back in a temporary directory.
+
+    @testset "station_tag" begin
+        tag(name) = FjordSim.Simulations.station_tag(
+            Station(name = name, longitude = 10.0, latitude = 59.0),
+        )
+
+        @test tag("Km1") == "Km1"
+        @test tag("OF-1") == "OF_1"
+        # The Norwegian letters are transliterated before anything is stripped, so two stations
+        # that differ only by one stay distinguishable.
+        @test tag("TØ-1") == "TO_1"
+        @test tag("Ø-1") == "O_1"
+        @test tag("TØ-1") != tag("Ø-1")
+        @test tag("Åsgårdstrand") == "Asgardstrand"
+        @test tag("Sjøstrand") == "Sjostrand"
+        @test_throws ArgumentError tag("---")
+    end
+
+    @testset "writer construction and keys" begin
+        stations = [
+            Station(name = "Km1", longitude = 10.627372, latitude = 59.582064),
+            Station(name = "TØ-1", longitude = 10.3550, latitude = 59.2030),
+        ]
+        writer = StationWriter(
+            name = :moorings,
+            output_file = "stations_moorings.nc",
+            variables = (:u, :v),
+            stations = stations,
+            interval = 3600.0,
+            overwrite_existing = true,
+        )
+
+        @test writer.variables == (:u, :v)
+        @test writer.search_radius == 10
+        # One `output_writers` key per station, so `validate_writers` still sees a collision.
+        @test FjordSim.Simulations.writer_keys(writer) == (:moorings_Km1, :moorings_TO_1)
+        @test FjordSim.Simulations.output_path_trait(writer) isa FjordSim.Simulations.NamesOutputFile
+        @test !FjordSim.Simulations.checkpoints(writer)
+
+        field_writer = FieldStationWriter(
+            name = :tidegauge,
+            output_file = "stations_tidegauge.jld2",
+            variables = (:η,),
+            stations = stations[1:1],
+            interval = 600.0,
+            overwrite_existing = true,
+        )
+        @test FjordSim.Simulations.writer_keys(field_writer) == (:tidegauge_Km1,)
+
+        # Two stations whose names reduce to one tag would write to one file, so they are rejected
+        # at construction rather than silently losing one.
+        @test_throws ArgumentError StationWriter(
+            name = :x, output_file = "x.nc", variables = (:T,),
+            stations = [Station(name = "A-1", longitude = 1.0, latitude = 1.0),
+                        Station(name = "A 1", longitude = 2.0, latitude = 2.0)],
+            interval = 3600.0, overwrite_existing = true,
+        )
+        @test_throws ArgumentError StationWriter(
+            name = :x, output_file = "x.nc", variables = (:T,), stations = Station[],
+            interval = 3600.0, overwrite_existing = true,
+        )
+        @test_throws ArgumentError StationWriter(
+            name = :x, output_file = "x.nc", variables = (), stations = stations,
+            interval = 3600.0, overwrite_existing = true,
+        )
+        @test_throws ArgumentError StationWriter(
+            name = :x, output_file = "x.nc", variables = (:T,), stations = stations,
+            interval = 0.0, overwrite_existing = true,
+        )
+        @test_throws ArgumentError StationWriter(
+            name = :x, output_file = "x.nc", variables = (:T,), stations = stations,
+            interval = 3600.0, overwrite_existing = true, search_radius = -1,
+        )
+    end
+
+    @testset "nearest_water_cell" begin
+        nearest = FjordSim.Simulations.nearest_water_cell
+        mask = [true false false; false true false; false false false]
+
+        @test nearest(mask, 1, 1, 2) == (1, 1, 0.0)        # already wet: no search, no offset
+        @test nearest(mask, 1, 2, 2)[1:2] == (1, 1)
+        @test nearest(mask, 3, 3, 2)[1:2] == (2, 2)
+        @test isnothing(nearest(mask, 3, 3, 0))            # no search allowed
+        # A diagonal neighbour is at distance sqrt(2), which the `ring ± 1/2` band puts inside
+        # ring 1 — the same convention `nearest_coastal_cell` searches by.
+        @test nearest(mask, 3, 3, 1)[1:2] == (2, 2)
+        @test nearest(mask, 3, 3, 1)[3] ≈ sqrt(2)
+        @test isnothing(nearest(falses(3, 3), 2, 2, 3))    # no water anywhere
+        # Out of bounds is not water, and is not an error either.
+        @test isnothing(nearest(mask, 99, 99, 1))
+    end
+
+    @testset "station paths and discovery" begin
+        directory = mktempdir()
+        writer = StationWriter(
+            name = :moorings,
+            output_file = "stations_moorings.nc",
+            variables = (:u, :v),
+            stations = [Station(name = "Km1", longitude = 10.6, latitude = 59.6),
+                        Station(name = "TØ-1", longitude = 10.4, latitude = 59.2)],
+            interval = 3600.0,
+            overwrite_existing = true,
+        )
+        simulation = test_simulation_config(results_root = directory, writers = (writer,))
+
+        path = FjordSim.Simulations.station_output_path(
+            writer, simulation, 1, first(writer.stations),
+        )
+        @test endswith(path, ".nc")
+        @test startswith(path, directory)
+        # The station tag goes after the run tag, which is what `station_files` reads back.
+        @test occursin(FjordSim.Simulations.station_tag(first(writer.stations)), basename(path))
+
+        stem = first(splitext(writer.output_file))
+        for tag in ("Km1", "TO_1")
+            touch(joinpath(directory, "$(stem)_20260915T120000_$(tag).nc"))
+        end
+        touch(joinpath(directory, "$(stem)_20260915T120000_loop02_Km1.nc"))
+        touch(joinpath(directory, "unrelated.nc"))
+
+        found = station_files(directory, stem)
+        @test length(found) == 3
+        @test Set(first.(found)) == Set(["Km1", "TO_1"])
+        # Newest run first, so a directory holding several runs defaults to the latest.
+        @test occursin("loop02", last(first(found)))
+        @test isempty(station_files(directory, "no_such_writer"))
+        @test isempty(station_files(joinpath(directory, "missing"), stem))
+    end
+
+    @testset "haversine_distance" begin
+        distance = FjordSim.Simulations.haversine_distance
+        @test distance(10.0, 59.0, 10.0, 59.0) == 0
+        # One degree of latitude is about 111 km anywhere.
+        @test distance(10.0, 59.0, 10.0, 60.0) ≈ 111_195 rtol = 0.01
+        # One degree of longitude at 59°N is that times cos(59°).
+        @test distance(10.0, 59.0, 11.0, 59.0) ≈ 111_195 * cosd(59) rtol = 0.01
+    end
+end
+
+@testset "Norkyst-v3 hindcast adapters" begin
+    # Offline: the URL and filename arithmetic, the variable maps, and the split between the two
+    # collections. Anything that would touch THREDDS is left to the integration check.
+
+    @testset "forcing config" begin
+        config = NorKystHindcastConfig(
+            data_root = "/tmp/fjordsim-test",
+            output_directory = "norkyst_v3",
+            parameters = ["temperature", "salinity"],
+            years = [2014, 2015],
+        )
+
+        @test config isa FjordSim.Configs.AbstractForcingConfig
+        # Shares the operational config's supertype, which is what lets the two share every read
+        # hook rather than duplicating them.
+        @test config isa FjordSim.Forcing.AbstractNorKystConfig
+        @test NorKystConfig(data_root = "/x", output_directory = "y",
+                            parameters = String[], years = Int[]) isa
+              FjordSim.Forcing.AbstractNorKystConfig
+
+        @test occursin("romshindcast/norkyst_v3/zdepth", config.catalog_url)
+        @test occursin("romshindcast/norkyst_v3/zdepth", config.opendap_url)
+        # A distinct filename from the operational collection, so the two can share a directory.
+        @test forcing_monthly_filename(config, 2014, 4) == "Norkyst-v3_ZDEPTHS_201404.nc"
+        @test forcing_monthly_filename(config, 2015, 12) == "Norkyst-v3_ZDEPTHS_201512.nc"
+        # The same variable map as the operational collection — the two publish the same fields.
+        @test forcing_variable_names(config) == forcing_variable_names(
+            NorKystConfig(data_root = "/x", output_directory = "y",
+                          parameters = String[], years = Int[]),
+        )
+        @test forcing_directory(config) == "/tmp/fjordsim-test/norkyst_v3"
+        @test FjordSim.Forcing.NORKYST_HINDCAST_HOUR == 12
+    end
+
+    @testset "boundary config" begin
+        config = NorKystHindcastBoundariesConfig(
+            data_root = "/tmp/fjordsim-test",
+            output_directory = "norkyst_v3_hourly",
+            open_edges = :south,
+            parameters = ["temperature", "zeta", "ubar_eastward", "vbar_northward"],
+            years = [2014],
+        )
+
+        @test config isa FjordSim.Configs.AbstractBoundaryDataConfig
+        @test config isa FjordSim.Forcing.AbstractNorKystBoundariesConfig
+        @test NorKystBoundariesConfig(data_root = "/x", output_directory = "y",
+                                      open_edges = :south, parameters = String[], years = Int[]) isa
+              FjordSim.Forcing.AbstractNorKystBoundariesConfig
+
+        @test open_edges(config) == [:south]
+        # Not exported, unlike its forcing counterpart; reached through the module.
+        @test FjordSim.Forcing.boundary_monthly_filename(config, 2014, 9) ==
+              "Norkyst-v3_boundary_201409.nc"
+        @test occursin("zdepth", config.opendap_url)
+        # The barotropic pair comes from the sibling collection, which is stated separately rather
+        # than derived, so neither URL means something different from the other config's.
+        @test occursin("sdepth", config.barotropic_opendap_url)
+        @test occursin("sdepth", config.barotropic_catalog_url)
+
+        # The mapping is what renames the already-derotated pair to what the read side expects,
+        # so nothing downstream has to know which collection a variable came from.
+        names = boundary_variable_names(config)
+        @test names["ubar_eastward"] == "ubar"
+        @test names["vbar_northward"] == "vbar"
+        @test names["zeta"] == "eta"
+        @test names["temperature"] == "T"
+        # ...and unlike the operational collection, it needs no rotation, so it defines no
+        # `boundary_source_slab` method of its own.
+        @test FjordSim.Forcing.NORKYST_HINDCAST_BAROTROPIC_VARIABLES ==
+              ("ubar_eastward", "vbar_northward")
+
+        @test_throws ArgumentError NorKystHindcastBoundariesConfig(
+            data_root = "/x", output_directory = "y", open_edges = Symbol[],
+            parameters = String[], years = Int[],
+        )
+    end
+
 end

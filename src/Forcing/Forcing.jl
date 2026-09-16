@@ -53,6 +53,7 @@ export forcing_from_file,
     forcing_monthly_filename,
     ProjectedSourceGrid,
     NorKystConfig,
+    NorKystHindcastConfig,
     add_rivers,
     download_rivers,
     river_locations,
@@ -74,6 +75,7 @@ export forcing_from_file,
     boundary_date_range,
     boundary_variable_name,
     boundary_source_slab,
+    NorKystHindcastBoundariesConfig,
     NorKystBoundariesConfig
 
 """ Custom backend for FieldTimeSeries """
@@ -1500,6 +1502,8 @@ include("rivers.jl")
 include("boundaries.jl")
 include("norkyst.jl")
 include("norkyst_boundaries.jl")
+include("norkyst_hindcast.jl")
+include("norkyst_hindcast_boundaries.jl")
 include("of800_rivers.jl")
 include("nve_rivers.jl")
 

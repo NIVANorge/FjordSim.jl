@@ -92,15 +92,18 @@ export
     fjord_config,
     setup_names,
     oslofjorden,
+    oslofjorden_validation,
     drammensfjorden,
     # built-in sources
     EvenGrid,
     DybdedataConfig,
     NorKystConfig,
+    NorKystHindcastConfig,
     OF800RiversConfig,
     NVERiversConfig,
     NVERiver,
     NorKystBoundariesConfig,
+    NorKystHindcastBoundariesConfig,
     NORA3Config,
     SimulationConfig,
     CoupledHydrostaticSimulation,
@@ -108,6 +111,9 @@ export
     BoundarySponge,
     SnapshotWriter,
     FieldSnapshotWriter,
+    Station,
+    StationWriter,
+    FieldStationWriter,
     CheckpointWriter,
     ProgressCallback,
     AdaptiveTimeStep,
@@ -133,6 +139,51 @@ export
     initial_time_step,
     FromForcing,
     FromResults,
+    # validation
+    AbstractObservationConfig,
+    ObservationSeries,
+    download_observations,
+    observation_series,
+    observation_stations,
+    observations_directory,
+    KartverketSeaLevel,
+    CsvObservations,
+    SkillMetrics,
+    skill_metrics,
+    monthly_statistics,
+    running_mean,
+    depth_average,
+    baroclinic_deviation,
+    TidalConstituent,
+    TIDAL_CONSTITUENTS,
+    HarmonicFit,
+    harmonic_fit,
+    reconstruct,
+    TidalEllipse,
+    tidal_ellipses,
+    quantiles,
+    direction_statistics,
+    ModelSeries,
+    station_files,
+    read_station_netcdf,
+    read_station_jld2,
+    match_series,
+    plot_timeseries_comparison,
+    plot_tidal_constituents,
+    plot_hovmoller,
+    plot_profiles,
+    plot_qq_scatter,
+    plot_current_rose,
+    plot_section,
+    plot_taylor,
+    plot_target,
+    skill_table,
+    tidal_constituent_table,
+    validate_simulation,
+    default_observations,
+    validation_directory,
+    station_writers,
+    model_series,
     # utils
     recursive_merge,
     progress,
@@ -166,6 +217,7 @@ include("Grids.jl")
 include("Simulations.jl")
 # Setups builds every config type, so it comes after all of them — Grids' EvenGrid included.
 include("Setups/Setups.jl")
+include("Validation/Validation.jl")
 # CLI names every driver and every setup, so it comes last.
 include("CLI.jl")
 
@@ -180,6 +232,7 @@ using .BoundaryConditions
 using .Grids
 using .Simulations
 using .Setups
+using .Validation
 using .CLI
 
 """

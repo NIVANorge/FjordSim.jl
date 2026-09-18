@@ -14,12 +14,7 @@ root="$(dirname "$here")"
 source "$here/load_config.sh"
 _fjordsim_load_config "$here/config.env"
 
-PROJECT_ID="${PROJECT_ID:?set PROJECT_ID in gcp/config.env}"
-REGION="${REGION:-europe-west4}"
-AR_REPO="${AR_REPO:-images}"
-IMAGE="${IMAGE:-fjordsim}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
-IMAGE_URI="${IMAGE_URI:-${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${IMAGE}:${IMAGE_TAG}}"
+IMAGE_URI="${IMAGE_URI:?set IMAGE_URI in gcp/config.env}"
 
 # The manifest is git-ignored but must reach the image, so the container resolves to the same
 # package versions as this machine. Without it Pkg re-resolves and the image can drift.

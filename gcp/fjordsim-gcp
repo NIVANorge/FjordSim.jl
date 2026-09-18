@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 #
-# Run FjordSim pipeline steps on GCE, and move data between this machine and the bucket.
+# Run FjordSim pipeline steps on the shared GCE VM, and move data between this machine and the
+# bucket.
 #
-# Which fjord, which steps and what hardware are all per-launch arguments, so a new experiment
-# never means editing an image or a job file. See gcp/README.md for the full workflow.
+# This account cannot create, start, stop or delete instances, and cannot set instance metadata —
+# so there is no per-run VM and no startup script. Two Cloud Run jobs create or start one fixed
+# instance on our behalf; everything after that happens over SSH, which we do have (OS Login, with
+# sudo). `up` runs the launcher, `bootstrap` makes the VM able to run containers, `run` ships a
+# script to it and detaches. See gcp/README.md for the measured permission matrix.
 
 set -euo pipefail
 
@@ -15,24 +19,12 @@ source "$here/load_config.sh"
 _fjordsim_load_config "$here/config.env"
 
 PROJECT_ID="${PROJECT_ID:-}"
-REGION="${REGION:-europe-west4}"
-ZONE="${ZONE:-europe-west4-a}"
 BUCKET="${BUCKET:-}"
-AR_REPO="${AR_REPO:-images}"
-IMAGE="${IMAGE:-fjordsim}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
-IMAGE_URI="${IMAGE_URI:-${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${IMAGE}:${IMAGE_TAG}}"
-SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-}"
-NVE_API_KEY_SECRET="${NVE_API_KEY_SECRET:-fjordsim-nve-api-key}"
-GPU_MACHINE_TYPE="${GPU_MACHINE_TYPE:-g2-standard-8}"
-GPU_ACCELERATOR="${GPU_ACCELERATOR:-type=nvidia-l4,count=1}"
-GPU_BOOT_DISK_SIZE="${GPU_BOOT_DISK_SIZE:-200GB}"
-CPU_MACHINE_TYPE="${CPU_MACHINE_TYPE:-n2-standard-8}"
-CPU_BOOT_DISK_SIZE="${CPU_BOOT_DISK_SIZE:-300GB}"
-BOOT_DISK_TYPE="${BOOT_DISK_TYPE:-pd-balanced}"
-MAX_RUN_DURATION="${MAX_RUN_DURATION:-24h}"
-VM_IMAGE_FAMILY="${VM_IMAGE_FAMILY:-common-cu129-ubuntu-2204-nvidia-580}"
-VM_IMAGE_PROJECT="${VM_IMAGE_PROJECT:-deeplearning-platform-release}"
+IMAGE_URI="${IMAGE_URI:-}"
+JOB_REGION="${JOB_REGION:-}"
+VM_NAME="${VM_NAME:-fjordsim-gpu}"
+LAUNCH_JOB_SPOT="${LAUNCH_JOB_SPOT:-fjordsim-launch-spot}"
+LAUNCH_JOB_STANDARD="${LAUNCH_JOB_STANDARD:-fjordsim-launch-standard}"
 
 LOCAL_DATA_ROOT="${FJORDSIM_DATA_ROOT:-$HOME/FjordSim_data}"
 LOCAL_RESULTS_ROOT="${FJORDSIM_RESULTS_ROOT:-$HOME/FjordSim_results}"
@@ -44,6 +36,15 @@ need() { [[ -n "${!1:-}" ]] || die "$1 is not set. Copy gcp/config.env.example t
 usage() {
     cat <<'EOF'
 Usage: gcp/fjordsim-gcp SUBCOMMAND [options]
+
+The VM:
+  up [--standard]    Execute the launcher Cloud Run job, which creates the VM or starts it if it
+                     already exists, and waits. Spot by default.
+  bootstrap          Install the NVIDIA driver, Docker and the container toolkit on the VM, and
+                     pull the image. Idempotent: a second call is a fast no-op.
+  down               Shut the VM down from inside (sudo poweroff). The only stop available without
+                     compute.instances.stop. The boot disk survives; `up` starts it again.
+  ssh [ARGS...]      SSH into the VM. Extra arguments go to `gcloud compute ssh`.
 
 Data movement (between this machine and the bucket):
   push-data FJORD [--all]      Upload prepared inputs. Without --all, only the top-level *.nc a
@@ -57,28 +58,129 @@ Running:
       --config REF     A registered setup name, or a path to an out-of-tree .jl config, which is
                        uploaded to the bucket and fetched by the VM.
       --steps LIST     Comma-separated subcommands, run in order. Same names as the Julia CLI.
-      --gpu            Attach an accelerator and run a GPU preflight before any step.
-      --spot           Spot provisioning. Pair with --resume to continue after a preemption.
+      --gpu            Expose the GPU to the container and run a preflight before any step.
       --resume         Stage results back down and set `pickup = true` for run_simulation.
+      --debug          Resumed run_simulation only: set CUDA_LAUNCH_BLOCKING=1 and pass
+                       --check-bounds=yes -g2 to julia, to turn a GPU illegal-address fault into a
+                       catchable Julia exception with a symbolicated stacktrace at the offending
+                       kernel, instead of a driver crash. Both flags invalidate the image's
+                       precompiled cache, so this also mounts a persistent depot directory on the
+                       VM to avoid recompiling the whole dependency tree on every debug run.
+      --cpu            Resumed run_simulation only: run on the CPU even though the setup's
+                       `:auto` architecture would pick the VM's GPU. A GPU kernel's on-device
+                       backtrace often cannot be symbolicated past "multiple call sites at
+                       unknown:0"; the CPU always gives a complete one for the same bug.
       --stage FJORD    Also stage this fjord's data. Repeatable. Needed when a setup reads
                        another fjord's raw downloads by absolute path.
       --stage-all      Stage every object under data/FJORD, not just the top-level *.nc.
       --run-id ID      Name the run (default: FJORD-<steps>-<timestamp>). Reuse it to resume.
-      --machine-type / --zone / --keep / --dry-run
+      --dry-run        Print the rendered remote script and the launch command; touch nothing.
 
 Inspecting:
   status [RUN_ID]    Show run markers in the bucket.
-  logs RUN_ID        Tail the startup log of a run (serial console if the VM is still up).
-  ssh RUN_ID         SSH into a running job's VM.
-  delete RUN_ID      Delete a job's VM.
+  logs RUN_ID        Tail a run's log on the VM, falling back to the copy in the bucket.
   build              Build and push the image (gcp/build_image.sh).
 EOF
 }
 
+# --- the VM --------------------------------------------------------------------------------------
+# There is exactly one instance and its zone is whichever of europe-west4-{a,b,c} had L4 capacity
+# when the launcher ran, so the zone is looked up, never configured. Cached: every subcommand that
+# touches the VM needs it, and it cannot change while one is running.
+VM_ZONE=""
+vm_zone() {
+    if [[ -z "$VM_ZONE" ]]; then
+        need PROJECT_ID
+        VM_ZONE="$(gcloud compute instances list --project="$PROJECT_ID" \
+            --filter="name=$VM_NAME" --format='value(zone)' | head -1)"
+        [[ -n "$VM_ZONE" ]] || die "$VM_NAME does not exist. Run: gcp/fjordsim-gcp up"
+    fi
+    printf '%s\n' "$VM_ZONE"
+}
+
+vm_exists() {
+    need PROJECT_ID
+    [[ -n "$(gcloud compute instances list --project="$PROJECT_ID" \
+        --filter="name=$VM_NAME" --format='value(name)' | head -1)" ]]
+}
+
+vm_status() {
+    gcloud compute instances describe "$VM_NAME" --project="$PROJECT_ID" \
+        --zone="$(vm_zone)" --format='value(status)'
+}
+
+vm_ssh() {
+    gcloud compute ssh "$VM_NAME" --project="$PROJECT_ID" --zone="$(vm_zone)" "$@"
+}
+
+# Ship a local file to the VM's home directory.
+vm_push() {
+    gcloud compute scp "$1" "$VM_NAME:$2" --project="$PROJECT_ID" --zone="$(vm_zone)" --quiet
+}
+
+cmd_up() {
+    local job="$LAUNCH_JOB_SPOT"
+    [[ "${1:-}" == "--standard" ]] && job="$LAUNCH_JOB_STANDARD"
+    need PROJECT_ID
+
+    # The job retries every zone for up to MAX_ROUNDS rounds with backoff capped at 600s when there
+    # is no L4 capacity, so --wait can block for the best part of an hour before giving up.
+    need JOB_REGION
+    echo "executing $job (this waits for capacity; it can take a while)"
+    gcloud run jobs execute "$job" --project="$PROJECT_ID" --region="$JOB_REGION" --wait
+
+    VM_ZONE=""
+    echo
+    echo "vm:     $VM_NAME  (zone $(vm_zone))"
+    echo "status: $(vm_status)"
+    echo "next:   gcp/fjordsim-gcp bootstrap"
+}
+
+cmd_down() {
+    # No compute.instances.stop, but OS Login grants sudo, so the guest can power itself off. That
+    # reaches TERMINATED and stops compute billing; the boot disk is kept and `up` starts it again.
+    echo "powering off $VM_NAME in $(vm_zone)"
+    vm_ssh --command 'sudo poweroff' || true
+}
+
+cmd_bootstrap() {
+    need PROJECT_ID; need IMAGE_URI
+    echo "bootstrapping $VM_NAME in $(vm_zone)"
+    IMAGE_URI="$IMAGE_URI" envsubst '$IMAGE_URI' < "$here/bootstrap.sh" > "$tmp/bootstrap.sh"
+    vm_push "$tmp/bootstrap.sh" 'fjordsim-bootstrap.sh'
+
+    # A fresh driver install needs a reboot to load the kernel module. The script cannot reboot
+    # itself — that would kill the SSH session carrying its exit status — so it exits 75 and we do
+    # it. Two passes at most: after the reboot stage 1 is a no-op, so 75 cannot recur.
+    local attempt code
+    for attempt in 1 2; do
+        code=0
+        vm_ssh --command 'bash ~/fjordsim-bootstrap.sh' || code=$?
+        [[ $code -eq 0 ]] && return 0
+        [[ $code -eq 75 ]] || die "bootstrap failed (exit $code). Fix it on the VM (gcp/fjordsim-gcp ssh) and re-run."
+
+        echo "rebooting $VM_NAME to load the driver"
+        vm_ssh --command 'sudo systemctl reboot' || true
+
+        # Give sshd time to actually go down, or the first probe below succeeds against the dying
+        # session and we carry on into a VM that is still on its way out.
+        sleep 20
+        local waited=20
+        # The probe resolves a name rather than running `true`: sshd answers before
+        # systemd-resolved is serving, and the next thing bootstrap does is curl get.docker.com.
+        until vm_ssh --command 'getent hosts get.docker.com >/dev/null' >/dev/null 2>&1; do
+            waited=$((waited + 10))
+            [[ $waited -lt 300 ]] || die "$VM_NAME did not come back within 5 minutes."
+            sleep 10
+        done
+    done
+    die "bootstrap asked for a second reboot; that should not happen."
+}
+
 # --- data movement -------------------------------------------------------------------------------
 # The top-level *.nc are the prepared products a simulation reads; subdirectories hold the raw
-# sources only prepare_*/download_* touch. Keeping them apart is what makes a sim VM's stage-in
-# ~900 MB instead of ~5.5 GB.
+# sources only prepare_*/download_* touch. Keeping them apart is what makes a stage-in ~900 MB
+# instead of ~5.5 GB.
 sync_pair() {
     local direction="$1" fjord="$2" all="$3" kind="$4"
     local local_root remote
@@ -103,34 +205,29 @@ sync_pair() {
 
 # --- run -----------------------------------------------------------------------------------------
 cmd_run() {
-    local config_ref="" steps="" use_gpu=false spot=false resume=false keep=false dry=false
-    local stage_all=false extra_fjords="" run_id="" machine_type=""
+    local config_ref="" steps="" use_gpu=false resume=false dry=false
+    local stage_all=false extra_fjords="" run_id="" debug=false cpu=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --config)       config_ref="$2"; shift 2 ;;
-            --steps)        steps="$2"; shift 2 ;;
-            --gpu)          use_gpu=true; shift ;;
-            --spot)         spot=true; shift ;;
-            --resume)       resume=true; shift ;;
-            --keep)         keep=true; shift ;;
-            --dry-run)      dry=true; shift ;;
-            --stage-all)    stage_all=true; shift ;;
-            --stage)        extra_fjords="$extra_fjords $2"; shift 2 ;;
-            --run-id)       run_id="$2"; shift 2 ;;
-            --machine-type) machine_type="$2"; shift 2 ;;
-            --zone)         ZONE="$2"; shift 2 ;;
-            *)              die "unknown option: $1" ;;
+            --config)     config_ref="$2"; shift 2 ;;
+            --steps)      steps="$2"; shift 2 ;;
+            --gpu)        use_gpu=true; shift ;;
+            --resume)     resume=true; shift ;;
+            --debug)      debug=true; shift ;;
+            --cpu)        cpu=true; shift ;;
+            --stage-all)  stage_all=true; shift ;;
+            --stage)      extra_fjords="$extra_fjords $2"; shift 2 ;;
+            --run-id)     run_id="$2"; shift 2 ;;
+            --dry-run)    dry=true; shift ;;
+            *)            die "unknown option $1" ;;
         esac
     done
 
     [[ -n "$config_ref" ]] || die "--config is required."
     [[ -n "$steps" ]] || die "--steps is required."
-    need PROJECT_ID; need BUCKET; need SERVICE_ACCOUNT
+    need PROJECT_ID; need BUCKET; need IMAGE_URI
 
-    # An out-of-tree config travels through the bucket. The fjord name is what roots the staged
-    # directories, and a config file cannot be asked for it without loading Julia — so it is the
-    # file's basename, which is why a config file should be named after the fjord it configures.
     local config_object="" fjord
     if [[ "$config_ref" == *.jl ]]; then
         [[ -f "$config_ref" ]] || die "config file $config_ref does not exist."
@@ -141,87 +238,78 @@ cmd_run() {
     fi
 
     [[ -n "$run_id" ]] || run_id="$fjord-${steps//,/-}-$(date +%Y%m%d-%H%M%S)"
-    # GCE instance names: lowercase alphanumeric and hyphens, 63 chars.
-    local vm_name
-    vm_name="$(echo "fjordsim-$run_id" | tr '[:upper:]_' '[:lower:]-' | cut -c1-63)"
-    vm_name="${vm_name%-}"
-
-    local create=(
-        gcloud compute instances create "$vm_name"
-        --project="$PROJECT_ID" --zone="$ZONE"
-        --image-family="$VM_IMAGE_FAMILY" --image-project="$VM_IMAGE_PROJECT"
-        --metadata=install-nvidia-driver=True
-        --service-account="$SERVICE_ACCOUNT"
-        --scopes=cloud-platform
-        --boot-disk-type="$BOOT_DISK_TYPE"
-        --max-run-duration="$MAX_RUN_DURATION"
-        --instance-termination-action=DELETE
-    )
-
-    if [[ "$use_gpu" == "true" ]]; then
-        create+=(--machine-type="${machine_type:-$GPU_MACHINE_TYPE}"
-                 --accelerator="$GPU_ACCELERATOR"
-                 --boot-disk-size="$GPU_BOOT_DISK_SIZE")
-    else
-        create+=(--machine-type="${machine_type:-$CPU_MACHINE_TYPE}"
-                 --boot-disk-size="$CPU_BOOT_DISK_SIZE")
-    fi
-
-    # Spot is safe here only because a preempted run resumes: CheckpointWriter writes into
-    # results_root and --resume stages that back down and sets `pickup`.
-    [[ "$spot" == "true" ]] && create+=(--provisioning-model=SPOT)
-
-    if [[ -n "$config_object" ]]; then
-        echo "uploading $config_ref -> $config_object"
-        [[ "$dry" == "true" ]] || gcloud storage cp "$config_ref" "$config_object"
-    fi
-
-    local script
-    script="$(BUCKET="$BUCKET" FJORD="$fjord" RUN_ID="$run_id" STEPS="$steps" \
-        CONFIG_REF="$fjord" CONFIG_OBJECT="$config_object" IMAGE_URI="$IMAGE_URI" \
-        REGION="$REGION" ZONE="$ZONE" USE_GPU="$use_gpu" RESUME="$resume" KEEP_VM="$keep" \
-        STAGE_ALL="$stage_all" EXTRA_FJORDS="$extra_fjords" \
-        NVE_API_KEY_SECRET="$NVE_API_KEY_SECRET" \
-        envsubst '$BUCKET $FJORD $RUN_ID $STEPS $CONFIG_REF $CONFIG_OBJECT $IMAGE_URI $REGION $ZONE $USE_GPU $RESUME $KEEP_VM $STAGE_ALL $EXTRA_FJORDS $NVE_API_KEY_SECRET' \
-        < "$here/startup.sh")"
-
-    if [[ "$dry" == "true" ]]; then
-        # The real call also carries --metadata-from-file=startup-script pointing at a temp copy
-        # of the script printed below; there is no temp file to name in a dry run.
-        printf '%s --metadata-from-file=startup-script=<the script below>\n\n--- rendered startup script ---\n%s\n' \
-            "${create[*]}" "$script"
-        return 0
-    fi
-
-    local script_file
-    script_file="$(mktemp -t fjordsim-startup.XXXXXX)"
-    trap 'rm -f "$script_file"' RETURN
-    printf '%s\n' "$script" > "$script_file"
-    create+=(--metadata-from-file=startup-script="$script_file")
 
     # Checkpoints carry no run tag and are scoped to results_root, so two live runs against the
-    # same fjord would silently pick up each other's. Refuse rather than corrupt a run.
+    # same fjord would silently pick up each other's. Refuse rather than corrupt a run — and refuse
+    # before uploading anything.
     if [[ "$resume" != "true" ]] && gcloud storage cat "$BUCKET/runs/$run_id/status" 2>/dev/null | grep -q running; then
         die "run $run_id is already marked running. Use --run-id for a new run, or --resume to continue it."
     fi
 
-    "${create[@]}"
+    local nve_key=""
+    if [[ "$steps" == *add_rivers* ]]; then
+        [[ -n "${NVE_API_KEY:-}" ]] || die "add_rivers needs NVE_API_KEY in your environment. Free key: https://hydapi.nve.no/Users"
+        nve_key="$NVE_API_KEY"
+    fi
+
+    local remote_script="fjordsim-run-$run_id.sh"
+    local remote_log="fjordsim-$run_id.log"
+
+    local script
+    script="$(BUCKET="$BUCKET" FJORD="$fjord" RUN_ID="$run_id" STEPS="$steps" \
+        CONFIG_REF="$fjord" CONFIG_OBJECT="$config_object" IMAGE_URI="$IMAGE_URI" \
+        USE_GPU="$use_gpu" RESUME="$resume" STAGE_ALL="$stage_all" EXTRA_FJORDS="$extra_fjords" \
+        DEBUG="$debug" CPU="$cpu" \
+        envsubst '$BUCKET $FJORD $RUN_ID $STEPS $CONFIG_REF $CONFIG_OBJECT $IMAGE_URI $USE_GPU $RESUME $STAGE_ALL $EXTRA_FJORDS $DEBUG $CPU' \
+        < "$here/remote-run.sh")"
+
+    if [[ "$dry" == "true" ]]; then
+        [[ -n "$config_object" ]] && printf 'would upload %s -> %s\n' "$config_ref" "$config_object"
+        [[ -n "$nve_key" ]] && printf 'would write NVE_API_KEY to ~/.fjordsim-nve-key on %s\n' "$VM_NAME"
+        printf 'would scp the script below to %s:~/%s, then:\n  %s\n\n--- rendered %s ---\n%s\n' \
+            "$VM_NAME" "$remote_script" \
+            "setsid nohup bash ~/$remote_script > ~/$remote_log 2>&1 < /dev/null &" \
+            "$remote_script" "$script"
+        return 0
+    fi
+
+    [[ "$(vm_status)" == "RUNNING" ]] || die "$VM_NAME is not RUNNING. Start it with: gcp/fjordsim-gcp up"
+
+    if [[ -n "$config_object" ]]; then
+        echo "uploading $config_ref -> $config_object"
+        gcloud storage cp "$config_ref" "$config_object"
+    fi
+
+    # Through stdin, not an argument: a command line is world-readable in `ps` on the VM.
+    if [[ -n "$nve_key" ]]; then
+        printf '%s' "$nve_key" | vm_ssh --command 'umask 077; cat > ~/.fjordsim-nve-key'
+    fi
+
+    printf '%s\n' "$script" > "$tmp/$remote_script"
+    vm_push "$tmp/$remote_script" "$remote_script"
+    vm_ssh --command "setsid nohup bash ~/$remote_script > ~/$remote_log 2>&1 < /dev/null & echo started"
+
     echo
     echo "run id:  $run_id"
-    echo "vm:      $vm_name  (zone $ZONE)"
     echo "logs:    gcp/fjordsim-gcp logs $run_id"
     echo "results: gcp/fjordsim-gcp pull-results $fjord"
 }
 
 # --- dispatch ------------------------------------------------------------------------------------
-subcommand="${1:-}"
-[[ $# -gt 0 ]] && shift
+tmp="$(mktemp -d -t fjordsim-gcp.XXXXXX)"
+trap 'rm -rf "$tmp"' EXIT
 
-case "$subcommand" in
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
     push-data)    need BUCKET; sync_pair up   "${1:?FJORD required}" "$([[ "${2:-}" == "--all" ]] && echo true || echo false)" data ;;
     pull-data)    need BUCKET; sync_pair down "${1:?FJORD required}" "$([[ "${2:-}" == "--all" ]] && echo true || echo false)" data ;;
     push-results) need BUCKET; sync_pair up   "${1:?FJORD required}" true results ;;
     pull-results) need BUCKET; sync_pair down "${1:?FJORD required}" true results ;;
+    up)           cmd_up "$@" ;;
+    down)         cmd_down ;;
+    bootstrap)    cmd_bootstrap ;;
     run)          cmd_run "$@" ;;
     build)        exec "$here/build_image.sh" ;;
     status)
@@ -229,8 +317,6 @@ case "$subcommand" in
         if [[ -n "${1:-}" ]]; then
             gcloud storage cat "$BUCKET/runs/$1/status"
         else
-            # `gcloud storage ls` exits 1 on no match, which a bucket with no runs in it yet is
-            # not an error case for.
             markers="$(gcloud storage ls "$BUCKET/runs/**/status" 2>/dev/null || true)"
             [[ -n "$markers" ]] || die "no run markers under $BUCKET/runs/"
             while read -r marker; do
@@ -241,21 +327,16 @@ case "$subcommand" in
     logs)
         need BUCKET
         run_id="${1:?RUN_ID required}"
-        vm="$(echo "fjordsim-$run_id" | tr '[:upper:]_' '[:lower:]-' | cut -c1-63)"
-        # While the VM is up the serial console is live; once it is gone the log is in the bucket.
-        gcloud compute instances get-serial-port-output "$vm" --zone="$ZONE" --project="$PROJECT_ID" 2>/dev/null \
-            || gcloud storage cat "$BUCKET/runs/$run_id/startup.log"
+        # The VM is deleted outright on preemption, taking the live log with it; the bucket copy is
+        # written by the run's exit trap and is all that is left.
+        if vm_exists && [[ "$(vm_status)" == "RUNNING" ]]; then
+            vm_ssh --command "tail -f ~/fjordsim-$run_id.log"
+        else
+            echo "$VM_NAME is not up; reading the copy left in the bucket." >&2
+            gcloud storage cat "$BUCKET/runs/$run_id/run.log"
+        fi
         ;;
-    ssh)
-        run_id="${1:?RUN_ID required}"
-        vm="$(echo "fjordsim-$run_id" | tr '[:upper:]_' '[:lower:]-' | cut -c1-63)"
-        exec gcloud compute ssh "$vm" --zone="$ZONE" --project="$PROJECT_ID"
-        ;;
-    delete)
-        run_id="${1:?RUN_ID required}"
-        vm="$(echo "fjordsim-$run_id" | tr '[:upper:]_' '[:lower:]-' | cut -c1-63)"
-        exec gcloud compute instances delete "$vm" --zone="$ZONE" --project="$PROJECT_ID"
-        ;;
+    ssh)          exec gcloud compute ssh "$VM_NAME" --project="$PROJECT_ID" --zone="$(vm_zone)" "$@" ;;
     ""|-h|--help) usage ;;
-    *)            die "unknown subcommand: $subcommand" ;;
+    *)            usage; exit 1 ;;
 esac

@@ -125,6 +125,15 @@ tee `stdout` is a `Pipe`, which reports the 24x80 default anyway.
 const STACKTRACE_WIDTH = 120
 
 """
+The seconds `show_compact_error` gives `showerror` before giving up on it. A GPU-kernel exception
+raised after the CUDA context is already broken (e.g. a driver-level MMU fault) has been observed to
+hang here indefinitely rather than print or raise — pretty-printing its message or backtrace can
+apparently re-touch the dead context. `run_step` must still return promptly in that case, since
+nothing past it (staging results out, marking the run failed) will happen while it is stuck.
+"""
+const SHOW_ERROR_TIMEOUT = 30.0
+
+"""
     show_compact_error(io, exception, backtrace)
 
 Report `exception` and its backtrace with the type parameters in each frame abbreviated to `{…}`.
@@ -135,6 +144,11 @@ through the coupled model spells out every parameter of every `HydrostaticFreeSu
 `ImmersedBoundaryGrid` in it, and stays unreadable even in a file.
 
 It shortens *frames*, not messages: a `GPUCompiler` `InvalidIRError` body is as long as it ever was.
+
+`showerror` runs on a separate task capped at `SHOW_ERROR_TIMEOUT`: past that, or if the task itself
+throws, a one-line fallback naming just the exception type is printed instead. The spawned task is
+abandoned rather than killed — interrupting arbitrary code mid-flight is unsafe — but the process is
+about to exit anyway, so a leaked task costs nothing.
 """
 function show_compact_error(io, exception, backtrace)
     abbreviated = Ref(false)
@@ -145,7 +159,24 @@ function show_compact_error(io, exception, backtrace)
         :stacktrace_types_limited => abbreviated,
     )
 
-    showerror(context, exception, backtrace)
+    task = Threads.@spawn showerror(context, exception, backtrace)
+    if timedwait(() -> istaskdone(task), SHOW_ERROR_TIMEOUT) == :timed_out
+        println(
+            io,
+            "fjordsim: printing the error timed out after $(SHOW_ERROR_TIMEOUT)s; the exception ",
+            "was a $(nameof(typeof(exception))). A GPU exception raised after the CUDA context is ",
+            "already broken can hang pretty-printing rather than complete it.",
+        )
+        return nothing
+    end
+
+    try
+        fetch(task)
+    catch task_exception
+        println(io, "fjordsim: printing the error itself failed: ", sprint(showerror, task_exception))
+        return nothing
+    end
+
     println(io)
     abbreviated[] && println(io, "fjordsim: type parameters above were abbreviated to `{…}`.")
 

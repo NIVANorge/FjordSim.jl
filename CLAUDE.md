@@ -49,19 +49,29 @@ julia --project -m FjordSim --help
 
 ### Running on GCP
 
-`run_simulation` needs a GPU. `gcp/fjordsim-gcp` runs any step of any setup on a GCE VM and moves
-data to and from a bucket; `gcp/README.md` is the full workflow, including the IAM roles to request.
+`run_simulation` needs a GPU. `gcp/fjordsim-gcp` runs any step of any setup on a shared GCE VM and
+moves data to and from a bucket; `gcp/README.md` is the full workflow and the permission matrix.
+
+This account cannot create, start, stop or delete instances, or set instance metadata. Two Cloud
+Run jobs create or start **one fixed VM** on its behalf; everything after that goes over SSH. So
+there is no per-run VM, no startup script and nothing self-deletes — `down` is a manual step, and
+it powers the VM off from inside.
 
 ```bash
 gcp/fjordsim-gcp build                                                   # image -> Artifact Registry
+gcp/fjordsim-gcp up                                                      # launcher job -> VM up
+gcp/fjordsim-gcp bootstrap                                               # driver, Docker, toolkit
 gcp/fjordsim-gcp push-data drammensfjorden                               # prepared *.nc -> bucket
-gcp/fjordsim-gcp run --config oslofjorden --steps run_simulation --gpu   # launch, then self-delete
-gcp/fjordsim-gcp run --config oslofjorden --steps download_atmosphere,prepare_atmosphere
+gcp/fjordsim-gcp run --config oslofjorden --steps run_simulation --gpu   # scp a script, detach
+gcp/fjordsim-gcp logs <run-id>
 gcp/fjordsim-gcp pull-results oslofjorden
+gcp/fjordsim-gcp down                                                    # stop billing
 ```
 
-`--dry-run` prints the `gcloud` call and the rendered startup script without creating anything.
-Nothing is hardcoded: project, bucket, registry and machine shapes all come from `gcp/config.env`.
+`--dry-run` prints the launch command and the rendered remote script without touching the VM.
+`gcp/config.env` is six values: project, bucket, image URI, the launcher jobs' region, and the VM
+and job names. The machine shape is *not* among them — it belongs to the launcher jobs, so changing
+it is an admin request.
 
 `--config` is the only option, and it is required — there is no default setup. It takes a
 registered setup name (`FjordSim.Setups.SETUPS`) or a path to an out-of-tree `.jl` config file

@@ -81,6 +81,18 @@ COPY gcp/preflight.jl gcp/resume.jl ./gcp/
 # again on boot, before the GPU it is being billed for does any work.
 RUN julia --project -e 'using FjordSim'
 
+# `compute-sanitizer` finds a GPU illegal-memory-access at its exact source line and array by
+# running the already-compiled binary under the CUDA driver's own instrumentation — unlike
+# `--check-bounds=yes`, which forces a recompile of this kernel code and has been observed to OOM
+# on both a 14 GB laptop and a 31 GB VM, and `-g2`, whose symbolicated GPU backtraces GPUCompiler.jl
+# still collapses to "multiple call sites at unknown:0". The apt repo that provides it is already
+# configured in this base image (it is how upstream installs the CUDA runtime packages above), so
+# no new keyring is needed the way gcp/bootstrap.sh needs one on the VM's plain Ubuntu image. Placed
+# after the FjordSim precompile so adding it does not invalidate that ~10-20 minute cached layer.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cuda-sanitizer-12-4 \
+ && rm -rf /var/lib/apt/lists/*
+
 # `-m FjordSim` is the package entry point, so `docker run <image> run_simulation --config X`
 # reads exactly like the documented local command.
 ENTRYPOINT ["julia", "--project", "-m", "FjordSim"]

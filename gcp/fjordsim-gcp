@@ -60,12 +60,11 @@ Running:
       --steps LIST     Comma-separated subcommands, run in order. Same names as the Julia CLI.
       --gpu            Expose the GPU to the container and run a preflight before any step.
       --resume         Stage results back down and set `pickup = true` for run_simulation.
-      --debug          Resumed run_simulation only: set CUDA_LAUNCH_BLOCKING=1 and pass
-                       --check-bounds=yes -g2 to julia, to turn a GPU illegal-address fault into a
-                       catchable Julia exception with a symbolicated stacktrace at the offending
-                       kernel, instead of a driver crash. Both flags invalidate the image's
-                       precompiled cache, so this also mounts a persistent depot directory on the
-                       VM to avoid recompiling the whole dependency tree on every debug run.
+      --debug          Resumed run_simulation only: run julia under compute-sanitizer, so a GPU
+                       illegal-memory-access is reported at its exact source line and array
+                       instead of crashing the driver. Runs the image's already-compiled code, so
+                       unlike --check-bounds=yes it needs no recompile (and none of that flag's
+                       observed OOMs) — trade-off is a much slower run under the sanitizer.
       --cpu            Resumed run_simulation only: run on the CPU even though the setup's
                        `:auto` architecture would pick the VM's GPU. A GPU kernel's on-device
                        backtrace often cannot be symbolicated past "multiple call sites at

@@ -25,7 +25,7 @@ export SimulationConfig,
 using Oceananigans
 using Oceananigans: fields
 using Oceananigans.Utils: prettytime
-using Oceananigans.TimeSteppers: reset!, update_state!
+using Oceananigans.TimeSteppers: Clock, reset!, update_state!
 using Oceananigans.Grids: x_domain, y_domain, node
 using NumericalEarth
 using Dates: DateTime, Second
@@ -1757,6 +1757,10 @@ function coupled_simulation(
         forcing = forcing,
         boundary_conditions = boundary_conditions,
         biogeochemistry = model.biogeochemistry,
+        # Kernels otherwise get the time in the grid's float type (Float32 here) while the host pages
+        # each `FieldTimeSeries` window from the Float64 clock. Near an exact hour the two round to
+        # different slices, so the kernel indexes outside the window and faults on the GPU.
+        clock = Clock{Float64}(time = 0, kernel_time_type = Float64),
         extra_kwargs(model, :ocean_model)...,
     )
     @info "Compiled HydrostaticFreeSurfaceModel"

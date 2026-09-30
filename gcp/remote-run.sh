@@ -117,20 +117,9 @@ docker_args=(
     -e FJORDSIM_RESULTS_ROOT=/results
 )
 [[ "$USE_GPU" == "true" ]] && docker_args+=(--gpus all)
-if [[ "$DEBUG" == "true" ]]; then
-    docker_args+=(-e CUDA_LAUNCH_BLOCKING=1)
-
-    # `--check-bounds=yes` and `-g2` (below) both invalidate the image's precompiled pkgimages —
-    # neither matches the flags the image was built with — so a debug run otherwise recompiles the
-    # whole dependency tree from scratch every time. A persistent depot directory ahead of the
-    # image's own in JULIA_DEPOT_PATH lets Julia cache that recompile once and reuse it across
-    # debug runs, instead of paying it again on every `--debug` invocation.
-    mkdir -p "$STAGE/depot-cache"
-    docker_args+=(
-        -v "$STAGE/depot-cache:/mnt/depot-cache"
-        -e JULIA_DEPOT_PATH=/mnt/depot-cache:/opt/julia
-    )
-fi
+# `compute-sanitizer` intercepts the CUDA driver's own API calls, so it needs synchronous kernel
+# launches to attribute a fault to the right one rather than a later, unrelated call.
+[[ "$DEBUG" == "true" ]] && docker_args+=(-e CUDA_LAUNCH_BLOCKING=1)
 [[ "$CPU" == "true" ]] && docker_args+=(-e FJORDSIM_CPU=true)
 
 # The key is written to a mode-600 file by `fjordsim-gcp run` rather than passed on a command line,
@@ -154,18 +143,16 @@ SYNC_PID=$!
 for step in ${STEPS//,/ }; do
     echo "=== $step --config $config_arg ==="
     if [[ "$step" == "run_simulation" && "$RESUME" == "true" ]]; then
-        julia_args=(--project)
         if [[ "$DEBUG" == "true" ]]; then
-            julia_args+=(--check-bounds=yes)
-            # -g2 only helps symbolicate a GPU on-device backtrace; on the CPU, stacktraces are
-            # always fully resolved without it, and it has been observed to blow up compile-time
-            # memory use without bound on this heavily generic, deeply inlined kernel code — an
-            # OOM on a 31 GB VM, scaling with whatever RAM is available rather than the model's
-            # actual size.
-            [[ "$CPU" == "true" ]] || julia_args+=(-g2)
+            # `--show-backtrace yes` prints the host-side Julia call stack alongside the device
+            # fault, not just the kernel name.
+            docker run "${docker_args[@]}" --entrypoint compute-sanitizer "$IMAGE_URI" \
+                --tool memcheck --show-backtrace yes \
+                julia --project /workspace/gcp/resume.jl "$config_arg"
+        else
+            docker run "${docker_args[@]}" --entrypoint julia "$IMAGE_URI" \
+                --project /workspace/gcp/resume.jl "$config_arg"
         fi
-        docker run "${docker_args[@]}" --entrypoint julia "$IMAGE_URI" \
-            "${julia_args[@]}" /workspace/gcp/resume.jl "$config_arg"
     else
         docker run "${docker_args[@]}" "$IMAGE_URI" "$step" --config "$config_arg"
     fi

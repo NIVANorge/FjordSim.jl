@@ -39,8 +39,10 @@ needs that padding at both ends — files prepared against the old 12:00-anchore
 rejected by `validate_time_coverage` until those three steps have been re-run.
 """
 function oslofjorden()
-    data_root = joinpath(homedir(), "FjordSim_data", "oslofjorden")
-    FT = Oceananigans.defaults.FloatType
+    data_root = fjord_data_root("oslofjorden")
+    # Stated here and passed to the grid and to every model component below, rather than set on
+    # `Oceananigans.defaults.FloatType` — see `EvenGrid`'s `float_type`.
+    FT = Float32
 
     # FjordConfig is what the driver-level generics (run_simulation(), download_forcing(), etc.)
     # dispatch on — one method per subcommand, shared by every setup. Each driver then calls the
@@ -70,6 +72,7 @@ function oslofjorden()
                 -132.0, -105.0, -83.0, -66.0, -52.0, -41.0, -32.0, -25.0,
                 -19.0, -14.5, -10.8, -7.9, -5.5, -3.7, -2.2, -1.0, 0.0,
             ],
+            float_type = FT,
         ),
         # DybdedataConfig overloads bathymetry_dataset (required), plus regrid_options and
         # smoothing_options (both optional) — hooks prepare_bathymetry calls, dispatching on this
@@ -281,7 +284,7 @@ function oslofjorden()
         # SimulationConfig itself has no hooks — everything below dispatches through one of its
         # four nested configs instead.
         simulation_config = SimulationConfig(
-            results_root       = joinpath(homedir(), "FjordSim_results", "oslofjorden"),
+            results_root       = fjord_results_root("oslofjorden"),
             architecture       = :auto,
             # CoupledHydrostaticSimulation overloads coupled_simulation and model_tracers — the
             # model hooks build_simulation calls, dispatching on this config's type.
@@ -327,7 +330,7 @@ function oslofjorden()
                     # length, and Stigebrandt attributed the high basin-mean diffusivity here to
                     # exactly that boundary mixing.
                     base = (
-                        CATKEVerticalDiffusivity(minimum_tke = 7e-6),
+                        CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6),
                         # 2e4 m⁴ s⁻¹, down from 1e5. Biharmonic damping of the 2Δx mode goes as
                         # ν₄·16/Δx⁴, an e-folding of 14.5 min at 1e5 on this 193 m cell — the commit
                         # that raised it from 15 aimed at "~1.7 hours" and was out by 7x. 2e4 gives
@@ -341,7 +344,7 @@ function oslofjorden()
                         # biharmonic needs Δt ≤ Δx⁴/32ν₄, which is 434 s at 1e5 and 2170 s here, and
                         # `AdaptiveTimeStep` measures only the advective CFL
                         # (`cell_advection_timescale_coupled_model`).
-                        HorizontalScalarBiharmonicDiffusivity(ν = 2e4, κ = 2e3),
+                        HorizontalScalarBiharmonicDiffusivity(FT; ν = 2e4, κ = 2e3),
                     ),
                     width_cells = 16,
                     viscosity   = 30.0,
@@ -352,11 +355,11 @@ function oslofjorden()
                 # `e` the setup never names — so `e` was being advected by an unbounded centered
                 # scheme, which makes the vertical diffusivity noisy exactly where the bottom cells
                 # were failing. A scalar covers whatever the closure adds, now and later.
-                tracer_advection   = WENO(),
+                tracer_advection   = WENO(FT),
                 momentum_advection = WENOVectorInvariant(FT),
                 tracers            = (:T, :S),
                 coriolis           = HydrostaticSphericalCoriolis(FT),
-                sea_ice            = FreezingLimitedOceanTemperature(),
+                sea_ice            = FreezingLimitedOceanTemperature(FT),
                 biogeochemistry    = nothing,
                 # Overloads free_surface(config, grid) — its own hook, called from inside
                 # coupled_simulation once the grid exists.

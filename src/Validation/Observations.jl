@@ -132,13 +132,12 @@ const KARTVERKET_TIDE_URL = "https://vannstand.kartverket.no/tideapi.php"
 
 Observed water level from the Norwegian Mapping Authority's permanent tide gauges.
 
-The one source in this module that is public and needs no credential, and the one that scores the
-part of the model the FjordOs reports were most satisfied with. Verified to serve 10-minute,
-quality-flagged data at Viker, Oscarsborg and Oslo across the whole 2014-2015 window.
+The one source in this module that is public and needs no credential, serving quality-flagged
+data at up to 10-minute sampling.
 
 `reference = "msl"` puts the record on mean sea level, which is what the model's free surface `η` is
-about. Kartverket's own default is chart datum, roughly 70 cm lower in this fjord, and a comparison
-made against it would report that offset as a model bias.
+about. Kartverket's own default is chart datum, which lies well below it — roughly 70 cm in the
+Oslofjord — and a comparison made against it would report that offset as a model bias.
 
 Downloads are cached one month per file under `observations_directory(config)`, so an interrupted
 fetch resumes and re-running the analysis costs nothing — the same policy the NVE river client uses.
@@ -307,12 +306,11 @@ end
 
 Observations read from CSV files someone supplies, for the programmes that are not public.
 
-Every observation source in the FjordOs evaluation other than Kartverket water level is held by its
-owner rather than published — the 2014 Statnett ADCP moorings, the NIVA Ytre Oslofjord CTD
-programme, the Fagrådet Inner Oslofjord series, the Scanmar mooring and the beach thermistors. They
-arrive as spreadsheet exports in whatever shape their owner keeps them, so guessing at a parser per
-programme would be guessing; this reads **one stated schema** instead, and converting an export to
-it is a few lines of whatever the exporter speaks.
+Most observation programmes other than tide gauges are held by their owner rather than published —
+current-meter moorings, monitoring-programme CTD casts, fixed thermistors. They arrive as spreadsheet
+exports in whatever shape their owner keeps them, so guessing at a parser per programme would be
+guessing; this reads **one stated schema** instead, and converting an export to it is a few lines of
+whatever the exporter speaks.
 
 Point series and profiles are one type rather than two because every one of these records is the
 same thing — a value at a station, at a time, at a depth — and a point instrument is a profile with

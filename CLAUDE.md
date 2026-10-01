@@ -46,11 +46,37 @@ julia --project -m FjordSim run_simulation --config oslofjorden
 # Score a finished run against observations, writing tables and figures to <results_root>/validation/
 # Only Kartverket water level is fetched automatically; the NIVA-held programmes want a reader
 # subtyping `AbstractObservationConfig` (see docs/adding-a-source.md).
-julia --project -m FjordSim validate_simulation --config oslofjorden_validation
+julia --project -m FjordSim validate_simulation --config examples/oslofjorden_validation.jl
 
 # The subcommands and the setups they accept
 julia --project -m FjordSim --help
 ```
+
+### Running on GCP
+
+`run_simulation` needs a GPU. `gcp/fjordsim-gcp` runs any step of any setup on a shared GCE VM and
+moves data to and from a bucket; `gcp/README.md` is the full workflow and the permission matrix.
+
+This account cannot create, start, stop or delete instances, or set instance metadata. Two Cloud
+Run jobs create or start **one fixed VM** on its behalf; everything after that goes over SSH. So
+there is no per-run VM, no startup script and nothing self-deletes — `down` is a manual step, and
+it powers the VM off from inside.
+
+```bash
+gcp/fjordsim-gcp build                                                   # image -> Artifact Registry
+gcp/fjordsim-gcp up                                                      # launcher job -> VM up
+gcp/fjordsim-gcp bootstrap                                               # driver, Docker, toolkit
+gcp/fjordsim-gcp push-data drammensfjorden                               # prepared *.nc -> bucket
+gcp/fjordsim-gcp run --config oslofjorden --steps run_simulation --gpu   # scp a script, detach
+gcp/fjordsim-gcp logs <run-id>
+gcp/fjordsim-gcp pull-results oslofjorden
+gcp/fjordsim-gcp down                                                    # stop billing
+```
+
+`--dry-run` prints the launch command and the rendered remote script without touching the VM.
+`gcp/config.env` is six values: project, bucket, image URI, the launcher jobs' region, and the VM
+and job names. The machine shape is *not* among them — it belongs to the launcher jobs, so changing
+it is an admin request.
 
 `--config` is the only option, and it is required — there is no default setup. It takes a
 registered setup name (`FjordSim.Setups.SETUPS`) or a path to an out-of-tree `.jl` config file
@@ -229,6 +255,13 @@ forcings.
 
 ## Common Pitfalls
 
+- Never set `Oceananigans.defaults.FloatType` in a setup: it is process-wide, so every config built
+  after it — other setups, test fixtures — silently changes precision. The simulation's float type
+  is `EvenGrid`'s `float_type` (default `Float32`, for GPU speed), and a setup passes that same `FT`
+  to every model component that takes one (`WENO(FT)`, `CATKEVerticalDiffusivity(FT; ...)`,
+  `FreezingLimitedOceanTemperature(FT)`, ...), since those read the global when not given one. The
+  model clock stays `Float64` whatever the grid is (`coupled_simulation`): a `Float32` kernel time
+  rounds to a different `FieldTimeSeries` slice than the host near an exact hour and faults on GPU.
 - Never extend `getproperty` to fix undefined-property bugs — fix the caller instead
 - A variable named the same as a function produces "type is not callable" — rename the variable
 - Never add/remove/change `[deps]` in `Project.toml` on your own initiative; only touch
@@ -254,7 +287,11 @@ forcings.
 
 - Bathymetry convention: `h < 0` = below sea level (bottom height), `h >= 0` = land.
 - Data files default to `~/FjordSim_data/<fjord>/` and results to `~/FjordSim_results/<fjord>/`,
-  the latter from the simulation config's `results_root`.
+  the latter from the simulation config's `results_root`. A setup must build both with
+  `fjord_data_root("<fjord>")` / `fjord_results_root("<fjord>")` (`src/Configs.jl`) rather than
+  `joinpath(homedir(), ...)`: those read `FJORDSIM_DATA_ROOT` / `FJORDSIM_RESULTS_ROOT`, which is
+  what lets one setup run unchanged on a laptop and on a cloud VM's staging disk. A setup sharing
+  another fjord's downloads passes that other name, so a relocation moves both.
 - Open-boundary convention: the domain is open on any subset of its four lateral edges — none, one,
   or all four for a region in the open ocean — named once by the boundary data config's `open_edges`
   and read through the `open_edges` accessor as a `Vector{Symbol}`, empty for a setup naming no

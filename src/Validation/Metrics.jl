@@ -124,8 +124,8 @@ with `NaN` where the window is not fully covered.
 
 `window` is a `Period` rather than a sample count so the same call works on a 10-minute tide-gauge
 series and an hourly current record. METreport 11/2017 uses `Hour(49)`, which is the conventional
-choice for a fjord: it is four M2 cycles and two inertial periods at this latitude, so it removes
-the tide without removing the estuarine signal underneath it.
+choice for a fjord: it spans four M2 cycles (49.7 h) and two diurnal ones (K1 47.9 h, O1 51.6 h), so
+it removes the tide without removing the estuarine signal underneath it.
 """
 function running_mean(times, values, window::Dates.Period)
     half = Dates.Millisecond(window) ÷ 2
@@ -206,9 +206,9 @@ longest first). Periods are the standard astronomical ones the report quotes.
 
 Only eleven of them were in FjordOs' own tidal forcing; SA and SSA were not, and the report's point
 in listing them anyway is that the model picks them up regardless, through the daily-mean sea level
-it takes from NorKyst at the open boundary. That test applies here unchanged — and more directly,
-since this setup imposes no harmonic forcing at all and takes its entire tide from the boundary
-data.
+it takes from NorKyst at the open boundary. That test applies to a FjordSim run unchanged — and more
+directly, since FjordSim imposes no harmonic forcing at all and takes its entire tide from the
+boundary data.
 """
 const TIDAL_CONSTITUENTS = [
     TidalConstituent("SA", 8764.0),

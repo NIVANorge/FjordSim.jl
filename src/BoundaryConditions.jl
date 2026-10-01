@@ -480,7 +480,7 @@ end
 QuadraticBottomDrag(coefficient::Real) = QuadraticBottomDrag(Float64(coefficient))
 
 boundary_condition_sides(config::QuadraticBottomDrag, grid, forcing, boundary_config, tracers) =
-    quadratic_bottom_drag_boundary_conditions(config.coefficient)
+    quadratic_bottom_drag_boundary_conditions(convert(eltype(grid), config.coefficient))
 
 """
     OpenLateralBoundaryFromData(; inflow_timescale, outflow_timescale)

@@ -219,8 +219,8 @@ station and variable it might hold:
   station outside a programme's remit — and that is a blank row rather than a failure.
 - **`download_observations` defaults to a no-op.** A source read from files someone supplies has
   nothing to fetch and should not have to say so. `KartverketSeaLevel` is the only built-in source
-  that fetches, because it is the only observation programme in the FjordOs evaluation that is
-  public; the rest are held by their owners and want a reader, not a client.
+  that fetches, because public tide-gauge data is the exception: most programmes are held by their
+  owners and want a reader, not a client.
 
 Every source returns the same `ObservationSeries` — `(station, variable, times, depths, values,
 units, source)`, with `values` shaped `(time, depth)` — which is what lets `Metrics.jl` stay ignorant

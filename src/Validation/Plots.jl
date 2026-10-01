@@ -2,8 +2,8 @@
 # same reason `Metrics.jl` does: the figure that compares a tide gauge is the figure that compares a
 # thermistor, and neither needs to know which.
 #
-# Where a figure has a counterpart in METreport 11/2017 the docstring names it, because the point of
-# the exercise is to put FjordSim's answer beside the one that report already published.
+# Where a figure has a counterpart in METreport 11/2017 the docstring names it, so a FjordSim figure
+# can be read beside the one that published model evaluation already drew.
 #
 # `src/Plotting.jl` is the pre-run counterpart of this file — it draws prepared *input* files. The
 # shared idioms (`default_figure_size`, ivory land, finite-extrema colour ranges) come from there.
@@ -110,7 +110,7 @@ elapsed_hours(times) = isempty(times) ? 0.0 : elapsed_hours(last(times), first(t
 Amplitude and phase per constituent, observed against modelled, with the standard errors the fits
 report as whiskers.
 
-METreport 11/2017 Table 3 as a figure. A table is the right medium for three stations and thirteen
+METreport 11/2017 Table 3 as a figure. A table is the right medium for a few stations and thirteen
 constituents, and `tidal_constituent_table` writes one; this is for seeing at a glance which
 constituents the model has and which it invents — the report's own finding was that M2 came out well
 everywhere while the shallow-water constituents M4, MN4 and MS4 came out with the right amplitude
@@ -323,7 +323,7 @@ A Taylor diagram: every station-variable pair as one point, placed by its correl
 angle) and its normalised standard deviation (as the radius), so that its distance from the
 reference point on the axis is its normalised centred RMSE.
 
-The one figure that answers "is this comparable to FjordOs" at a glance, and the summary both
+The one figure that answers "how does this run score overall" at a glance, and a summary the FjordOs
 reports predate. A point on the arc at radius 1 has the right variability, a point near the axis has
 the right phasing, and the reference marker at `(1, 0)` is a perfect model.
 
@@ -472,9 +472,9 @@ end
 A vertical section across the fjord at constant latitude, with the model's own bathymetry drawn over
 it.
 
-METreport 11/2017 Fig. 11, which is how both Statnett transects are shown: the Filtvedt-Brenntangen
-line at 59.582°N and the Småskjær-Evje line at ~59.35°N are both very nearly zonal, so each is one
-row of a lat-lon grid and needs no interpolation.
+METreport 11/2017 Fig. 11 draws its current transects this way. A transect that is very nearly
+zonal is one row of a lat-lon grid and needs no interpolation, which is why this takes a latitude
+rather than two endpoints.
 
 Read from a `SnapshotWriter` file rather than from the station writers, because a section is the one
 diagnostic that wants the whole field and does not want sub-daily sampling. The bathymetry comes
@@ -483,8 +483,7 @@ cannot disagree.
 
 That report's version also overlays the *real* bathymetry to show how far the model's had to be
 smoothed, which is its main point there. That comparison is not drawn here because it does not
-apply: FjordSim's z-coordinate needs no rx0 smoothing, and `max_slope_factor = 0.25` costs 0.6 m at
-the Drøbak sill against a 395.1 m basin.
+apply: FjordSim's z-coordinate needs no rx0 smoothing.
 """
 function plot_section(
     path,

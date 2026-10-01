@@ -16,9 +16,11 @@ downloaders skip a month already present. The boundary band and the NVE caches a
 `docs/setups.md`.
 """
 function drammensfjorden()
-    data_root = joinpath(homedir(), "FjordSim_data", "drammensfjorden")
-    oslofjorden_data_root = joinpath(homedir(), "FjordSim_data", "oslofjorden")
-    FT = Oceananigans.defaults.FloatType
+    data_root = fjord_data_root("drammensfjorden")
+    oslofjorden_data_root = fjord_data_root("oslofjorden")
+    # Stated here and passed to the grid and to every model component below, rather than set on
+    # `Oceananigans.defaults.FloatType` — see `EvenGrid`'s `float_type`.
+    FT = Float32
 
     return FjordConfig(
         # Overloads LatitudeLongitudeGrid(architecture, config) — the one grid hook.
@@ -38,6 +40,7 @@ function drammensfjorden()
                 -130.0, -116.6, -103.4, -90.4, -77.6, -65.0, -53.0, -42.2, -33.2,
                 -25.8, -19.8, -15.0, -11.2, -8.2, -5.8, -3.8, -2.2, -1.0, 0.0,
             ],
+            float_type = FT,
         ),
         # Overloads bathymetry_dataset (required), regrid_options and smoothing_options (both
         # optional) — the hooks prepare_bathymetry dispatches on.
@@ -152,7 +155,7 @@ function drammensfjorden()
         # SimulationConfig itself has no hooks — everything below dispatches through one of its
         # four nested configs instead.
         simulation_config = SimulationConfig(
-            results_root       = joinpath(homedir(), "FjordSim_results", "drammensfjorden"),
+            results_root       = fjord_results_root("drammensfjorden"),
             architecture       = :auto,
             # Overloads coupled_simulation and model_tracers.
             model              = CoupledHydrostaticSimulation(
@@ -168,14 +171,14 @@ function drammensfjorden()
                         # CATKE takes `w★ = sqrt(max(minimum_tke, e))`, so this floor, not the
                         # prognostic TKE, sets κ = 0.098·e_min/N over most of the column. See
                         # `oslofjorden()` for the measurements behind the value.
-                        CATKEVerticalDiffusivity(minimum_tke = 7e-6),
+                        CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6),
                         # A biharmonic coefficient is only meaningful against Δx⁴, and this grid's
                         # 99 m cell is a factor 14 smaller in Δx⁴ than Oslofjord's 193 m one. 1e3
                         # damps the 2Δx mode with a 101 min e-folding (`Δx⁴/16ν₄`) against
                         # Oslofjord's 72 min at 2e4, and leaves a 3026 s explicit-stability limit
                         # `Δt ≤ Δx⁴/32ν₄` that `AdaptiveTimeStep` never measures. The 1e5 this file
                         # once copied put that limit at 24 s, below the steps the run takes.
-                        HorizontalScalarBiharmonicDiffusivity(ν = 1e3, κ = 1e2),
+                        HorizontalScalarBiharmonicDiffusivity(FT; ν = 1e3, κ = 1e2),
                     ),
                     width_cells = 16,
                     viscosity   = 13.0,
@@ -184,11 +187,11 @@ function drammensfjorden()
                 # One scheme for every tracer: Oceananigans gives any tracer a NamedTuple omits the
                 # `Centered()` default, and CATKE contributes an `e` this setup never names, so
                 # `(T = WENO(), S = WENO())` left the TKE on an unbounded centered scheme.
-                tracer_advection   = WENO(),
+                tracer_advection   = WENO(FT),
                 momentum_advection = WENOVectorInvariant(FT),
                 tracers            = (:T, :S),
                 coriolis           = HydrostaticSphericalCoriolis(FT),
-                sea_ice            = FreezingLimitedOceanTemperature(),
+                sea_ice            = FreezingLimitedOceanTemperature(FT),
                 biogeochemistry    = nothing,
                 # Overloads free_surface(config, grid), called from inside coupled_simulation once
                 # the grid exists.

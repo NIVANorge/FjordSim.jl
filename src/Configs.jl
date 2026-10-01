@@ -19,6 +19,8 @@ export AbstractGridConfig,
     domain_grid,
     simulation_grid,
     model_closure,
+    fjord_data_root,
+    fjord_results_root,
     bathymetry_path,
     forcing_path,
     forcing_directory,
@@ -567,6 +569,30 @@ is chosen, and its `attach_time_stepping!` method installs that choice on the si
 `FjordSim.Simulations.AdaptiveTimeStep` is the built-in implementation.
 """
 abstract type AbstractTimeSteppingConfig end
+
+"""
+    fjord_data_root(fjord)
+    fjord_results_root(fjord)
+
+The directory a setup keeps `fjord`'s input data in, and the one it writes that fjord's results to.
+
+The environment names the *parent* — `FJORDSIM_DATA_ROOT` and `FJORDSIM_RESULTS_ROOT` — and the
+argument names the fjord under it, so one variable relocates every setup at once and a setup still
+states which fjord it is. Unset, they reproduce `~/FjordSim_data/<fjord>/` and
+`~/FjordSim_results/<fjord>/` exactly, which is what every setup spelled with `homedir()` before.
+
+This is what lets the same setup run against a laptop's home directory and a cloud VM's staging
+disk without editing the setup: the roots are the only thing that differs between the two, since
+every other path resolves against them through the helpers below.
+
+A fjord that reads another's downloads passes that other name — `drammensfjorden()` shares
+Oslofjord's bathymetry source as `fjord_data_root("oslofjorden")` — so a relocation moves both.
+"""
+fjord_data_root(fjord) =
+    joinpath(get(ENV, "FJORDSIM_DATA_ROOT", joinpath(homedir(), "FjordSim_data")), fjord)
+
+fjord_results_root(fjord) =
+    joinpath(get(ENV, "FJORDSIM_RESULTS_ROOT", joinpath(homedir(), "FjordSim_results")), fjord)
 
 """
     bathymetry_path(config)

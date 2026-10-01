@@ -153,10 +153,10 @@ writes the free surface at. The rule is by variable rather than by writer name �
 records `η` at a point is recording water level, and Kartverket is the public source of observed
 water level — so a setup gets this for free by naming its gauges and nothing else.
 
-The other programmes in the FjordOs evaluation are **not** here and cannot be: the Statnett ADCP
-records, the Scanmar mooring, the beach thermistors and the NIVA CTD and Fagrådet series are all
-held rather than published, so a source for them is a reader over files someone supplies. Pass those
-to `validate_simulation` explicitly once their exports exist.
+Held programmes — current-meter moorings, monitoring CTD casts, fixed thermistors — are **not** here
+and cannot be: they are held by their owners rather than published, so a source for them is a
+reader over files someone supplies, such as a `CsvObservations`. Pass those to `validate_simulation`
+explicitly once their exports exist.
 
 Returns an empty tuple for a setup with no free-surface station writer, which is not an error —
 `validate_simulation` will simply find nothing to score and say so.
@@ -181,7 +181,8 @@ end
 """
     validate_simulation(config::FjordConfig; observations, window, depths)
 
-Score a finished run against observations and write the tables and figures.
+Score a finished run against observations and write the tables and figures. Returns the
+validation directory, or `nothing` for a setup naming no `simulation_config`.
 
 The setup-level driver, and the one pipeline step that runs *after* `run_simulation` rather than
 before it. It fetches whatever each observation source can supply over the run's window, pairs it
@@ -212,9 +213,9 @@ function validate_simulation(
     window = coverage_window(config.simulation_config),
     depths = (0.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0),
 )
-    isnothing(config.simulation_config) && throw(
-        ArgumentError("validate_simulation needs a setup that names a `simulation_config`."),
-    )
+    # A setup that is never simulated has nothing to validate, which is an opt-out rather than an
+    # error — the same `nothing` `run_simulation` returns for it, reported as a no-op by `CLI.main`.
+    isnothing(config.simulation_config) && return nothing
 
     simulation = config.simulation_config
     writers = station_writers(simulation)
@@ -332,7 +333,7 @@ end
 Write the skill table, the tidal constituent table and the two summary diagrams.
 
 The tables are plain text rather than a figure because they hold numbers a reader will want to quote
-beside METreport 11/2017's own — which is the comparison the whole exercise exists to make.
+beside a published evaluation's own, such as METreport 11/2017's.
 """
 function write_validation_summary(directory, scores, tidal_fits)
     if isempty(scores)

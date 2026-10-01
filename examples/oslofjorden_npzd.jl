@@ -737,7 +737,7 @@ FjordConfig(
     simulation_config = SimulationConfig(
         # Its own root. Checkpoints are shared per `results_root`, so pointing this at
         # `oslofjorden()`'s would have the two runs pick each other's up.
-        results_root = joinpath(homedir(), "FjordSim_results", "oslofjorden_npzd"),
+        results_root = fjord_results_root("oslofjorden_npzd"),
         architecture = simulation.architecture,
         model = NPZDModel(
             simulation.model,

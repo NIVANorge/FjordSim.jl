@@ -24,6 +24,15 @@ latitude, with explicit vertical faces.
 - `longitude`: `(west, east)` longitude bounds in degrees.
 - `latitude`: `(south, north)` latitude bounds in degrees.
 - `z_faces`: Vertical face coordinates in increasing order (bottom to top).
+- `float_type`: The float type the simulation grid, and so the model, runs in. `Float32` by
+  default, because it is much faster on a GPU. Only `simulation_grid` reads it: `domain_grid`, which
+  the prepare steps regrid onto, stays in Oceananigans' own default so it matches the source grids
+  they interpolate from.
+
+The float type is stated here, per setup, rather than by setting `Oceananigans.defaults.FloatType`:
+that is a process-wide global, so a setup that set it would change the precision of every config
+built after it. A setup passes the same `FT` to every model component it constructs — `WENO(FT)`,
+`CATKEVerticalDiffusivity(FT; ...)` and so on — since those read that global too when not given one.
 """
 Base.@kwdef mutable struct EvenGrid <: AbstractGridConfig
     size::NTuple{3,Int}
@@ -31,6 +40,7 @@ Base.@kwdef mutable struct EvenGrid <: AbstractGridConfig
     longitude::NTuple{2,Float64}
     latitude::NTuple{2,Float64}
     z_faces::Vector{Float64}
+    float_type::DataType = Float32
 end
 
 """
@@ -46,7 +56,7 @@ Configs.domain_grid(config::EvenGrid, architecture) = LatitudeLongitudeGrid(arch
 The `ImmersedBoundaryGrid` an `EvenGrid` runs on. See `Configs.simulation_grid`.
 """
 Configs.simulation_grid(config::EvenGrid, bathymetry_file, architecture) =
-    ImmersedBoundaryGrid(bathymetry_file, architecture, config.halo)
+    ImmersedBoundaryGrid(bathymetry_file, architecture, config.halo, config.float_type)
 
 function LatitudeLongitudeGrid(architecture, config::EvenGrid)
     return LatitudeLongitudeGrid(
@@ -60,9 +70,10 @@ function LatitudeLongitudeGrid(architecture, config::EvenGrid)
 end
 
 """
-        ImmersedBoundaryGrid(filepath::String, architecture, halo)
+        ImmersedBoundaryGrid(filepath::String, architecture, halo, FT = Oceananigans.defaults.FloatType)
 
-Construct an immersed-boundary `LatitudeLongitudeGrid` from a bathymetry NetCDF file.
+Construct an immersed-boundary `LatitudeLongitudeGrid` with float type `FT` from a bathymetry NetCDF
+file.
 
 The preferred input file layout is:
 
@@ -100,7 +111,7 @@ In short, new files should be written as `lon`, `lat`, `z_faces`, and
 `h(lon, lat)` using bottom height, while older files with swapped horizontal
 axis vectors or positive depth values are still supported.
 """
-function ImmersedBoundaryGrid(filepath::String, architecture, halo)
+function ImmersedBoundaryGrid(filepath::String, architecture, halo, FT = Oceananigans.defaults.FloatType)
     ds = NCDataset(filepath)
     z_faces = ds["z_faces"][:]
     bottom_height = ds["h"][:, :]
@@ -129,7 +140,7 @@ function ImmersedBoundaryGrid(filepath::String, architecture, halo)
     # Size should be for grid centers,
     # but z, latitude and langitude should be for faces
     underlying_grid =
-        LatitudeLongitudeGrid(architecture; size=(Nx, Ny, Nz - 1), halo=halo, z=z_faces, latitude, longitude)
+        LatitudeLongitudeGrid(architecture, FT; size=(Nx, Ny, Nz - 1), halo=halo, z=z_faces, latitude, longitude)
     bathymetry = Field{Center,Center,Nothing}(underlying_grid)
     set!(bathymetry, coalesce.(bottom_height, 0.0))
     fill_halo_regions!(bathymetry)

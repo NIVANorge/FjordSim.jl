@@ -28,7 +28,7 @@ export SimulationConfig,
 using Oceananigans
 using Oceananigans: fields
 using Oceananigans.Utils: prettytime
-using Oceananigans.TimeSteppers: reset!, update_state!
+using Oceananigans.TimeSteppers: Clock, reset!, update_state!
 using Oceananigans.Grids: x_domain, y_domain, node, λnodes, φnodes, znodes, Center, Face
 using NumericalEarth
 using Dates: DateTime, Second
@@ -226,29 +226,31 @@ end
 The `NamedTuple` the two coefficient functions read: the domain's extent, its cell size, the ramp
 width, the two coefficients, and one `1.0`/`0.0` multiplier per lateral edge.
 
-Every entry is a `Float64`, including the edge switches, so the tuple is concretely typed and the
-kernel branch-free. The cell sizes are the nominal `Δλ` and `Δφ` of the underlying grid, which is
-what `width_cells` counts.
+Every entry is the grid's own `eltype`, including the edge switches, so the tuple is concretely
+typed and the kernel branch-free without ever mixing in `Float64` alongside `Float32` field data.
+The cell sizes are the nominal `Δλ` and `Δφ` of the underlying grid, which is what `width_cells`
+counts.
 """
 function sponge_parameters(config::BoundarySponge, grid, edges)
+    FT = eltype(grid)
     λ_west, λ_east = x_domain(grid)
     φ_south, φ_north = y_domain(grid)
     Nx, Ny, _ = size(grid)
 
     return (;
-        λ_west = Float64(λ_west),
-        λ_east = Float64(λ_east),
-        φ_south = Float64(φ_south),
-        φ_north = Float64(φ_north),
-        Δλ = Float64(λ_east - λ_west) / Nx,
-        Δφ = Float64(φ_north - φ_south) / Ny,
-        width = Float64(config.width_cells),
-        ν = config.viscosity,
-        κ = config.diffusivity,
-        south = (:south in edges) * 1.0,
-        north = (:north in edges) * 1.0,
-        west = (:west in edges) * 1.0,
-        east = (:east in edges) * 1.0,
+        λ_west = FT(λ_west),
+        λ_east = FT(λ_east),
+        φ_south = FT(φ_south),
+        φ_north = FT(φ_north),
+        Δλ = FT(λ_east - λ_west) / Nx,
+        Δφ = FT(φ_north - φ_south) / Ny,
+        width = FT(config.width_cells),
+        ν = convert(FT, config.viscosity),
+        κ = convert(FT, config.diffusivity),
+        south = (:south in edges) * one(FT),
+        north = (:north in edges) * one(FT),
+        west = (:west in edges) * one(FT),
+        east = (:east in edges) * one(FT),
     )
 end
 
@@ -550,10 +552,8 @@ One observation site a run writes a time series at, named by the position the ob
 actually taken at rather than by a grid index.
 
 Snapping to the grid is deliberately left to attach time, where the grid exists, so that the offset
-between the two can be logged. The reports this setup is validated against make the point
-themselves — METreport 11/2017 Fig. 11 notes that "the true position of Station Km1 is a little to
-the west" of where the model results were extracted — and a comparison that does not record how far
-a station moved cannot be read honestly.
+between the two can be logged: a comparison that does not record how far a station moved cannot be
+read honestly.
 
 # Fields
 - `name`: what the station is called in the source the observations come from, e.g. `"OF-1"` or
@@ -600,8 +600,8 @@ schedule. One file per station.
 The counterpart of `SnapshotWriter` for validation rather than for maps. A snapshot of the full
 domain costs `Nx * Ny * Nz` per record, so the cadence a model-observation comparison needs — hourly
 for a current meter, ten-minutely for a tide gauge — is unaffordable over a multi-year window,
-while the same cadence at a dozen points is nothing. `oslofjorden_validation()` writes 59 GB of
-daily 3D fields and about 150 MB of station series beside them.
+while the same cadence at a dozen points is nothing. `examples/oslofjorden_validation.jl` writes
+59 GB of daily 3D fields and about 150 MB of station series beside them.
 
 One `NetCDFWriter` per station rather than one for all of them, because Oceananigans takes a single
 `indices` per file and a station is `indices = (i, j, :)`. So this writer occupies one
@@ -2217,6 +2217,10 @@ function coupled_simulation(
         forcing = forcing,
         boundary_conditions = boundary_conditions,
         biogeochemistry = model.biogeochemistry,
+        # Kernels otherwise get the time in the grid's float type (Float32 here) while the host pages
+        # each `FieldTimeSeries` window from the Float64 clock. Near an exact hour the two round to
+        # different slices, so the kernel indexes outside the window and faults on the GPU.
+        clock = Clock{Float64}(time = 0, kernel_time_type = Float64),
         extra_kwargs(model, :ocean_model)...,
     )
     @info "Compiled HydrostaticFreeSurfaceModel"

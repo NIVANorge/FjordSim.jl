@@ -1029,7 +1029,7 @@ function prepared_variable(source_name, target_grid, source, filepath, config::A
         mask,
         reshape(x, shape),
         reshape(y, shape),
-        Array(znodes(target_grid, LZ())),
+        source_level_coordinate(source, znodes(target_grid, LZ())),
         mask_fill,
         lambda,
     )
@@ -1210,51 +1210,29 @@ function nearest_valid_map(valid, level)
 end
 
 """
-    solve_vertical_faces(depths)
+    source_level_coordinate(source::ProjectedSourceGrid, z)
 
-Vertical faces of an Oceananigans grid whose cell centers land exactly on the source depth
-levels, so that `interpolate` sees the levels the data is actually defined at.
+The heights `z` (metres, negative down) as fractional positions on the source's level axis — the
+vertical coordinate of `source_field_grid`, whose cell `k` is the `k`-th source level counted from
+the deepest. A height between two levels maps linearly between their indices, so the trilinear
+interpolation `interpolate_to_target!` does in the projected horizontal and this coordinate is
+linear in depth between the bracketing source levels. A height beyond the shallowest or deepest
+level maps beyond that index, where the halo repeats the end level.
 
-Oceananigans grids are specified by faces with centers at face midpoints, while a source's
-`depth` values *are* centers of a strongly non-uniform axis. Solving `c_k = (f_k + f_{k+1})/2`
-leaves one free parameter `s = f_1`, with `f_k = (-1)^(k-1) s + g_k`, and a positive cell
-thickness requires `f_k < c_k`. Each level therefore bounds `s` from one side, alternating with
-parity. For NorKyst's 16 levels the resulting interval is about one metre wide in a 3 km domain —
-it exists, but it is a property of MET's depth list rather than of this code, so an empty
-interval is an error rather than a silently misplaced grid.
+The levels cannot be the grid's own vertical coordinate. An Oceananigans grid is specified by its
+faces, with centres at face midpoints, and a source's `depth` values *are* centres of a strongly
+non-uniform axis: solving for faces that put centres on them leaves one free parameter, which each
+level bounds from one side, alternating with parity. The interval is about a metre wide for the
+operational NorKyst's 16 levels and empty for the Norkyst-v3 hindcast's 25.
 """
-function solve_vertical_faces(depths)
-    centers = -reverse(depths)
-    n = length(centers)
+function source_level_coordinate(source::ProjectedSourceGrid, z)
+    heights = -reverse(source.depths)
+    return [level_position(heights, height) for height in z]
+end
 
-    g = zeros(n + 1)
-    for k = 2:n+1
-        g[k] = 2 * centers[k-1] - g[k-1]
-    end
-
-    lower = -Inf
-    upper = Inf
-    for k = 1:n
-        if isodd(k)
-            upper = min(upper, centers[k] - g[k])
-        else
-            lower = max(lower, g[k] - centers[k])
-        end
-    end
-
-    upper > lower || error(
-        "Source depth levels $(-centers) cannot be represented as an Oceananigans grid: the " *
-        "faces placing cell centers there are non-monotonic for every choice of the deepest " *
-        "face (feasible interval would be ($lower, $upper)).",
-    )
-
-    faces = zeros(n + 1)
-    faces[1] = (lower + upper) / 2
-    for k = 1:n
-        faces[k+1] = 2 * centers[k] - faces[k]
-    end
-
-    return faces
+function level_position(heights, height)
+    k = clamp(searchsortedlast(heights, height), 1, length(heights) - 1)
+    return k + (height - heights[k]) / (heights[k+1] - heights[k])
 end
 
 """
@@ -1266,6 +1244,9 @@ The projected coordinates are regular, so this is a legal `RectilinearGrid` and
 `Oceananigans.Fields.interpolate` applies. It is *not* expressible as a `LatitudeLongitudeGrid`:
 NorKyst's grid is rotated about 59 degrees from east in the Oslofjord region, which also rules
 out the `NumericalEarth` dataset path, whose `native_grid` is always a `LatitudeLongitudeGrid`.
+
+The vertical coordinate is the level index, with cell `k` centred on `k`; target heights reach it
+through `source_level_coordinate`.
 
 A source on a differently-shaped grid overloads this, and `projected_target_nodes`, on its own
 source-grid type.
@@ -1279,7 +1260,7 @@ function source_field_grid(source::ProjectedSourceGrid, architecture = CPU())
         size = (length(source.x), length(source.y), length(source.depths)),
         x = collect(range(source.x[1] - Δx / 2, step = Δx, length = length(source.x) + 1)),
         y = collect(range(source.y[1] - Δy / 2, step = Δy, length = length(source.y) + 1)),
-        z = solve_vertical_faces(source.depths),
+        z = collect(range(1 // 2, step = 1, length = length(source.depths) + 1)),
         topology = (Bounded, Bounded, Bounded),
     )
 end

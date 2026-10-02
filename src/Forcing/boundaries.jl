@@ -324,8 +324,8 @@ hourly_time_steps(records; max_gap = BOUNDARY_MAX_GAP) =
 
 The source subset as a single-level `RectilinearGrid`, for a source variable with no depth axis.
 
-`solve_vertical_faces` cannot build this: for one level it leaves the lower bound at `-Inf` and puts
-the first face there. The single cell is centred on `SURFACE_TARGET_DEPTH` instead, which is also the
+`source_field_grid` cannot build this: its level axis interpolates between neighbouring levels, and
+one level has none. The single cell is centred on `SURFACE_TARGET_DEPTH` instead, which is also the
 vertical node `prepared_boundary_variable` gives a surface variable — so the trilinear interpolation
 lands exactly on the cell centre and the vertical direction contributes nothing.
 """
@@ -382,7 +382,7 @@ function prepared_boundary_variable(
 
     x, y = projected_target_nodes(longitude, latitude, source)
     shape = (length(longitude), length(latitude))
-    z = surface ? [SURFACE_TARGET_DEPTH] : Array(znodes(target_grid, Center()))
+    z = surface ? [SURFACE_TARGET_DEPTH] : source_level_coordinate(source, znodes(target_grid, Center()))
 
     return PreparedVariable(
         source_name,

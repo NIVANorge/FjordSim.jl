@@ -759,9 +759,9 @@ modules, in `include` order from `src/FjordSim.jl`:
    `size(output)`. `PreparedVariable` became parametric in its dimension-name count, which is the one
    thing the two files disagree about; nothing else needed widening.
 
-   **The three surface variables need their own single-level source grid.** `solve_vertical_faces`
-   cannot build one — for a single level it leaves the lower bound at `-Inf` and puts the first face
-   there — so `surface_source_field_grid` centres its one cell on `SURFACE_TARGET_DEPTH`, which is
+   **The three surface variables need their own single-level source grid.** `source_field_grid`'s
+   level-index axis (`source_level_coordinate`) interpolates between neighbouring levels, and one
+   level has none — so `surface_source_field_grid` centres its one cell on `SURFACE_TARGET_DEPTH`, which is
    also the vertical node the target slab gets, making the interpolation land exactly on the cell
    centre. `source_validity` and `source_slab` became `ndims`-aware and reshape a 2D source plane to
    one level (`as_source_slab`), which keeps everything downstream three-dimensional.

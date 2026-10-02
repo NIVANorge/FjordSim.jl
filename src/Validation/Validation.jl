@@ -116,6 +116,9 @@ error.
 
 `FieldStationWriter` output is JLD2 and carries no attributes, so the calendar comes from the
 simulation config; `StationWriter` output is NetCDF and carries its own.
+
+`variable` is the observation's name for it, which `model_variable` turns into the model field the
+writer recorded.
 """
 function model_series(
     config::AbstractSimulationConfig,
@@ -123,7 +126,8 @@ function model_series(
     station::Station,
     variable,
 )
-    Symbol(variable) in writer.variables || return nothing
+    name = model_variable(variable)
+    name in writer.variables || return nothing
 
     directory = config.results_root
     stem = first(splitext(writer.output_file))
@@ -133,11 +137,17 @@ function model_series(
 
     path = first(candidates)
     return if endswith(path, ".jld2")
-        read_station_jld2(path, String(variable), config.start_date)
+        read_station_jld2(path, String(name), config.start_date)
     else
-        read_station_netcdf(path, String(variable))
+        read_station_netcdf(path, String(name))
     end
 end
+
+# The model field an observed variable is read from, where the two names differ. Observation sources
+# spell the free surface `"eta"`, and the model's field is `η`.
+const MODEL_VARIABLES = Dict("eta" => :η)
+
+model_variable(variable) = get(MODEL_VARIABLES, String(variable), Symbol(variable))
 
 # Which model field each observed variable is scored against. `eta` is the free surface, which the
 # station writers put in JLD2 for the reason `FieldSnapshotWriter` documents.

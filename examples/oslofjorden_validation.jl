@@ -29,7 +29,7 @@
 # # What is reused from `oslofjorden()`, and why it is reused rather than copied
 #
 # The float type, the closure (every coefficient, the `BoundarySponge`, the CATKE `minimum_tke`
-# floor), the advection schemes, the boundary conditions and their two Marchesiello timescales, the
+# floor), the advection schemes (salinity's excepted, below), the boundary conditions and their two Marchesiello timescales, the
 # time stepping, the initial-condition rule, every bathymetry smoothing knob and the whole river
 # configuration are taken from the config `oslofjorden()` returns, not restated. A validation of a model that has drifted from
 # the model being validated is worth nothing, and a copy is exactly what drifts. So a change to any of
@@ -63,25 +63,28 @@
 #   thirty-nine cells in. METreport 11/2017 hits the same problem from the other side, noting LA-1 is
 #   "close to the southern open boundary of the FjordOs model".
 #
+# **Salinity advection.** Bounds-preserving WENO for S alone, because Numedalslågen is the river
+# that enters among two-level columns, and plain WENO drove salinity beside its mouth below
+# TEOS10's -32 psu floor at day 1.5. The measurement is at the statement, beside `model` below.
+#
 # **The writers.** A 640-day run cannot afford `oslofjorden()`'s three-hourly full-domain snapshots —
-# at 4.6 M cells a record is 92 MB, so that is roughly 470 GB — and a validation does not need them:
-# what it needs is high cadence at a few dozen points. So the 3D fields drop to daily (59 GB) for maps
+# at 4.4 M cells a record is 89 MB, so that is roughly 450 GB — and a validation does not need them:
+# what it needs is high cadence at a few dozen points. So the 3D fields drop to daily (57 GB) for maps
 # and sections, and four station writers carry the time resolution at about 150 MB total.
 #
 # **The data root.** Only the Geonorge FileGDB is shared with `oslofjorden()`, by absolute path,
 # because the 4.5 GB national download is the same for any Norwegian domain. Everything else is a
 # different period and downloads into this file's own root.
 #
-# # Two gates before it runs
+# # Two gates, settled by measurement
 #
-# Both are settled by measurement, not assumption, and both are marked PROVISIONAL below.
-# `prepare_bathymetry` has to run first for either.
+# Both were measured on the `bathymetry.nc` `prepare_bathymetry` writes, with `max_sounding_distance`
+# in force; the reasoning is beside each value below. A change to the box or to any bathymetry knob
+# reopens both.
 #
-# 1. **`z_faces`.** The provisional list reaches -467 m. Run `prepare_bathymetry`, read the deepest
-#    sounding, and regenerate by `oslofjorden()`'s own rule. Then re-run `prepare_bathymetry`, since
-#    `simulation_grid` reads the file rather than the config.
-# 2. **`open_edges`.** Provisionally `:south`. Measure the wet run along each wall from the land mask
-#    and open the edges where it is long.
+# 1. **`z_faces`.** The deepest sounding is 417.9 m, so `oslofjorden()`'s rule gives its own faces
+#    plus one 33.5 m layer, to -433.5 m.
+# 2. **`open_edges`.** `:south` alone: the only long wet wall.
 #
 # # What it can and cannot be expected to show
 #
@@ -125,6 +128,7 @@
 # scope: FjordSim has no particle tracking.
 
 using FjordSim
+using Oceananigans: WENO
 using Oceananigans.Units
 using Dates: DateTime
 
@@ -222,6 +226,13 @@ bathymetry = base.bathymetry_config
 # `drammensfjorden()` does. Resolved before `data_root` moves, which it is relative to.
 bathymetry.geodatabase_file = geodatabase_path(bathymetry)
 bathymetry.data_root = data_root
+# This box reaches two places the FileGDB has no data for, and the gridding fills both with water
+# extrapolated from soundings tens of kilometres away: the land north of Drammen above 59.76°N west
+# of 10.25°E, a gap in the FileGDB's inland coverage, which became a 7 m sea joined to the
+# Drammensfjord; and Swedish territory south of Strömstad, which became a 100 m one on the eastern
+# wall. Every real wet cell lies within 1.5 km of a sounding, so 2 km removes both and nothing else.
+# `oslofjorden()`'s box touches neither and does not set it.
+bathymetry.max_sounding_distance = 2000.0
 
 # Discovery will find more mouths than Oslofjord's 21 because the box is larger — Numedalslågen in
 # the west, and Glomma's Singlefjord side in the east — which is the intended effect. The FjordOs
@@ -232,11 +243,63 @@ rivers = base.forcing_config.rivers
 rivers.data_root = data_root
 rivers.years = years
 
+# Three of `oslofjorden()`'s gauges were chosen for 2020 and have no daily values on HydAPI in 2014
+# or 2015, so those overrides are restated with gauges that do. Each was checked as daily values
+# over both years.
+#
+# - Drammenselva temperature. Mjøndalen bru (12.534.0) carries discharge throughout but no
+#   temperature at all in this window. The nearest main-stem gauge, Døvikfoss (12.298.0), stops on
+#   2015-09-26, and `nve_fill_gaps!` would then hold its 11.8 °C to the end of December. Strømstøa
+#   (12.15.0), on Ådalselva above Tyrifjorden, covers both years and matches Døvikfoss best of the
+#   seven candidates over their 634 common days: bias -0.35 °C, RMSE 0.95 °C. Discharge stays at
+#   Mjøndalen.
+# - Akerselva discharge. 6.38.0 has nothing in the window; the Maridalsvatn outflow (6.9.0), 209 km²
+#   of the catchment, does.
+# - Lysakerelva discharge. 7.29.0 has nothing in the window and no gauge in area 7 does, so it is
+#   left to `river_lambdas`' fallback, the REGINE catchment normal.
+restated = Dict(
+    "012.A2" => NVERiver(
+        vassdragsnr = "012.A2", name = "Drammenselva",
+        discharge_station = "12.534.0", temperature_station = "12.15.0",
+        plume_depth = Inf,
+    ),
+    "006.A10" => NVERiver(vassdragsnr = "006.A10", name = "Akerselva", discharge_station = "6.9.0"),
+    "007.A0" => NVERiver(vassdragsnr = "007.A0"),
+)
+rivers.outlets = [get(restated, outlet.vassdragsnr, outlet) for outlet in rivers.outlets]
+
 atmosphere = base.atmosphere_config
 atmosphere.data_root = data_root
 atmosphere.years = years
 
 simulation = base.simulation_config
+
+# The one physics departure from `oslofjorden()`: salinity is advected by bounds-preserving WENO.
+# Plain WENO is not bounded, and this domain adds Numedalslågen at Larvik, a large river relaxed to
+# S = 0 among two-level columns. The horizontal reconstruction across that front drove the
+# neighbouring surface cells to -29 psu over a 110 psu cell beneath by day 1.5, and past -32 a step
+# later, where TEOS10's `sqrt(Sᴬ + 32)` threw a DomainError on the GPU. Measured on a Larvik
+# sub-domain with no atmosphere: WENO order 3 or 5, `PartialCellBottom` or `GridFittedBottom`,
+# CATKE or a constant diffusivity all reproduce it, and switching the river off, upwinding only the
+# horizontal, or bounding S each removes it. T and `e` keep the base's scheme. Water below 0 °C is
+# real here, and a NamedTuple must name `e`, or Oceananigans gives it the unbounded `Centered()`
+# default.
+#
+# Not changed in `oslofjorden()` itself, because a NamedTuple there would leave the NPZD example's
+# tracers on `Centered()`.
+scheme = simulation.model.tracer_advection
+model = CoupledHydrostaticSimulation(
+    buoyancy           = simulation.model.buoyancy,
+    closure            = simulation.model.closure,
+    tracer_advection   = (T = scheme, S = WENO(base.grid_config.float_type; bounds = (0, 40)), e = scheme),
+    momentum_advection = simulation.model.momentum_advection,
+    tracers            = simulation.model.tracers,
+    coriolis           = simulation.model.coriolis,
+    sea_ice            = simulation.model.sea_ice,
+    biogeochemistry    = simulation.model.biogeochemistry,
+    free_surface       = simulation.model.free_surface,
+    extra_kwargs       = simulation.model.extra_kwargs,
+)
 
 FjordConfig(
     grid_config = EvenGrid(
@@ -245,30 +308,26 @@ FjordConfig(
         # or Δx⁴ carries over only if Δx does: the biharmonic coefficients are justified by a damping
         # rate that goes as ν₄·16/Δx⁴, and changing the resolution without re-deriving them would
         # silently invalidate the one number in that setup that was measured rather than chosen.
-        # 4.61 M cells against Oslofjord's 3.00 M.
-        size      = (351, 548, 26),
+        # 4.43 M cells against Oslofjord's 3.00 M.
+        size      = (351, 548, 25),
         halo      = base.grid_config.halo,
         longitude = (10.00, 11.20),
         latitude  = (58.95, 59.93),
-        # PROVISIONAL, and the first of two gates this config has to pass before it is run.
-        #
         # `oslofjorden()`'s 24 levels reach -400 m, which clears that domain's deepest sounding of
         # 395.1 m. This box extends into the Skagerrak and takes in the Hvalerdjupet, which
         # METreport 4/2016 §1.1 describes as "a 400 m deep basin extending northeastward from the
-        # Skagerrak", so the floor here is deeper and by an unknown amount. Two 33.5 m layers are
-        # added at the bottom as headroom while that is measured.
+        # Skagerrak", and its deepest sounding is 417.9 m. `oslofjorden()`'s rule — a geometric
+        # stretch of ratio 1.25 from a 1 m surface cell, capped at 33.5 m, with just enough 33.5 m
+        # layers to clear the deepest sounding — therefore adds exactly one layer.
         #
-        # Settle it by running `prepare_bathymetry`, reading the deepest sounding it reports, and
-        # regenerating this list by the rule `oslofjorden()` used: a geometric stretch of ratio 1.25
-        # from a 1 m surface cell, capped at 33.5 m, with just enough 33.5 m layers to clear that
-        # sounding. Both errors cost something. Too shallow and the basin is silently truncated —
+        # Both errors cost something. Too shallow and the basin is silently truncated —
         # `snap_partial_bottom_cells` skips a sounding below the deepest face and `PartialCellBottom`
         # clips it, so nothing complains. Too deep and `grid.Lz` feeds `sqrt(g·Lz)` in
         # `SplitExplicitFreeSurface`, buying a shorter barotropic substep for water that is not
-        # there. Then re-run `prepare_bathymetry`, since `z_faces` is written into `bathymetry.nc`
-        # and `simulation_grid` reads the file, not this config.
+        # there. `z_faces` is written into `bathymetry.nc` and `simulation_grid` reads the file, not
+        # this config, so a change here needs `prepare_bathymetry` re-run.
         z_faces   = [
-            -467.0, -433.5, -400.0, -366.5, -333.0, -299.5, -266.0, -232.5, -199.0, -165.5,
+            -433.5, -400.0, -366.5, -333.0, -299.5, -266.0, -232.5, -199.0, -165.5,
             -132.0, -105.0, -83.0, -66.0, -52.0, -41.0, -32.0, -25.0,
             -19.0, -14.5, -10.8, -7.9, -5.5, -3.7, -2.2, -1.0, 0.0,
         ],
@@ -291,20 +350,19 @@ FjordConfig(
         output_directory = "norkyst_v3_hourly",
         output_file      = base.boundary_config.output_file,
         plot_file        = base.boundary_config.plot_file,
-        # PROVISIONAL, and the second gate. `oslofjorden()`'s box has land on all three of its other
-        # walls; this one does not obviously. At 10.00°E the coast near Nevlunghavn leaves water on
-        # the western wall somewhere south of about 59.05°N, and at 11.20°E the Hvaler and
-        # Singlefjord approach leaves water on the eastern one. A closed wall standing in water is a
-        # real error rather than a cosmetic one — the southwest corner is where METreport 4/2016
-        # §5.1 has the fjord's outflow turning west "inside of Store Færder to join the westward
-        # flowing current in the Skagerrak", and a wall there blocks it.
+        # Measured from the land mask. The southern wall is 311 wet cells of 351, to 317 m; the
+        # northern one is dry. The western one is wet for 14 cells, 2.8 km at 58.95-58.97°N off
+        # Nevlunghavn, to 41 m — all of it inside the sixteen-cell `BoundarySponge` of the southern
+        # edge it meets, so the westward outflow METreport 4/2016 §5.1 describes turning "inside of
+        # Store Færder" leaves through the southern boundary a few cells from the corner rather than
+        # being blocked. The eastern one is wet for 26 cells at 59.07-59.11°N, to 66 m, where the
+        # Idefjord approach meets the Swedish border, and the edge of what the Norwegian FileGDB
+        # covers: a sill fjord with no large exchange, on data that thins out at the wall.
         #
-        # Settle it from the land mask `prepare_bathymetry` writes, not by assumption: measure the
-        # wet run along each wall and open the edges where it is long. The cost is why this is not
-        # simply set to all three now. `boundary_domain` takes the *bounding box* of the open edges,
-        # so adjacent edges (south and east) give a corner strip while opposite ones (west and east)
-        # give the whole domain — about 110 GB of hourly download over two years against roughly
-        # 5 GB for a single edge.
+        # Opening either would cost far more than it buys. `boundary_domain` takes the *bounding
+        # box* of the open edges' bands, and a full-width southern band with a full-height western
+        # or eastern one spans the whole domain — about 110 GB of hourly download over two years
+        # against roughly 5 GB for the southern edge alone.
         open_edges       = :south,
         margin           = base.boundary_config.margin,
         architecture     = base.boundary_config.architecture,
@@ -321,11 +379,11 @@ FjordConfig(
     simulation_config = SimulationConfig(
         results_root        = fjord_results_root("oslofjorden_validation"),
         architecture        = simulation.architecture,
-        model               = simulation.model,
+        model               = model,
         boundary_conditions = simulation.boundary_conditions,
         writers = (
             # Daily, not `oslofjorden()`'s three-hourly. One record of five fields on this grid is
-            # 92 MB, so three-hourly over 640 days is about 470 GB against 59 GB daily. The full
+            # 89 MB, so three-hourly over 640 days is about 450 GB against 57 GB daily. The full
             # fields are here for maps, for the two Statnett transect sections and for the M2
             # amplitude and phase maps, none of which needs sub-daily sampling — everything that
             # does is a station below.
@@ -402,11 +460,16 @@ FjordConfig(
         ),
         callbacks           = simulation.callbacks,
         time_stepping       = simulation.time_stepping,
-        # `FromForcing()`: the Norkyst-v3 state at `start_date`, which is the same "semi-hot start"
-        # from a coarser NorKyst that METreport 4/2016 §5 used — and, per METreport 11/2017 §5, one
-        # of the two things its authors blamed for FjordOs' stratification errors. Starting the same
-        # way is what makes the comparison a comparison.
-        initial_conditions  = simulation.initial_conditions,
+        # The Norkyst-v3 state at the start, which is the same "semi-hot start" from a coarser
+        # NorKyst that METreport 4/2016 §5 used — and, per METreport 11/2017 §5, one of the two
+        # things its authors blamed for FjordOs' stratification errors. Starting the same way is what
+        # makes the comparison a comparison.
+        #
+        # From the record twelve hours before `start_date` rather than at it, because the hindcast
+        # forcing keeps one record a day at 12:00 and `FromForcing()` needs one exactly at midnight.
+        # Moving `start_date` to noon instead would shift the FjordOs window; half a day of state
+        # under five months of spin-up is the smaller departure.
+        initial_conditions  = FromForcing(DateTime(2014, 3, 31, 12)),
         # 1 April 2014 to the end of 31 December 2015, the FjordOs CL hindcast window exactly: 275
         # days of 2014 plus the whole of 2015, so the last day is included rather than ending at
         # midnight on it. The observation campaigns sit well inside it: the Statnett moorings are

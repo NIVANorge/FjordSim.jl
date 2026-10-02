@@ -27,6 +27,7 @@ export SimulationConfig,
 
 using Oceananigans
 using Oceananigans: fields
+using Oceananigans.Architectures: on_architecture
 using Oceananigans.Utils: prettytime
 using Oceananigans.TimeSteppers: Clock, reset!, update_state!
 using Oceananigans.Grids: x_domain, y_domain, node, λnodes, φnodes, znodes, Center, Face
@@ -1581,7 +1582,8 @@ has the opposite requirement. So the search is over water rather than over coast
 helpers stay separate for that reason rather than by accident.
 """
 function station_cells(writer, grid)
-    surface, levels = column_wet_levels(grid)
+    # `column_wet_levels` loops over cells on the host, which on a GPU grid is scalar indexing.
+    surface, levels = column_wet_levels(on_architecture(CPU(), grid))
     longitudes = Array(λnodes(grid, Center()))
     latitudes = Array(φnodes(grid, Center()))
     depths = Array(znodes(grid, Face()))

@@ -182,7 +182,8 @@ function read_station_jld2(path, variable::AbstractString, reference::DateTime)
         haskey(file, group) ||
             throw(ArgumentError("Station file $path has no timeseries for $variable."))
 
-        iterations = sort(parse.(Int, keys(file[group])))
+        # Every key but the `serialized` metadata group is an iteration number.
+        iterations = sort([parse(Int, key) for key in keys(file[group]) if all(isdigit, key)])
         times = DateTime[]
         columns = Vector{Float64}[]
 

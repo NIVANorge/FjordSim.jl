@@ -2,6 +2,7 @@ using FjordSim
 using FjordSim.Bathymetry: write_bathymetry_file
 using FjordSim.Configs: open_edges, coverage_window
 using Dates: Date, DateFormat, DateTime, Hour, Millisecond, Minute, Month
+using JLD2
 using Test
 using ArchGDAL
 using NCDatasets
@@ -2148,6 +2149,28 @@ end
             end
         end
     end
+
+    @testset "sounding distance mask" begin
+        far_from_points = FjordSim.Bathymetry.far_from_points
+        metres_east(degrees, latitude) = degrees * 111_320 * cosd(latitude)
+
+        # One sounding; cells due east of it and due north of it at known distances.
+        longitude = [10.0, 10.01, 10.05]
+        latitude = [59.0, 59.005, 59.01]
+        far = far_from_points([10.0], [59.0], longitude, latitude, 1000.0)
+
+        @test size(far) == (3, 3)
+        @test !far[1, 1]
+        @test metres_east(0.01, 59.0) < 1000 && !far[2, 1]
+        @test far[3, 1]                                # 2.9 km east
+        @test 0.005 * 110_574 < 1000 && !far[1, 2]
+        @test far[1, 3]                                # 1.1 km north
+        @test !far_from_points([10.0], [59.0], longitude, latitude, 1200.0)[1, 3]
+
+        # A point just inside the distance but in a neighbouring bucket is still found.
+        @test !far_from_points([10.0], [59.0 + 0.99 * 500 / 110_574], [10.0], [59.0], 500.0)[1, 1]
+        @test all(far_from_points(Float64[], Float64[], longitude, latitude, 1000.0))
+    end
 end
 
 @testset "Forcing" begin
@@ -2155,7 +2178,10 @@ end
         forcing_dimension_names = FjordSim.Forcing.forcing_dimension_names
         source_fill = FjordSim.Forcing.source_fill
         fill_source! = FjordSim.Forcing.fill_source!
-        solve_vertical_faces = FjordSim.Forcing.solve_vertical_faces
+        ProjectedSourceGrid = FjordSim.Forcing.ProjectedSourceGrid
+        source_level_coordinate = FjordSim.Forcing.source_level_coordinate
+        source_field_grid = FjordSim.Forcing.source_field_grid
+        interpolate_to_target! = FjordSim.Forcing.interpolate_to_target!
         nearest_valid_map = FjordSim.Forcing.nearest_valid_map
         daily_time_steps = FjordSim.Forcing.daily_time_steps
         SourceRecord = FjordSim.Forcing.SourceRecord
@@ -2167,18 +2193,36 @@ end
         @test forcing_dimension_names("u") == ("Nx_faces", "Ny", "Nz", "time")
         @test forcing_dimension_names("v") == ("Nx", "Ny_faces", "Nz", "time")
 
-        # An Oceananigans grid is specified by faces with centres at face midpoints, so putting
-        # centres on NorKyst's non-uniform depth levels needs the faces solved for. The feasible
-        # interval for the deepest face is narrow, so this is checked exactly.
-        norkyst_depths = [0.0, 3, 10, 15, 25, 50, 75, 100, 150, 200, 250, 300, 500, 1000, 2000, 3000]
-        faces = solve_vertical_faces(norkyst_depths)
-        @test length(faces) == length(norkyst_depths) + 1
-        @test all(>(0), diff(faces))  # monotonic, so Oceananigans accepts it
-        @test (faces[1:end-1] .+ faces[2:end]) ./ 2 ≈ -reverse(norkyst_depths)  # centres land on the levels
-        # A depth list whose implied faces oscillate for every seed must fail loudly rather than
-        # silently building a grid with misplaced levels. Tightly spaced deep levels under a wide
-        # shallow gap do it: the fourth level needs `2(c3 - c2) < c4 - c1`.
-        @test_throws ErrorException solve_vertical_faces([0.0, 1.0, 9.0, 10.0])
+        # A source's depth levels are centres of a strongly non-uniform axis, which an Oceananigans
+        # grid generally cannot put centres on — for the Norkyst-v3 hindcast's 25 levels no choice of
+        # faces does. So the source grid's vertical axis is the level index, and target heights are
+        # mapped onto it piecewise linearly; listed surface first, as the source files carry them.
+        hindcast_depths = [
+            0.0, 1, 2, 3, 5, 7, 10, 15, 25, 50, 65, 75, 100, 200, 300, 400, 500, 750, 1000, 1250, 1500,
+            1750, 2000, 2250, 2500,
+        ]
+        source = ProjectedSourceGrid([0.0, 1.0, 2.0], [0.0, 1.0, 2.0], hindcast_depths, "")
+        levels = source_level_coordinate(source, [-2500.0, -460.0, -12.5, -0.5, 0.0])
+        @test levels[1] == 1                        # the deepest level is cell 1
+        @test levels[2] ≈ 9.4                       # 40 % of the way from 500 m to 400 m
+        @test levels[3] ≈ 18.5                      # halfway from 15 m to 10 m
+        @test levels[4] ≈ 24.5
+        @test levels[5] == length(hindcast_depths)  # the surface level is the last cell
+        @test issorted(source_level_coordinate(source, collect(-2500.0:10.0:0.0)))
+
+        # Through the interpolation kernel itself: a field linear in depth, set one value per level,
+        # comes back exactly at heights between levels — the levels sit where the data is.
+        grid = source_field_grid(source)
+        field = Field{Center,Center,Center}(grid)
+        set!(field, repeat(reshape(-reverse(hindcast_depths), 1, 1, :), 3, 3, 1))
+        Oceananigans.fill_halo_regions!(field)
+        heights = [-433.5, -333.0, -70.0, -12.5, -2.6, -0.5]
+        output = zeros(Float32, 1, 1, length(heights))
+        interpolate_to_target!(
+            output, field, fill(1.0, 1, 1), fill(1.0, 1, 1),
+            source_level_coordinate(source, heights), trues(1, 1, length(heights)), CPU(),
+        )
+        @test vec(output) ≈ Float32.(heights)
 
         # The source mask is filled before interpolation, because `interpolate` would otherwise
         # propagate NaN out of every stencil touching land. A masked cell takes its nearest valid
@@ -5499,6 +5543,61 @@ end
         @test occursin("loop02", last(first(found)))
         @test isempty(station_files(directory, "no_such_writer"))
         @test isempty(station_files(joinpath(directory, "missing"), stem))
+    end
+
+    @testset "model_series reads the free surface for eta" begin
+        directory = mktempdir()
+        gauge = Station(name = "Km1", longitude = 10.6, latitude = 59.6)
+        writer = FieldStationWriter(
+            name = :tidegauge,
+            output_file = "stations_tidegauge.jld2",
+            variables = (:η,),
+            stations = [gauge],
+            interval = 600.0,
+            overwrite_existing = true,
+        )
+        simulation = test_simulation_config(results_root = directory, writers = (writer,))
+        # Oceananigans' JLD2 layout: one record per iteration under `timeseries/<field>`, beside a
+        # `serialized` group that is not one.
+        path = joinpath(directory, "stations_tidegauge_20260915T120000_Km1.jld2")
+        JLD2.jldopen(path, "w") do file
+            file["timeseries/η/serialized/location"] = (Center, Center, Nothing)
+            for (iteration, seconds, η) in ((0, 0.0, 0.1), (60, 600.0, -0.2))
+                file["timeseries/t/$iteration"] = seconds
+                file["timeseries/η/$iteration"] = fill(η, 1, 1, 1)
+            end
+        end
+
+        # Observation sources name the free surface "eta"; the writer records the field `η`.
+        series = FjordSim.Validation.model_series(simulation, writer, gauge, "eta")
+        @test !isnothing(series)
+        @test series.values[:, 1] ≈ [0.1, -0.2]
+        @test series.times[2] - series.times[1] == Minute(10)
+        @test isnothing(FjordSim.Validation.model_series(simulation, writer, gauge, "T"))
+    end
+
+    @testset "station_cells" begin
+        bottom_height = fill(-20.0, 4, 4)
+        bottom_height[1, 1] = 1.0                          # one land column in the corner
+        fixture = immersed_test_grid(
+            joinpath(mktempdir(), "bathymetry.nc"); size = (4, 4, 2), bottom_height,
+        )
+        writer = StationWriter(
+            name = :moorings,
+            output_file = "stations_moorings.nc",
+            variables = (:T,),
+            stations = [Station(name = "land", longitude = 10.125, latitude = 59.125),
+                        Station(name = "outside", longitude = 12.0, latitude = 59.5)],
+            interval = 3600.0,
+            overwrite_existing = true,
+        )
+        placed = @test_logs (:warn,) match_mode = :any FjordSim.Simulations.station_cells(
+            writer, fixture.grid,
+        )
+        @test length(placed) == 1                          # the station outside the box is dropped
+        @test (placed[1].i, placed[1].j) != (1, 1)         # snapped off the land column
+        @test placed[1].offset ≈ 1
+        @test placed[1].depth ≈ 20
     end
 
     @testset "haversine_distance" begin

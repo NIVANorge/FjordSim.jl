@@ -58,6 +58,16 @@ across fjords.
 - `padding_cells`: Number of target-grid cell widths added around the region.
 - `include_contours`: Sample `dybdekurve` contour lines in addition to depth points.
 - `contour_stride`: Sample every n-th contour vertex.
+- `max_sounding_distance`: Turn every wet native cell farther than this many metres from any
+  sampled sounding into land. `Inf` disables it.
+
+  The gridding has no search radius, so it fills *every* cell the land polygons leave open from the
+  nearest soundings, however far away. Where the FileGDB has neither soundings nor land — Swedish
+  territory, or a gap in its inland coverage — that invents open water: on a box reaching 11.20°E
+  and 59.93°N it made a 7 m deep sea of the land north of Drammen and a 100 m deep one of the coast
+  south of Strömstad, both up to tens of kilometres from the nearest sounding while every real wet
+  cell was within 1.5 km of one. Applied to a copy of the cached raw file, so changing it never
+  re-runs the gridding.
 - `interpolation_passes`: Passed to `NumericalEarth.regrid_bathymetry`.
 - `major_basins`: Passed to `NumericalEarth.regrid_bathymetry`.
 - `minimum_depth`: Passed to `NumericalEarth.regrid_bathymetry`, as a positive depth in metres.
@@ -171,6 +181,7 @@ Base.@kwdef mutable struct DybdedataConfig <: AbstractBathymetryConfig
     padding_cells::Int = 0
     include_contours::Bool = true
     contour_stride::Int = 1
+    max_sounding_distance::Float64 = Inf
     interpolation_passes::Int = 1
     major_basins::Int = 1
     minimum_depth::Float64 = 0.0
@@ -411,6 +422,8 @@ function geonorge_dataset(config::DybdedataConfig)
         @info "Using cached raw Geonorge bathymetry at $(config.raw_file)"
     end
 
+    isfinite(config.max_sounding_distance) && (config.raw_file = write_sounding_masked_bathymetry(config))
+
     return GeonorgeBathymetry(config)
 end
 
@@ -421,12 +434,19 @@ function write_native_bathymetry(config::DybdedataConfig)
     latitude_centers = center_coordinates(config.latitude, Ny)
     z_data = build_native_bathymetry_data(config)
 
-    isfile(config.raw_file) && rm(config.raw_file; force = true)
+    write_raw_bathymetry(config.raw_file, longitude_centers, latitude_centers, z_data)
 
-    ds = NCDataset(config.raw_file, "c")
+    @info "Finished writing native bathymetry file to $(config.raw_file)"
+    return config.raw_file
+end
+
+function write_raw_bathymetry(path, longitude_centers, latitude_centers, z_data)
+    isfile(path) && rm(path; force = true)
+
+    ds = NCDataset(path, "c")
     try
-        defDim(ds, "lon", Nx)
-        defDim(ds, "lat", Ny)
+        defDim(ds, "lon", length(longitude_centers))
+        defDim(ds, "lat", length(latitude_centers))
 
         lon = defVar(ds, "lon", Float64, ("lon",))
         lat = defVar(ds, "lat", Float64, ("lat",))
@@ -439,8 +459,74 @@ function write_native_bathymetry(config::DybdedataConfig)
         close(ds)
     end
 
-    @info "Finished writing native bathymetry file to $(config.raw_file)"
-    return config.raw_file
+    return path
+end
+
+"""
+    write_sounding_masked_bathymetry(config::DybdedataConfig)
+
+Write a copy of `config.raw_file` in which every wet cell farther than `max_sounding_distance`
+metres from any sampled sounding is land, and return its path. The copy sits beside the raw file
+with the distance in its name, and is reused while it is newer than the raw file it was made from.
+"""
+function write_sounding_masked_bathymetry(config::DybdedataConfig)
+    distance = round(Int, config.max_sounding_distance)
+    masked_file = replace(config.raw_file, r"\.nc$" => "_within_$(distance)m.nc")
+
+    if config.geonorge_cache && isfile(masked_file) && mtime(masked_file) >= mtime(config.raw_file)
+        @info "Using cached sounding-masked Geonorge bathymetry at $masked_file"
+        return masked_file
+    end
+
+    longitude, latitude, z = NCDataset(config.raw_file) do ds
+        Array(ds["lon"]), Array(ds["lat"]), Array(ds["z"])
+    end
+    samples = ArchGDAL.importEPSG(25833; order = :trad) do source_srs
+        ArchGDAL.importEPSG(4326; order = :trad) do target_srs
+            ArchGDAL.createcoordtrans(source_srs, target_srs) do transform
+                depth_samples(config, transform)
+            end
+        end
+    end
+
+    far = far_from_points(samples.xs, samples.ys, longitude, latitude, config.max_sounding_distance) .& (z .< 0)
+    z[far] .= 0
+    @info "Turned $(count(far)) native cells farther than $distance m from any sounding into land"
+
+    return write_raw_bathymetry(masked_file, longitude, latitude, z)
+end
+
+"""
+    far_from_points(xs, ys, longitude, latitude, distance)
+
+`BitMatrix` over the cells centred at `longitude` × `latitude`, `true` where none of the points
+`(xs[k], ys[k])`, all in degrees, lies within `distance` metres by the local equirectangular metric.
+"""
+function far_from_points(xs, ys, longitude, latitude, distance)
+    # Buckets at least `distance` wide on both axes, so any point within `distance` of a cell sits in
+    # the cell's own bucket or one of its eight neighbours. A degree of longitude is narrowest at the
+    # highest latitude, which is therefore what sets the longitude width.
+    bucket_longitude = distance / (111_320 * cosd(maximum(abs, latitude)))
+    bucket_latitude = distance / 110_574
+    key(x, y) = (floor(Int, x / bucket_longitude), floor(Int, y / bucket_latitude))
+
+    buckets = Dict{Tuple{Int,Int},Vector{Int}}()
+    for k in eachindex(xs, ys)
+        push!(get!(buckets, key(xs[k], ys[k]), Int[]), k)
+    end
+
+    no_points = Int[]
+    far = trues(length(longitude), length(latitude))
+    for (j, φ) in enumerate(latitude), (i, λ) in enumerate(longitude)
+        bx, by = key(λ, φ)
+        far[i, j] = !any(Iterators.product(-1:1, -1:1)) do (dx, dy)
+            any(get(buckets, (bx + dx, by + dy), no_points)) do k
+                hypot((xs[k] - λ) * 111_320 * cosd(φ), (ys[k] - φ) * 110_574) <= distance
+            end
+        end
+    end
+
+    return far
 end
 
 function build_native_bathymetry_data(config::DybdedataConfig)
@@ -553,7 +639,13 @@ function rasterize_land_dataset(land_dataset, config::DybdedataConfig)
     end
 end
 
-function sample_bathymetry_points!(point_layer, config::DybdedataConfig, transform)
+"""
+    depth_samples(config::DybdedataConfig, transform)
+
+Every sounding (and, with `include_contours`, contour vertex) inside the region, transformed by
+`transform`.
+"""
+function depth_samples(config::DybdedataConfig, transform)
     samples = DepthSamples()
 
     ArchGDAL.read(geodatabase_path(config)) do dataset
@@ -562,12 +654,19 @@ function sample_bathymetry_points!(point_layer, config::DybdedataConfig, transfo
             collect_depth_layer_coordinates!(samples, dataset, "dybdekurve", config; geometry = :line)
     end
 
-    point_count = length(samples)
-    point_count > 0 || return 0
-
     # Transform the whole point cloud in a single GDAL call instead of one call per
     # point/vertex, which otherwise dominates wall-clock time for dense sounding data.
-    ArchGDAL.transform!(samples.xs, samples.ys, zeros(Float64, point_count), transform)
+    length(samples) > 0 &&
+        ArchGDAL.transform!(samples.xs, samples.ys, zeros(Float64, length(samples)), transform)
+
+    return samples
+end
+
+function sample_bathymetry_points!(point_layer, config::DybdedataConfig, transform)
+    samples = depth_samples(config, transform)
+
+    point_count = length(samples)
+    point_count > 0 || return 0
 
     z_field_index = ArchGDAL.findfieldindex(point_layer, "z", false)
     for i = 1:point_count

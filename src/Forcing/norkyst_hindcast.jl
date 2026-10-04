@@ -201,7 +201,10 @@ function process_hindcast_month(year, month, target_grid, config::NorKystHindcas
         time_name = time_dimension(first(datasets))
 
         @info "  Writing output to: $output_path"
-        output = define_output_file(output_path, first(datasets), spatial_subset, length(datasets))
+        # Written under a temporary name and renamed once complete, so a month interrupted
+        # mid-write is redone on the next run rather than skipped as already present.
+        temporary_path = output_path * ".tmp"
+        output = define_output_file(temporary_path, first(datasets), spatial_subset, length(datasets))
         try
             for (time_start, (ds, index)) in enumerate(zip(datasets, indices))
                 subset = NorKystSubset(
@@ -219,6 +222,7 @@ function process_hindcast_month(year, month, target_grid, config::NorKystHindcas
         finally
             close(output)
         end
+        mv(temporary_path, output_path; force = true)
     finally
         foreach(close, datasets)
     end

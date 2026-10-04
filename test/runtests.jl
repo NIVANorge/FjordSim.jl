@@ -3770,6 +3770,17 @@ end
             test_atmosphere_config(resolution = 0.0),
         )
 
+        # NORA3 stores its projected axes as Float32, so a 3000 m axis read back is regular only to
+        # Float32 rounding — on Lista's y range one step is 2999.992 m. That is accepted; a step that
+        # is genuinely off is not.
+        validate_regular_axis = atmospheres.validate_regular_axis
+        stored = Float64.(Float32.(100523.0234375 .+ 3000 .* (0:38)))
+        @test !all(isapprox(stored[2] - stored[1]), diff(stored))
+        @test isnothing(validate_regular_axis(stored, "y"))
+        irregular = collect(0.0:3000.0:30000.0)
+        irregular[6:end] .+= 1.0
+        @test_throws ErrorException validate_regular_axis(irregular, "y")
+
         # One run covers six hours, so a day needs its four runs plus the previous day's 18Z run for
         # hours 00:00 to 03:00.
         runs = nora3_runs(2020, 1)

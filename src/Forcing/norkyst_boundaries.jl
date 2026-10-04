@@ -364,7 +364,10 @@ function process_boundary_month(year, month, longitude, latitude, config::NorKys
         @info "  Subset $(join(("$dimension=$(length(range))" for (dimension, range) in sort(collect(subset.ranges))), ", ")), $total_time records"
 
         @info "  Writing output to: $output_path"
-        output = define_output_file(output_path, first(datasets), subset, total_time)
+        # Written under a temporary name and renamed once complete, so a month interrupted
+        # mid-write is redone on the next run rather than skipped as already present.
+        temporary_path = output_path * ".tmp"
+        output = define_output_file(temporary_path, first(datasets), subset, total_time)
         try
             time_start = 1
             for ds in datasets
@@ -377,6 +380,7 @@ function process_boundary_month(year, month, longitude, latitude, config::NorKys
         finally
             close(output)
         end
+        mv(temporary_path, output_path; force = true)
     finally
         foreach(close, datasets)
     end

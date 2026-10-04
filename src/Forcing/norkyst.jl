@@ -467,7 +467,10 @@ function process_month(year, month, target_grid, config::NorKystConfig; files = 
         total_time = sum(time_length, datasets)
 
         @info "  Writing output to: $output_path"
-        output = define_output_file(output_path, first(datasets), subset, total_time)
+        # Written under a temporary name and renamed once complete, so a month interrupted
+        # mid-write is redone on the next run rather than skipped as already present.
+        temporary_path = output_path * ".tmp"
+        output = define_output_file(temporary_path, first(datasets), subset, total_time)
         try
             time_start = 1
             for ds in datasets
@@ -480,6 +483,7 @@ function process_month(year, month, target_grid, config::NorKystConfig; files = 
         finally
             close(output)
         end
+        mv(temporary_path, output_path; force = true)
     finally
         foreach(close, datasets)
     end

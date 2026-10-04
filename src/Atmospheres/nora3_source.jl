@@ -193,11 +193,16 @@ end
 
 Check a projected axis is long enough and regularly spaced, which `interpolate_to_target!`
 assumes when it turns a coordinate into a fractional index.
+
+NORA3 stores `x` and `y` as Float32, so a regular axis comes back regular only to Float32 rounding:
+each step can be off by up to two units in the last place at the axis's magnitude. On Lista's y
+range one 3000 m step reads 2999.992 m, which a Float64 `isapprox` rejects.
 """
 function validate_regular_axis(values, name)
     length(values) >= 2 || error("The NORA3 $name axis needs at least two points, got $(length(values))")
     spacing = values[2] - values[1]
-    all(isapprox(spacing), diff(values)) ||
+    tolerance = 2 * eps(Float32(maximum(abs, values)))
+    all(step -> isapprox(step, spacing; atol = tolerance), diff(values)) ||
         error("The NORA3 $name axis is not regularly spaced")
 
     return nothing

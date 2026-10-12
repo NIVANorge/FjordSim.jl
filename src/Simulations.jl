@@ -742,8 +742,8 @@ it, which is why a checkpoint is a few hundred MB on a real grid and why `cleanu
 `cleanup` is the field that decides how many of them survive, since a checkpoint's filename carries
 the iteration and every fire writes a new one: `true` deletes all but the newest after each write.
 There is deliberately no `overwrite_existing` twin of the snapshot writer's. `Checkpointer` accepts
-one, but never reads it — `write_output!` opens `jldopen(path, "w")` regardless — so naming it here
-would advertise a choice the run does not have.
+one, `overwrite_files`, but never reads it — `write_output!` opens `jldopen(path, "w")` regardless —
+so naming it here would advertise a choice the run does not have.
 """
 struct CheckpointWriter <: AbstractWriterConfig
     interval::Float64
@@ -1515,7 +1515,7 @@ function attach_writer!(simulation, writer::SnapshotWriter, config::AbstractSimu
         snapshot_outputs(writer, ocean_sim.model);
         filename = filepath,
         schedule = TimeInterval(writer.interval),
-        overwrite_existing = writer.overwrite_existing,
+        overwrite_files = writer.overwrite_existing,
         global_attributes = Dict(RESULTS_START_DATE_ATTRIBUTE => string(config.start_date)),
     )
 
@@ -1553,7 +1553,7 @@ function attach_writer!(
         snapshot_outputs(writer, ocean_sim.model);
         filename = filepath,
         schedule = TimeInterval(writer.interval),
-        overwrite_existing = writer.overwrite_existing,
+        overwrite_files = writer.overwrite_existing,
         with_halos = false,
     )
 
@@ -1749,7 +1749,7 @@ function attach_writer!(simulation, writer::StationWriter, config::AbstractSimul
             filename = filepath,
             schedule = TimeInterval(writer.interval),
             indices = (site.i, site.j, :),
-            overwrite_existing = writer.overwrite_existing,
+            overwrite_files = writer.overwrite_existing,
             global_attributes = station_attributes(config, site, grid),
         )
     end
@@ -1788,7 +1788,7 @@ function attach_writer!(
             filename = filepath,
             schedule = TimeInterval(writer.interval),
             indices = (site.i, site.j, :),
-            overwrite_existing = writer.overwrite_existing,
+            overwrite_files = writer.overwrite_existing,
             with_halos = false,
         )
     end
@@ -1840,7 +1840,7 @@ checkpointer in `simulation.output_writers`.
 Replaced rather than closed and popped, unlike the snapshot writer: a `Checkpointer` holds no open
 file handle, and its schedule is rebuilt with it.
 
-`Checkpointer`'s `overwrite_existing` is left at its default, since it is a field the writer stores
+`Checkpointer`'s `overwrite_files` is left at its default, since it is a field the writer stores
 and never reads — see `CheckpointWriter`.
 """
 function attach_writer!(simulation, writer::CheckpointWriter, config::AbstractSimulationConfig, loop)

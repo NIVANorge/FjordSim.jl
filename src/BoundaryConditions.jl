@@ -78,7 +78,8 @@ Quadratic drag on `u` and `v` at the bottom, at the given dimensionless drag `co
 Needs neither the grid nor the forcing — all four of `u_quadratic_bottom_drag`,
 `v_quadratic_bottom_drag`, `u_immersed_bottom_drag` and `v_immersed_bottom_drag` are discrete-form
 functions taking the coefficient as their parameter — which is exactly why it is separable from the
-surface half.
+surface half. NumericalEarth's drag also adds an unresolved background speed `ub` in quadrature to the
+resolved one; it is zero here, which is the plain `-μ |u| u` drag.
 
 **Both halves are required, and the `bottom` one alone does nothing on a fjord.** A `bottom` condition
 acts at the *underlying* grid's floor, and `u_quadratic_bottom_drag` hardcodes that level's index,
@@ -91,36 +92,23 @@ on it; without one, Oceananigans' default there is free slip and the water colum
 Only `bottom` inside the `ImmersedBoundaryCondition`, matching what NumericalEarth's own
 `ocean_simulation` builds: immersed side walls stay free-slip, which is a separate choice.
 """
-quadratic_bottom_drag_boundary_conditions(coefficient) = (
-    u = (
-        bottom = FluxBoundaryCondition(
-            u_quadratic_bottom_drag,
-            discrete_form = true,
-            parameters = coefficient,
-        ),
-        immersed = ImmersedBoundaryCondition(
-            bottom = FluxBoundaryCondition(
-                u_immersed_bottom_drag,
-                discrete_form = true,
-                parameters = coefficient,
+function quadratic_bottom_drag_boundary_conditions(coefficient)
+    parameters = (μ = coefficient, ub = zero(coefficient))
+    return (
+        u = (
+            bottom = FluxBoundaryCondition(u_quadratic_bottom_drag; discrete_form=true, parameters),
+            immersed = ImmersedBoundaryCondition(
+                bottom = FluxBoundaryCondition(u_immersed_bottom_drag; discrete_form=true, parameters),
             ),
         ),
-    ),
-    v = (
-        bottom = FluxBoundaryCondition(
-            v_quadratic_bottom_drag,
-            discrete_form = true,
-            parameters = coefficient,
-        ),
-        immersed = ImmersedBoundaryCondition(
-            bottom = FluxBoundaryCondition(
-                v_immersed_bottom_drag,
-                discrete_form = true,
-                parameters = coefficient,
+        v = (
+            bottom = FluxBoundaryCondition(v_quadratic_bottom_drag; discrete_form=true, parameters),
+            immersed = ImmersedBoundaryCondition(
+                bottom = FluxBoundaryCondition(v_immersed_bottom_drag; discrete_form=true, parameters),
             ),
         ),
-    ),
-)
+    )
+end
 
 """
     top_bottom_boundary_conditions(; grid, bottom_drag_coefficient)

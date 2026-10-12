@@ -278,10 +278,10 @@ using .CLI
 
 # The body below is a copy, so an upgrade could silently leave it running stale flux assembly.
 # Warn while precompiling — the moment the manifest changes — rather than fail a run much later.
-if pkgversion(NumericalEarth) != v"0.6.2"
+if pkgversion(NumericalEarth) != v"0.8.1"
     @warn """FjordSim carries a copy of NumericalEarth's `update_net_ocean_fluxes!` for setups \
              without sea ice (see the comment above it in src/FjordSim.jl). It was written against \
-             NumericalEarth 0.6.2; this is $(pkgversion(NumericalEarth)). Check whether the \
+             NumericalEarth 0.8.1; this is $(pkgversion(NumericalEarth)). Check whether the \
              upstream `ZeroField()` zeros are typed yet — if they are, delete the copy."""
 end
 
@@ -303,7 +303,8 @@ function NumericalEarth.Oceans.update_net_ocean_fluxes!(
     snowfall = NumericalEarth.Oceans.snowfall_flux(coupled_model)
 
     land_exchanger = coupled_model.interfaces.exchanger.land
-    freshwater_flux = NumericalEarth.Oceans.land_freshwater_flux(land_exchanger)
+    runoff_freshwater_flux = NumericalEarth.Oceans.land_freshwater_flux(land_exchanger, :runoff_freshwater_flux)
+    iceberg_freshwater_flux = NumericalEarth.Oceans.land_freshwater_flux(land_exchanger, :iceberg_freshwater_flux)
 
     ice_concentration = NumericalEarth.EarthSystemModels.sea_ice_concentration(sea_ice)
     intercepted_snowfall_flux = NumericalEarth.EarthSystemModels.intercepted_snowfall(sea_ice)
@@ -322,7 +323,8 @@ function NumericalEarth.Oceans.update_net_ocean_fluxes!(
                                rainfall,
                                snowfall,
                                intercepted_snowfall_flux,
-                               freshwater_flux,
+                               runoff_freshwater_flux,
+                               iceberg_freshwater_flux,
                                ocean_properties)
 
     if grid isa Oceananigans.ImmersedBoundaries.MutableGridOfSomeKind

@@ -112,10 +112,11 @@ FjordConfig(
         spike_ratio           = 0.5,
         # Must equal the `minimum_fractional_cell_height` the grid gives `PartialCellBottom`.
         minimum_cell_fraction = 0.2,
-        # Oslofjord's limit, where it was measured to cost almost nothing. Here it acts on the
-        # trench slope, which drops from about 100 m to 300 m within a few cells. Compare
-        # `bathymetry.png` with the raw soundings before trusting it.
-        max_slope_factor      = 0.25,
+        # Oslofjord's limit and sill restoration. Here the limit acts on the trench slope, which
+        # drops from about 100 m to 300 m within a few cells. Compare `bathymetry.png` with the raw
+        # soundings before trusting it.
+        max_slope_factor      = 0.5,
+        preserve_sills        = true,
         geonorge_cache        = true,
         regrid_cache          = false,
     ),

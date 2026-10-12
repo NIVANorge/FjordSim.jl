@@ -70,7 +70,10 @@ function drammensfjorden()
             spike_ratio           = 0.5,
             # Must equal the `minimum_fractional_cell_height` `Grids.jl` gives `PartialCellBottom`.
             minimum_cell_fraction = 0.2,
-            max_slope_factor      = 0.25,
+            # Oslofjord's limit and sill restoration; see there for what each costs and buys. Here
+            # the native grid already resolves Svelvik, so `preserve_sills` holds it at 11.2 m.
+            max_slope_factor      = 0.5,
+            preserve_sills        = true,
             geonorge_cache        = true,
             regrid_cache          = false,
         ),

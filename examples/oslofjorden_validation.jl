@@ -82,8 +82,8 @@
 # in force; the reasoning is beside each value below. A change to the box or to any bathymetry knob
 # reopens both.
 #
-# 1. **`z_faces`.** The deepest sounding is 417.9 m, so `oslofjorden()`'s rule gives its own faces
-#    plus one 33.5 m layer, to -433.5 m.
+# 1. **`z_faces`.** `oslofjorden()`'s own, to -467 m. The deepest sounding is 470.0 m, but one more
+#    layer would hold no water: see the reasoning beside the value.
 # 2. **`open_edges`.** `:south` alone: the only long wet wall.
 #
 # # What it can and cannot be expected to show
@@ -101,10 +101,12 @@
 # renewal in the inner basins. The z-coordinate with `PartialCellBottom` removes the defect both
 # reports complain about most — FjordOs' bathymetry had to be smoothed to an rx0 limit until "the
 # observed slopes are everywhere steeper" than the model's (METreport 11/2017 Fig. 11), and the
-# pressure-gradient error that forces it does not exist here. With `max_slope_factor = 0.25`, the
-# only slope limit this bathymetry gets costs 0.6 m at the Drøbak sill against a 395.1 m basin. That
-# is also why `plot_section` draws no smoothed-against-real bathymetry comparison, which is the main
-# point of Fig. 11: there is nothing to compare. Its two sections are the Statnett transects — the
+# pressure-gradient error that forces it does not exist here. The only slope limit this bathymetry
+# gets is `max_slope_factor = 0.5`: the deepest cell within 2 km of every inner-fjord CTD station is
+# within 12 m of the deepest cast there, where the earlier bathymetry was up to 51 m shallower, and
+# `preserve_sills` keeps Svelvik at 10.8 m against 11 m real. That is also why `plot_section` draws no
+# smoothed-against-real bathymetry comparison, which is the main point of Fig. 11: there is little to
+# compare. Its two sections are the Statnett transects — the
 # Filtvedt-Brenntangen line at 59.582°N and the Småskjær-Evje line at ~59.35°N, both very nearly
 # zonal, so each is one row of this grid. Establishing which half of the expectation above holds,
 # quantitatively, is the point of the run.
@@ -308,17 +310,22 @@ FjordConfig(
         # or Δx⁴ carries over only if Δx does: the biharmonic coefficients are justified by a damping
         # rate that goes as ν₄·16/Δx⁴, and changing the resolution without re-deriving them would
         # silently invalidate the one number in that setup that was measured rather than chosen.
-        # 4.43 M cells against Oslofjord's 3.00 M.
-        size      = (351, 548, 25),
+        # 5.00 M cells against Oslofjord's 3.24 M.
+        size      = (351, 548, 26),
         halo      = base.grid_config.halo,
         longitude = (10.00, 11.20),
         latitude  = (58.95, 59.93),
-        # `oslofjorden()`'s 24 levels reach -400 m, which clears that domain's deepest sounding of
-        # 395.1 m. This box extends into the Skagerrak and takes in the Hvalerdjupet, which
+        # `oslofjorden()`'s 26 levels, to -467 m. They clear that domain's deepest sounding of
+        # 463.0 m. This box extends into the Skagerrak and takes in more of the Hvalerdjupet, which
         # METreport 4/2016 §1.1 describes as "a 400 m deep basin extending northeastward from the
-        # Skagerrak", and its deepest sounding is 417.9 m. `oslofjorden()`'s rule — a geometric
+        # Skagerrak", and its deepest sounding is 470.0 m. `oslofjorden()`'s rule — a geometric
         # stretch of ratio 1.25 from a 1 m surface cell, capped at 33.5 m, with just enough 33.5 m
-        # layers to clear the deepest sounding — therefore adds exactly one layer.
+        # layers to clear the deepest sounding — would add a layer to -500.5 m, and measured, that
+        # layer holds no water: only eight columns of the trench reach below -467 m, by at most
+        # 2.3 m. Under a -500.5 m face `snap_partial_bottom_cells` raises all eight to -467 m, being
+        # slivers of the 33.5 m layer; without it they stay below the face in `bathymetry.nc` and
+        # `PartialCellBottom` clamps them to it. So the faces stop at -467 m, and the model is the
+        # same either way.
         #
         # Both errors cost something. Too shallow and the basin is silently truncated —
         # `snap_partial_bottom_cells` skips a sounding below the deepest face and `PartialCellBottom`
@@ -326,11 +333,7 @@ FjordConfig(
         # `SplitExplicitFreeSurface`, buying a shorter barotropic substep for water that is not
         # there. `z_faces` is written into `bathymetry.nc` and `simulation_grid` reads the file, not
         # this config, so a change here needs `prepare_bathymetry` re-run.
-        z_faces   = [
-            -433.5, -400.0, -366.5, -333.0, -299.5, -266.0, -232.5, -199.0, -165.5,
-            -132.0, -105.0, -83.0, -66.0, -52.0, -41.0, -32.0, -25.0,
-            -19.0, -14.5, -10.8, -7.9, -5.5, -3.7, -2.2, -1.0, 0.0,
-        ],
+        z_faces   = base.grid_config.z_faces,
         # `oslofjorden()`'s, since the model below is built in it.
         float_type = base.grid_config.float_type,
     ),

@@ -120,10 +120,10 @@ and the pipeline that turns it into a processed FjordSim bathymetry NetCDF.
 - `regrid_options(config)`: named tuple forwarded to `NumericalEarth.regrid_bathymetry`.
   Optional, defaults to `(;)`.
 - `smoothing_options(config)`: named tuple forwarded to `smooth_bathymetry_gaps!`, which is how a
-  source opts into the five post-regrid stages — `max_island_cells`, `close_narrow_passages`,
-  `spike_ratio`, `minimum_cell_fraction` and `max_slope_factor` (plus `minimum_depth`, which the
-  slope limiter must not undo). Optional, defaults to `(;)`, leaving only the topological cleanup
-  every source gets.
+  source opts into the six post-regrid stages — `max_island_cells`, `close_narrow_passages`,
+  `spike_ratio`, `minimum_cell_fraction`, `max_slope_factor` (plus `minimum_depth`, which the
+  slope limiter must not undo) and `preserve_sills`. Optional, defaults to `(;)`, leaving only the
+  topological cleanup every source gets.
 
 `FjordSim.Bathymetry.DybdedataConfig` is the built-in implementation, for Geonorge Sjøkart
 Dybdedata; `src/Bathymetry/geonorge.jl` is the template to copy for a new source.

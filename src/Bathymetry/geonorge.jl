@@ -24,6 +24,16 @@ const GEONORGE_LAND_LAYERS = ("landareal", "skjer")
 # URL is derivable from the configured `geodatabase_file`.
 const GEONORGE_FGDB_BASE_URL = "https://nedlasting.geonorge.no/geonorge/Basisdata/Dybdedata/FGDB"
 const GEONORGE_DYBDEDATA_GDB = "Basisdata_0000_Norge_25833_Dybdedata_FGDB.gdb"
+# Linear interpolation on the Delaunay triangulation of the soundings, falling back to the nearest
+# sounding outside it. A cell takes a weighted mean of the three soundings around it, so a basin
+# keeps the depth of its deepest sounding wherever a cell centre lies near it. The `invdistnn` this
+# replaced, with `smoothing=0.2` given in the degrees of EPSG:4326 — tens of kilometres against
+# soundings tens of metres apart — weighted its 16 nearest soundings almost equally, which is a
+# plain mean: on `oslofjorden_validation` it took 40 m off Bunnefjorden (154 m deepest sounding
+# within 2 km of Ep1, 114 m gridded) and 35 m off the Drøbak Sound, and the linear version keeps
+# both within 2 m. It also runs in about a minute at `raw_resolution_factor = 2`, where the old one
+# took three hours.
+const GEONORGE_GRIDDING_ALGORITHM = "linear:radius=-1:nodata=0"
 
 download_bathymetry_cache::String = ""
 
@@ -62,7 +72,7 @@ across fjords.
   sampled sounding into land. `Inf` disables it.
 
   The gridding has no search radius, so it fills *every* cell the land polygons leave open from the
-  nearest soundings, however far away. Where the FileGDB has neither soundings nor land — Swedish
+  surrounding soundings, however far away. Where the FileGDB has neither soundings nor land — Swedish
   territory, or a gap in its inland coverage — that invents open water: on a box reaching 11.20°E
   and 59.93°N it made a 7 m deep sea of the land north of Drammen and a 100 m deep one of the coast
   south of Strömstad, both up to tens of kilometres from the nearest sounding while every real wet
@@ -103,7 +113,7 @@ across fjords.
 
   The price is that the newly wet cells have no exterior profile of their own and are filled along
   the boundary by `FjordSim.Forcing.fill_boundary_gaps!`, so keep this small — a few cells, not a
-  few tens. On `oslofjorden` the southern band is nearly clear already and `5` moves seven cells,
+  few tens. On `oslofjorden` the southern band is nearly clear already and `5` moves nine cells,
   none of them in the boundary row itself.
 - `max_island_cells`: `fill_small_islands` threshold — every 4-connected patch of land of at most
   this many cells that does not touch the domain edge is flooded to the mean depth of the sea
@@ -161,6 +171,19 @@ across fjords.
   handles the one-cell artifacts; this bounds what is left, including real topography. Lower is
   more stable and less faithful — 0.2 is the textbook limit but flattens genuine fjord sills, so
   prefer the largest value that keeps the run stable.
+
+  It is not free in a fjord. Each steep pair is moved symmetrically, so the deep cell of a trench
+  one or two cells wide is raised once per shallow neighbour: on `oslofjorden_validation` 0.25 took
+  34 m off Vestfjorden at Fl1 and 24 m off the channel at Hm4, where 0.5 takes 8 m and 4 m.
+- `preserve_sills`: Run `preserve_sill_depths` after slope limiting, deepening the fewest cells needed
+  for every pair of basins the grid resolves to be connected as deep as the native grid connects
+  them. `false` disables the stage.
+
+  Regridding averages a channel narrower than a cell with its flanks, so the basin behind it
+  exchanges over a sill shallower than the real one. On `oslofjorden_validation` the Svelvik sill,
+  11 m deep and 180 m wide, regridded to 5.6 m. The stage deepens cells only along one path per lost
+  connection and never below the deepest native water in a cell, so it restores the sill without
+  deepening the slopes beside it.
 - `geonorge_cache`: Reuse the cached regional raw NetCDF when available.
 - `regrid_cache`: Use NumericalEarth's on-disk bathymetry cache.
 
@@ -191,6 +214,7 @@ Base.@kwdef mutable struct DybdedataConfig <: AbstractBathymetryConfig
     spike_ratio::Float64 = 0.0
     minimum_cell_fraction::Float64 = 0.0
     max_slope_factor::Float64 = 0.0
+    preserve_sills::Bool = false
     geonorge_cache::Bool = true
     regrid_cache::Bool = true
     raw_file::String = ""
@@ -244,6 +268,7 @@ smoothing_options(config::DybdedataConfig) = (;
     minimum_cell_fraction = config.minimum_cell_fraction,
     max_slope_factor = config.max_slope_factor,
     minimum_depth = config.minimum_depth,
+    preserve_sills = config.preserve_sills,
 )
 
 """
@@ -586,7 +611,7 @@ function grid_point_dataset(point_dataset, config::DybdedataConfig)
         "-of",
         "MEM",
         "-a",
-        "invdistnn:power=2:smoothing=0.2:max_points=16:min_points=1:nodata=0",
+        GEONORGE_GRIDDING_ALGORITHM,
         "-zfield",
         "z",
         "-txe",
@@ -833,5 +858,7 @@ function geonorge_raw_filename(config::DybdedataConfig)
     lat1 = replace(string(round(config.latitude[1], digits = 3)), '.' => 'p')
     lat2 = replace(string(round(config.latitude[2], digits = 3)), '.' => 'p')
     contour_suffix = config.include_contours ? "_contour_stride_$(config.contour_stride)" : "_points_only"
-    return "geonorge_sjokart_bathymetry_$(lon1)_$(lon2)_$(lat1)_$(lat2)_$(Nx)x$(Ny)$(contour_suffix).nc"
+    # Named for the gridding algorithm, so a raw file cached by the inverse-distance one it replaced
+    # is never read back as if it were linear.
+    return "geonorge_sjokart_bathymetry_$(lon1)_$(lon2)_$(lat1)_$(lat2)_$(Nx)x$(Ny)$(contour_suffix)_linear.nc"
 end

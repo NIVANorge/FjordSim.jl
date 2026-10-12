@@ -168,7 +168,7 @@ read it before changing any of these:
 3. **Utils** (`src/Utils.jl`) — `progress` callback, `recursive_merge`, time-step helpers.
 4. **Plotting** (`src/Plotting.jl`) — one `plot_*` function per pipeline, dispatching on config
    supertypes.
-5. **Bathymetry** (`src/Bathymetry/`) — `prepare_bathymetry` and the seven-stage
+5. **Bathymetry** (`src/Bathymetry/`) — `prepare_bathymetry` and the eight-stage
    `smooth_bathymetry_gaps!` pipeline (order is forced; see the doc before reordering).
 6. **Atmosphere** (`src/Atmospheres/`) — `prepare_atmosphere`, NORA3 read/download.
 7. **Forcing** (`src/Forcing/`) — interior forcing, rivers, and open-boundary data pipelines

@@ -145,12 +145,14 @@ modules, in `include` order from `src/FjordSim.jl`:
    with `smoothing_options(config)` → `write_bathymetry_file`. The core also owns the smoothing
    kernels and the `center_coordinates`/`expand_domain`/`vertical_faces` domain helpers.
 
-   `smooth_bathymetry_gaps!` runs seven stages in eight passes — `snap_partial_bottom_cells` runs
+   `smooth_bathymetry_gaps!` runs eight stages in nine passes — `snap_partial_bottom_cells` runs
    twice. The topological cleanup every source gets (diagonal-pair fills, isolated sea/land cells),
-   then six stages a source opts into through `smoothing_options`, each skipped when its parameter is
-   `false` or zero:
+   then seven stages a source opts into through `smoothing_options`, each skipped when its parameter
+   is `false` or zero:
    `clear_open_boundary_land`, `fill_small_islands`, `remove_narrow_passages`,
-   `fill_shallow_spikes`, `snap_partial_bottom_cells` and `limit_bottom_slope`.
+   `fill_shallow_spikes`, `snap_partial_bottom_cells`, `limit_bottom_slope` and
+   `preserve_sill_depths`. The last is the only one that reads the source's grid as well as the
+   model's, which `prepare_bathymetry` reads back with `native_bathymetry` when it is switched on.
 
    The order is forced. The topological pass first, because checkerboard noise would skew the
    neighbour medians. Then `clear_open_boundary_land`, which is the third stage that changes the
@@ -239,7 +241,10 @@ modules, in `include` order from `src/FjordSim.jl`:
    `minimum_depth` floor alone makes this *worse* in one respect: lifting a sliver to a constant
    depth in much deeper water leaves a shallow spike, which is why the two are configured together.
    `limit_bottom_slope` moves each offending pair symmetrically, so water volume is conserved
-   exactly rather than quietly shifted.
+   exactly rather than quietly shifted. That symmetry is also what it costs in a fjord: the deep cell
+   of a trench one or two cells wide is raised once for every shallow neighbour. On
+   `oslofjorden_validation` `max_slope_factor = 0.25` took 34 m off Vestfjorden at Fl1 and 24 m off
+   the channel at Hm4; 0.5 takes 8 m and 4 m.
 
    ### `remove_narrow_passages`
 
@@ -406,6 +411,44 @@ modules, in `include` order from `src/FjordSim.jl`:
 
    With both the second pass and this fix in place, `PartialCellBottom`'s clamp does not fire anywhere
    in the finished `oslofjorden` field: zero slivers, against 292 on the 18-level grid.
+
+   ### `preserve_sill_depths`
+
+   Regridding averages, and a mean over a cell is the wrong statistic for a channel narrower than the
+   cell: the channel is averaged with its flanks, and the basin behind it exchanges over a sill the
+   source never had. Svelvik, 180 m wide and 11 m deep, came out at 5.6 m on a 194 m grid. Taking
+   the deepest source water in every cell instead restores the sill and spoils everything else —
+   every cell on a slope takes its deepest corner, and the Drøbak sill came out 43 m against ~20 m.
+
+   So the stage works on connections, not cells. The source's merge tree (wet cells added deepest
+   first under union-find; a sill is where two components first touch) lists every sill with the two
+   basins it separates. A sill is acted on only if both basins reach below it on the model grid —
+   which is what "the grid resolves the basin" means — and the model grid does not already connect
+   them at that depth, checked by a second union-find over the model cells admitted so far. Then a
+   0-1 breadth-first search finds the path crossing the fewest cells shallower than the sill, using
+   only cells whose deepest source water reaches it, and deepens those cells to the sill. So nothing
+   is made deeper than the source has water, no land changes, and a channel carved for one sill is
+   seen by every shallower one after it. On `oslofjorden_validation` it deepens 1467 cells, restores
+   Svelvik to 10.8 m and the Kippenes–Breiangen connection from 45 m to 62.8 m, and changes the mean
+   depth by under 0.1 m.
+
+   It runs after slope limiting, which would otherwise raise the very channel it carved, and before
+   the second snap, which may then raise a carved cell by up to a fifth of its layer. It only ever
+   deepens, so a connection the regrid made *deeper* than the source's — Drøbak, where a 194 m cell
+   averages across the jetty — is out of its reach.
+
+   ### Gridding the soundings
+
+   The source's soundings are gridded by linear interpolation on their Delaunay triangulation
+   (`GEONORGE_GRIDDING_ALGORITHM`), so a native cell's depth is a weighted mean of the three soundings
+   around it and a basin keeps its deepest sounding. The `invdistnn` it replaced had
+   `smoothing=0.2` in the degrees of EPSG:4326 — kilometres, against soundings metres apart — so its
+   16 nearest soundings were weighted almost equally: a plain mean that took 40 m off Bunnefjorden
+   and 35 m off the Drøbak Sound before any smoothing stage ran, and that is most of what the
+   `oslofjorden_validation` basins lacked. The linear version runs in about a minute at
+   `raw_resolution_factor = 2` against the old three hours, which is what made 4 affordable
+   for `oslofjorden()`. The raw file's name carries `_linear`, so a cached inverse-distance raw file
+   is never read as the new one.
 
    `geonorge.jl` holds `DybdedataConfig <: AbstractBathymetryConfig` and the Geonorge Sjøkart
    Dybdedata implementation of the two hooks: derive the native region from the target grid

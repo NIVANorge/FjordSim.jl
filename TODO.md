@@ -73,18 +73,37 @@ at most 131 m deep against 208 m. The comment in the example says the slope limi
 (`max_slope_factor = 0.25`) costs only 0.6 m at the Drøbak sill. That measures one stage, so the
 loss must come from the others.
 
-- [ ] Run the `smooth_bathymetry_gaps!` pipeline stage by stage and record, after each stage, the
+- [x] Run the `smooth_bathymetry_gaps!` pipeline stage by stage and record, after each stage, the
       basin maxima and the sill depths along the deepest path.
-      - The stages are the regrid at `raw_resolution_factor = 2`, `interpolation_passes`,
-        `close_narrow_passages`, `spike_ratio`, `minimum_cell_fraction` and `max_slope_factor`.
-      - The sill depths can be computed with the maximin flood-fill used for the validation report.
-      - Then find which stage removes the depth.
-- [ ] Preserve the extremes where it matters: keep basin maxima when regridding (not only the cell
+      - Most of the loss came *before* the pipeline, in the gridding of the soundings: `invdistnn`
+        with `smoothing=0.2` in degrees weighted the 16 nearest soundings almost equally, a plain
+        mean. That took Ep1 from 154 m (deepest sounding within 2 km) to 114 m and the Drøbak Sound
+        from 211 m to 176 m.
+      - Then the regrid (Fl1 −10 m, Hm4 −16 m, Svelvik 8.8 → 6.6 m), and `max_slope_factor = 0.25`
+        (Fl1 −13 m, Hm4 −17 m). The snap costs at most a fifth of a layer, 4 m at Im2.
+      - Table and numbers: "Bathymetry gridding and sills" in `docs/setups.md`.
+- [x] Preserve the extremes where it matters: keep basin maxima when regridding (not only the cell
       mean), and keep the deepest connection across a sill rather than averaging it with the flanks.
-- [ ] Below 132 m the faces are 33.5 m apart, so check whether the coarse deep `z_faces` add to the
+      - Soundings are now gridded linearly on their Delaunay triangulation (`GEONORGE_GRIDDING_ALGORITHM`).
+      - The new `preserve_sills` stage (`preserve_sill_depths`) restores sills along one path per
+        lost connection, from the native grid's merge tree.
+      - `oslofjorden()` now uses `raw_resolution_factor = 4` and `max_slope_factor = 0.5`, and all
+        three setups use `preserve_sills = true`.
+      - On the validation box: Ep1 153 m, Fl1 153, Im2 209, Svelvik 10.8 m, Drøbak 23.5 m.
+      - Drøbak is still deeper than the real ~20 m. The stage only deepens, so it cannot correct a
+        sill the regrid made too deep.
+- [x] Below 132 m the faces are 33.5 m apart, so check whether the coarse deep `z_faces` add to the
       loss in basin depth.
-- [ ] Any change here means re-running `prepare_bathymetry`, `prepare_forcing`, `add_rivers` and
-      `prepare_boundaries`, and invalidates existing checkpoints.
+      - Only through the snap, which costs at most 0.2 × 33.5 = 6.7 m.
+      - The real `z_faces` problem was at the bottom: the faces had been fitted to the averaged
+        Hvaler trench (395 m), but the soundings reach 463–470 m. Both Oslofjord grids now go to
+        −467 m (26 levels).
+- [ ] Re-run `prepare_bathymetry`, `prepare_forcing`, `add_rivers` and `prepare_boundaries` for
+      `oslofjorden`, `drammensfjorden` and `examples/oslofjorden_validation.jl`. Existing checkpoints
+      are invalid: the `z_faces` and the land mask have changed.
+      - Short GPU run first: `max_slope_factor = 0.5` has not been run since the stages that fixed
+        the earlier instabilities went in.
+      - `examples/lista.jl`'s `z_faces` gate needs re-measuring on the linear gridding.
 
 ## Open-boundary tide
 

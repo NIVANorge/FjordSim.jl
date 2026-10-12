@@ -53,14 +53,16 @@ function oslofjorden()
         # which build_simulation reads the model grid through — both dispatching on this config's
         # type. Implemented here by wrapping LatitudeLongitudeGrid / ImmersedBoundaryGrid.
         grid_config = EvenGrid(
-            size      = (240, 520, 24),
+            size      = (240, 520, 26),
             halo      = (7, 7, 7),
             longitude = (10.2, 11.02),
             latitude  = (59.0, 59.93),
             # A geometric stretch, ratio 1.25 capped at 33.5 m, from a 1 m surface cell to a
-            # deepest face at -400 m — the deepest sounding is 395.1 m, so nothing is clipped and
-            # nothing is wasted. The predecessor's 18 levels ran to -450 m, where the first layer
-            # held no water at all, and reached the seabed in 25 m and 50 m steps: the median
+            # deepest face at -467 m — the deepest sounding is 463.0 m, in the Hvaler trench on the
+            # southern edge, and the deepest cell `prepare_bathymetry` writes is 466.8 m, so nothing
+            # is clipped and nothing is wasted. The faces stopped at -400 m while the gridding
+            # averaged the trench down to 395.1 m. The predecessor's 18 levels ran to -450 m, where
+            # the first layer held no water at all, and reached the seabed in 25 m and 50 m steps: the median
             # column's floor sat in a 25 m layer and 61% of columns were floored in a layer thicker
             # than 20 m, so the deepest 25 m of a column was one cell with no vertical structure.
             # That is where the tracer extremes of the 2020 run sat — 96% of them in a bottom cell,
@@ -68,6 +70,7 @@ function oslofjorden()
             # exceed 20 m, and no two adjacent layers differ by more than a factor 1.33 (it was
             # 2.50, at the 25 m to 10 m step).
             z_faces   = [
+                -467.0, -433.5,
                 -400.0, -366.5, -333.0, -299.5, -266.0, -232.5, -199.0, -165.5,
                 -132.0, -105.0, -83.0, -66.0, -52.0, -41.0, -32.0, -25.0,
                 -19.0, -14.5, -10.8, -7.9, -5.5, -3.7, -2.2, -1.0, 0.0,
@@ -81,7 +84,10 @@ function oslofjorden()
             data_root             = data_root,
             output_file           = "bathymetry.nc",
             plot_file             = "bathymetry.png",
-            raw_resolution_factor = 2,
+            # 4, so the native grid is ~48 m. The Svelvik strait is 180 m wide and 11 m deep; a
+            # ~97 m native grid holds it at 8.5 m, this one at 11.3 m, which `preserve_sills` then
+            # carries onto the model grid. It was 2 while the gridding took three hours.
+            raw_resolution_factor = 4,
             padding_cells         = 2,
             include_contours      = false,
             contour_stride        = 10,
@@ -91,7 +97,7 @@ function oslofjorden()
             # Flood land within five rows of the open southern edge, so the boundary condition is
             # not reconciling a radiation scheme, a prescribed exterior state and a headland within
             # a couple of cells of each other. On this domain the band is nearly clear already and
-            # it moves seven cells, none in the boundary row itself — cheap insurance rather than a
+            # it moves nine cells, none in the boundary row itself — cheap insurance rather than a
             # correction. The open edges come from `boundary_config` below.
             open_boundary_land_cells = 5,
             # Six and no more. Every remaining interior land component is 7 cells or larger with a
@@ -101,12 +107,17 @@ function oslofjorden()
             close_narrow_passages = true,
             spike_ratio           = 0.5,
             minimum_cell_fraction = 0.2,
-            # 0.25, not the 0.5 this used to be. Measured on this bathymetry, tightening the
-            # limit costs almost nothing: the Drøbak sill goes from 65.2 m to 64.6 m, the deepest
-            # point is untouched at 395.1 m and water volume changes by 0.000%, while adjacent
-            # pairs steeper than r = 0.3 go from 4620 to none. The worry that a tight limit
-            # flattens a genuine sill does not survive contact with this domain.
-            max_slope_factor      = 0.25,
+            # 0.5, back from 0.25. The tighter limit was measured as nearly free on the
+            # inverse-distance gridding, which had already averaged the trenches flat; on the
+            # linear one it takes the deep cell of every narrow trench up once per shallow
+            # neighbour. On `oslofjorden_validation` 0.25 cost 34 m in Vestfjorden at Fl1 and 24 m
+            # at Hm4, where 0.5 costs 8 m and 4 m. Nothing measured 0.5 as unstable: the earlier
+            # runs that died did so at slivers, spikes and one-cell passages, which the stages
+            # above now remove.
+            max_slope_factor      = 0.5,
+            # Regridding averages a channel narrower than a cell with its flanks: Svelvik came out
+            # at 5.6 m against 11 m real. This restores each lost sill along one path of cells.
+            preserve_sills        = true,
             geonorge_cache        = true,
             regrid_cache          = false,
         ),

@@ -46,9 +46,12 @@ names it, which is the intent.
 ## The vertical grid
 
 `oslofjorden`'s `z_faces` are a geometric stretch — ratio 1.25, capped at 33.5 m — from a 1 m surface
-cell to a deepest face at −400 m, 24 levels. They replaced a hand-written 18-level set running to
-−450 m in 25 m and 50 m steps, and the numbers are worth keeping because the replacement was measured
-against the actual bathymetry rather than chosen:
+cell to a deepest face at −467 m, 26 levels. It was −400 m and 24 levels until the soundings were
+gridded linearly: the inverse-distance gridding before that averaged the Hvaler trench on the
+southern edge from 463 m down to 395.1 m, and the faces had been fitted to that. The 24 levels
+replaced a hand-written 18-level set running to −450 m in 25 m and 50 m steps, and the numbers are
+worth keeping because the replacement was measured against the bathymetry of the time rather than
+chosen:
 
 | | 18 levels, to −450 m | 24 levels, to −400 m |
 |---|---|---|
@@ -132,10 +135,14 @@ six comments:
   one-day timescale relaxes by 1.2 × 10⁻⁴ per step against an advective rate into the boundary cell
   of ~2.5 × 10⁻³ s⁻¹. Two hundred times weaker than what it was competing with. Both timescales are
   tuning knobs; too strong an inflow nudge over-constrains an open boundary and reflects.
-- **`max_slope_factor = 0.25`**, down from `0.5` — measured on this bathymetry, the Drøbak sill goes
-  from 65.2 m to 64.6 m, the deepest point is untouched and water volume changes by 0.000 %, while
-  adjacent pairs steeper than r = 0.3 go from 4620 to none. The standing worry that a tight limit
-  flattens a genuine sill does not survive contact with this domain.
+- **`max_slope_factor = 0.5`**, back from `0.25` — 0.25 was measured as nearly free on the
+  inverse-distance gridding, which had already averaged the trenches flat. On the linear gridding the
+  symmetric limiter raises the deep cell of a narrow trench once per shallow neighbour: at 0.25 the
+  `oslofjorden_validation` basins lose 34 m at Fl1 and 24 m at Hm4, at 0.5 they lose 8 m and 4 m. No
+  run measured 0.5 as unstable — the runs that died at it died at slivers, spikes and one-cell
+  passages, each now removed by its own stage — but no long run has confirmed it either.
+- **`raw_resolution_factor = 4`** and **`preserve_sills = true`** — see "Bathymetry gridding and
+  sills" below.
 - **`max_island_cells = 6`, unchanged and deliberately so** — every remaining interior land component
   is 7 cells or larger with a minimum width of 2 to 4 cells and bounding boxes like 4×8 and 5×4.
   Those are compact skerries, not the one-cell ridges the stage exists to remove, and raising the
@@ -162,6 +169,33 @@ six comments:
 `start_date` and `stop_time` also decide what the prepare steps write, since both pad their time
 axes to that window — so changing either is a data change, not just a run change. See "Changing
 `start_date` or `stop_time`" in `CLAUDE.md`.
+
+## Bathymetry gridding and sills
+
+The validation run against the NIVA casts found the basins 15–40 m too shallow and Svelvik at 5.5 m
+against 11 m. Replaying `prepare_bathymetry` stage by stage on `oslofjorden_validation` put the loss,
+deepest cell within 2 km of the station against the deepest sounding there:
+
+| | Ep1 | Fl1 | Im2 | Hm4 | Drøbak Sound | Svelvik sill |
+|---|---|---|---|---|---|---|
+| soundings | 154 | 166 | 211 | 119 | 211 | 11 |
+| inverse-distance native grid | 114 | 138 | 176 | 104 | 176 | 8.8 |
+| regridded | 111 | 127 | 170 | 88 | 170 | 6.6 |
+| after slope limit 0.25 and snap | 111 | 114 | 166 | 71 | 166 | 5.5 |
+| **linear, `raw_resolution_factor = 4`, r = 0.5, `preserve_sills`** | **153** | **153** | **209** | **99** | **209** | **10.8** |
+
+Most of it was the gridding, before any smoothing stage ran — its inverse-distance weights were a
+plain mean of 16 soundings (see "Gridding the soundings" in `docs/architecture.md`). The rest was the
+regrid averaging channels with their flanks, which `preserve_sills` undoes along one path per lost
+sill, and the slope limiter, loosened above. The mean depth rises from 62.4 m to 72.9 m, so the
+domain holds 14 % more water than the run that found this.
+
+`raw_resolution_factor` went from 2 to 4 once gridding stopped taking three hours. A ~48 m native
+grid resolves Svelvik at 11.3 m where ~97 m gives 8.5 m, and it holds the Drøbak connection at 23.5 m
+against 29 m — the real sill is about 20 m, and the stage that only deepens cannot correct a sill
+the regrid made too deep. It also moves the land mask: 1.6 k fewer wet cells on the validation box.
+`max_island_cells = 6` still holds on the new mask — every interior land component left is 7 cells
+or larger and at least 2 wide.
 
 ## Per-step drivers and the example config
 

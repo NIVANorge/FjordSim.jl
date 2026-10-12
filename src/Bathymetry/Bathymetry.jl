@@ -16,7 +16,12 @@ using Oceananigans.Grids: x_domain, y_domain, znodes
 using Printf: @printf
 using Statistics: mean, median
 
-using NumericalEarth.DataWrangling: Metadatum, metadata_path
+using NumericalEarth.DataWrangling:
+    Metadatum,
+    dataset_variable_name,
+    latitude_interfaces,
+    longitude_interfaces,
+    metadata_path
 
 using ..Configs:
     AbstractBathymetryConfig,
@@ -115,12 +120,32 @@ function prepare_bathymetry(target_grid, config::AbstractBathymetryConfig; edges
 
     output_file = bathymetry_path(config)
     @info "Smoothing small-scale bathymetry gaps"
-    smooth_bathymetry_gaps!(bottom_height; smoothing_options(config)..., edges)
+    smoothing = smoothing_options(config)
+    native = get(smoothing, :preserve_sills, false) ? native_bathymetry(metadata) : nothing
+    smooth_bathymetry_gaps!(bottom_height; smoothing..., native, edges)
     @info "Writing processed bathymetry file to $output_file"
     write_bathymetry_file(output_file, target_grid, bottom_height)
     @info "Finished preparing bathymetry"
 
     return (; dataset, raw_file = metadata_path(metadata), output_file, bottom_height)
+end
+
+"""
+    native_bathymetry(metadata)
+
+The source's bottom heights on their own grid, before regridding, as a named tuple of
+`longitude` and `latitude` cell centres and the `h` matrix. Read only for `preserve_sill_depths`,
+which needs the connections the regrid averaged away.
+"""
+function native_bathymetry(metadata)
+    dataset = metadata.dataset
+    Nx, Ny, _ = size(dataset)
+    longitude = center_coordinates(longitude_interfaces(dataset), Nx)
+    latitude = center_coordinates(latitude_interfaces(dataset), Ny)
+    h = NCDataset(metadata_path(metadata)) do ds
+        Array(ds[dataset_variable_name(metadata)][:, :])
+    end
+    return (; longitude, latitude, h)
 end
 
 """
@@ -221,24 +246,30 @@ end
     smooth_bathymetry_gaps!(bottom_height; open_boundary_land_cells = 0, max_island_cells = 0,
                             close_narrow_passages = false, spike_ratio = 0,
                             minimum_cell_fraction = 0, max_slope_factor = 0, minimum_depth = 0,
-                            edges = nothing)
+                            preserve_sills = false, native = nothing, edges = nothing)
 
-Clean up the regridded bathymetry in place, in seven stages.
+Clean up the regridded bathymetry in place, in eight stages.
 
 First the topological pass every source gets: one diagonal-pair fill, then
 `BATHYMETRY_GAP_FILL_PASSES` rounds of isolated sea/land cell cleanup, following the fixed cleanup
 used for the Oslofjord ROMS-based bathymetry. This removes the checkerboard noise that would
 otherwise skew the neighbor medians a later stage takes.
 
-Then six optional stages — seven runs, since `snap_partial_bottom_cells` runs once each side of
-slope limiting — each skipped when its parameter is `false` or zero so a source that configures none
-keeps exactly the behavior above: `clear_open_boundary_land` with
+Then seven optional stages — eight runs, since `snap_partial_bottom_cells` runs once each side of
+slope limiting and sill preservation — each skipped when its parameter is `false` or zero so a source
+that configures none keeps exactly the behavior above: `clear_open_boundary_land` with
 `open_boundary_land_cells` and `edges`, `fill_small_islands` with `max_island_cells`,
 `remove_narrow_passages` with `close_narrow_passages`, `fill_shallow_spikes` with `spike_ratio`,
-`snap_partial_bottom_cells` with `minimum_cell_fraction`, and `limit_bottom_slope` with
-`max_slope_factor` and `minimum_depth`.
+`snap_partial_bottom_cells` with `minimum_cell_fraction`, `limit_bottom_slope` with
+`max_slope_factor` and `minimum_depth`, and `preserve_sill_depths` with `preserve_sills` and
+`native`, the source's bathymetry before regridding (see `native_bathymetry`).
 
-`clear_open_boundary_land` is first of the six, and belongs there for the same reason
+`preserve_sill_depths` runs after slope limiting because it is the one stage that has to have the
+last word on depth: the limiter raises the deep cell of every steep pair, and a carved sill channel
+is, by construction, deeper than the flanks beside it. It changes no land, so it cannot undo what the
+land-mask stages decided.
+
+`clear_open_boundary_land` is first of the seven, and belongs there for the same reason
 `fill_small_islands` precedes `remove_narrow_passages`: it only ever turns land into sea, so it can
 neither manufacture a narrow passage nor strand a cell, while running it first lets the island and
 passage stages judge the band as it will actually be. A land component straddling the band's inner
@@ -255,12 +286,12 @@ where these islands live — and can bridge one to the mainland, hiding it from 
 good. Despiking then precedes slope limiting, because a spike is precisely the kind of one-cell
 feature that slope limiting would otherwise smear into its neighbors instead of removing.
 
-`snap_partial_bottom_cells` runs **twice**, once each side of slope limiting, and that is not
-redundancy. It is the only stage that knows where the vertical faces are, and slope limiting moves
-depths without regard for them, so the limiter is guaranteed to put back slivers the snap removed —
-the tighter the limit, the more of them. Measured on `oslofjorden` at `max_slope_factor = 0.25`, one
-snap before the limiter leaves 2628 slivers (6.0% of bottom cells) in the finished field; snapping
-again afterwards leaves **none**. The price is that the second snap breaks the limit it was just
+`snap_partial_bottom_cells` runs **twice**, once each side of slope limiting and sill preservation,
+and that is not redundancy. It is the only stage that knows where the vertical faces are, and slope
+limiting moves depths without regard for them, so the limiter is guaranteed to put back slivers the
+snap removed — the tighter the limit, the more of them. Measured on `oslofjorden` at
+`max_slope_factor = 0.25`, one snap before the limiter leaves 2628 slivers (6.0% of bottom cells) in
+the finished field; snapping again afterwards leaves **none**. The price is that the second snap breaks the limit it was just
 handed: the steepest slope goes from 0.250 to 0.307, on 16 pairs out of 84 000. That is the whole
 trade — a slope parameter 23% over its target on a handful of pairs, against six percent of the
 domain's bottom cells being slivers.
@@ -287,6 +318,8 @@ function smooth_bathymetry_gaps!(
     minimum_cell_fraction = 0,
     max_slope_factor = 0,
     minimum_depth = 0,
+    preserve_sills = false,
+    native = nothing,
     edges = nothing,
 )
     cpu_bottom_height = on_architecture(CPU(), bottom_height)
@@ -327,15 +360,21 @@ function smooth_bathymetry_gaps!(
     minimum_cell_fraction > 0 &&
         (h = snap_and_report(h, z_faces, minimum_cell_fraction, minimum_depth, "before slope limiting"))
 
-    if max_slope_factor > 0
-        h = limit_bottom_slope(h; max_slope_factor, minimum_depth)
-        # Slope limiting moves depths without regard for where the vertical faces are, so it puts
-        # back the very slivers the snap above removed — and the tighter the limit, the more of
-        # them. Snapping again is what makes the two stages compose instead of one undoing the
-        # other; see the docstring for what it costs.
-        minimum_cell_fraction > 0 &&
-            (h = snap_and_report(h, z_faces, minimum_cell_fraction, minimum_depth, "after slope limiting"))
+    max_slope_factor > 0 && (h = limit_bottom_slope(h; max_slope_factor, minimum_depth))
+
+    if preserve_sills
+        target = bottom_height.grid
+        longitude = center_coordinates(x_domain(target), size(h, 1))
+        latitude = center_coordinates(y_domain(target), size(h, 2))
+        h = preserve_sill_depths(h, longitude, latitude, native)
     end
+
+    # Both stages above move depths without regard for where the vertical faces are, so they put
+    # back the very slivers the snap above removed — and the tighter the slope limit, the more of
+    # them. Snapping again is what makes the stages compose instead of one undoing the other; see
+    # the docstring for what it costs.
+    (max_slope_factor > 0 || preserve_sills) && minimum_cell_fraction > 0 &&
+        (h = snap_and_report(h, z_faces, minimum_cell_fraction, minimum_depth, "after slope limiting and sill preservation"))
 
     set!(bottom_height, h)
     return bottom_height
@@ -613,6 +652,234 @@ function steepest_slope(depth)
 end
 
 """
+    preserve_sill_depths(h, longitude, latitude, native)
+
+Deepen the fewest cells needed for every pair of basins `h` resolves to be connected at least as
+deep as `native` connects them, and return the result. `h` is the bottom height on cells centred at
+`longitude` × `latitude`; `native` is the source before regridding, a `(; longitude, latitude, h)`
+named tuple as `native_bathymetry` reads it.
+
+Regridding averages a channel with its flanks, so a strait narrower than a cell comes out as
+shallow as the mean over the cell, and the basin behind it exchanges over a sill the source never
+had. On `oslofjorden_validation` the Svelvik sill, 11 m deep and 180 m wide, regridded to 5.6 m
+while the source on a 48 m grid holds it at 11.3 m; the Kippenes–Breiangen connection lost 18 m the
+same way. Deepening the whole cell to the deepest sounding in it instead would restore the sills
+and wreck everything else: every cell on a slope would take its deepest corner.
+
+So depth is restored only along paths, and only where a connection was lost. The source's basins and
+sills come from its merge tree — its wet cells added from the deepest up, a sill being the depth at
+which two components first touch. Each sill is checked against the target as it stands, and acted
+on only if both basins reach below it in `h` (the basin is resolved) and `h` does not already
+connect them at that depth. Then the path between them that crosses the fewest cells shallower than
+the sill is deepened to it, through cells that hold source water at least that deep — so no cell is
+ever made deeper than the deepest source water inside it, and no land changes.
+
+The stage only ever deepens. A connection the regrid made *deeper* than the source's is left alone.
+"""
+function preserve_sill_depths(h, longitude, latitude, native)
+    cell = target_cells(longitude, latitude, native.longitude, native.latitude)
+
+    deepest = zeros(eltype(h), size(h))
+    for p in eachindex(native.h)
+        (cell[p] == 0 || native.h[p] >= 0) && continue
+        deepest[cell[p]] = max(deepest[cell[p]], -native.h[p])
+    end
+
+    carved = carve_sills(h, deepest, basin_merges(native.h, cell))
+    @info "Deepened $(count(carved .!= h)) cells to restore sill depths the regrid lost"
+    return carved
+end
+
+"""
+    target_cells(longitude, latitude, native_longitude, native_latitude)
+
+The linear index of the target cell containing each native cell centre, or `0` outside the target
+domain, for a target grid with regularly spaced centres `longitude` × `latitude`.
+"""
+function target_cells(longitude, latitude, native_longitude, native_latitude)
+    Nx, Ny = length(longitude), length(latitude)
+    Δλ = (longitude[end] - longitude[1]) / (Nx - 1)
+    Δφ = (latitude[end] - latitude[1]) / (Ny - 1)
+    linear = LinearIndices((Nx, Ny))
+
+    cell = zeros(Int, length(native_longitude), length(native_latitude))
+    for (j, φ) in enumerate(native_latitude), (i, λ) in enumerate(native_longitude)
+        I = floor(Int, (λ - longitude[1]) / Δλ + 1 // 2) + 1
+        J = floor(Int, (φ - latitude[1]) / Δφ + 1 // 2) + 1
+        (1 <= I <= Nx && 1 <= J <= Ny) && (cell[i, j] = linear[I, J])
+    end
+
+    return cell
+end
+
+"""
+    basin_merges(h, cell)
+
+Every sill of the bottom height `h`, as `(a, b, depth)`: the target cells `a` and `b` holding the
+bottoms of the two basins that first connect at `depth`. Deepest first.
+
+The merge tree of `h` by union-find: wet cells inside the target domain are added deepest first, and
+a cell that touches two components already added is the sill between them. Each component carries
+the deepest cell it holds, its bottom. A sill between two basins whose bottoms fall in the same
+target cell cannot be represented on the target grid and is left out.
+"""
+function basin_merges(h, cell)
+    Nx, Ny = size(h)
+    linear = LinearIndices(h)
+    cartesian = CartesianIndices(h)
+    parent = zeros(Int, length(h))
+    bottom = zeros(Int, length(h))
+    merges = Tuple{Int,Int,eltype(h)}[]
+
+    for p in sort!([p for p in eachindex(h) if h[p] < 0 && cell[p] != 0]; by = p -> h[p])
+        parent[p] = bottom[p] = p
+        joined = false
+        i, j = Tuple(cartesian[p])
+        for (di, dj) in ((1, 0), (-1, 0), (0, 1), (0, -1))
+            ii, jj = i + di, j + dj
+            (1 <= ii <= Nx && 1 <= jj <= Ny) || continue
+            parent[linear[ii, jj]] == 0 && continue
+
+            here, there = find_root!(parent, p), find_root!(parent, linear[ii, jj])
+            here == there && continue
+            # Joining the first component met only extends it; meeting a second one is a sill.
+            joined && cell[bottom[here]] != cell[bottom[there]] &&
+                push!(merges, (cell[bottom[here]], cell[bottom[there]], -h[p]))
+            joined = true
+
+            parent[here] = there
+            h[bottom[here]] < h[bottom[there]] && (bottom[there] = bottom[here])
+        end
+    end
+
+    return merges
+end
+
+"""
+    carve_sills(h, deepest, merges)
+
+Apply `merges` from `basin_merges` to the bottom height `h`, deepest sill first, deepening cells to
+each sill that the target grid lost. `deepest[c]` is the deepest source water inside cell `c`, the
+most a cell may be deepened to.
+
+The target's own connectivity is kept in a second union-find, which admits its wet cells as the sill
+depth falls past them — so at each sill it says, in near-constant time, whether the two basins are
+already connected at that depth. Deepened cells join it as they are deepened, so a later, shallower
+sill sees the channel an earlier one carved.
+"""
+function carve_sills(h, deepest, merges)
+    carved = copy(h)
+    parent = zeros(Int, length(h))
+    order = sort!([c for c in eachindex(h) if h[c] < 0]; by = c -> h[c])
+    next = 1
+
+    for (a, b, depth) in merges
+        while next <= length(order) && -carved[order[next]] >= depth
+            parent[order[next]] == 0 && admit_cell!(parent, order[next], size(h))
+            next += 1
+        end
+        # A basin the target does not reach below the sill is not resolved, so there is nothing to
+        # connect; one already connected at this depth needs nothing either.
+        (parent[a] != 0 && parent[b] != 0) || continue
+        find_root!(parent, a) == find_root!(parent, b) && continue
+
+        for c in sill_path(carved, deepest, parent, a, b, depth)
+            parent[c] == 0 || continue
+            carved[c] = -depth
+            admit_cell!(parent, c, size(h))
+        end
+    end
+
+    return carved
+end
+
+"""
+    sill_path(h, deepest, parent, a, b, depth)
+
+The path of wet cells from `a` to `b` that crosses the fewest cells not yet admitted to `parent` —
+the cells shallower than `depth` — using only cells whose `deepest` source water reaches `depth`.
+Empty if there is none.
+
+A 0-1 breadth-first search: stepping onto an admitted cell costs nothing, onto any other one.
+"""
+function sill_path(h, deepest, parent, a, b, depth)
+    Nx, Ny = size(h)
+    linear = LinearIndices(h)
+    cartesian = CartesianIndices(h)
+    cost = fill(typemax(Int), length(h))
+    from = zeros(Int, length(h))
+
+    cost[a] = 0
+    layer, next_layer = [a], Int[]
+    steps = 0
+    while !isempty(layer)
+        while !isempty(layer)
+            c = pop!(layer)
+            cost[c] < steps && continue
+            if c == b
+                path = [b]
+                while path[end] != a
+                    push!(path, from[path[end]])
+                end
+                return path
+            end
+
+            i, j = Tuple(cartesian[c])
+            for (di, dj) in ((1, 0), (-1, 0), (0, 1), (0, -1))
+                ii, jj = i + di, j + dj
+                (1 <= ii <= Nx && 1 <= jj <= Ny) || continue
+                n = linear[ii, jj]
+                h[n] < 0 || continue
+                admitted = parent[n] != 0
+                (admitted || deepest[n] >= depth) || continue
+
+                step = admitted ? 0 : 1
+                cost[c] + step < cost[n] || continue
+                cost[n] = cost[c] + step
+                from[n] = c
+                push!(admitted ? layer : next_layer, n)
+            end
+        end
+        layer, next_layer = next_layer, layer
+        steps += 1
+    end
+
+    return Int[]
+end
+
+"""
+    admit_cell!(parent, c, dims)
+
+Add cell `c` to the union-find `parent` and join it to every neighbour already in it.
+"""
+function admit_cell!(parent, c, dims)
+    Nx, Ny = dims
+    parent[c] = c
+    i, j = Tuple(CartesianIndices(dims)[c])
+    for (di, dj) in ((1, 0), (-1, 0), (0, 1), (0, -1))
+        ii, jj = i + di, j + dj
+        (1 <= ii <= Nx && 1 <= jj <= Ny) || continue
+        n = LinearIndices(dims)[ii, jj]
+        parent[n] == 0 && continue
+        parent[find_root!(parent, n)] = find_root!(parent, c)
+    end
+    return parent
+end
+
+"""
+    find_root!(parent, c)
+
+The root of `c` in the union-find `parent`, halving the path on the way.
+"""
+function find_root!(parent, c)
+    while parent[c] != c
+        parent[c] = parent[parent[c]]
+        c = parent[c]
+    end
+    return c
+end
+
+"""
     snap_partial_bottom_cells(h, z_faces; minimum_cell_fraction, minimum_depth = 0)
 
 Raise every wet column whose bottom partial cell would be thinner than `minimum_cell_fraction` of
@@ -644,7 +911,8 @@ seabed more faces to cross, so the count of laterally isolated bottom cells *ris
 it. It is the sliver that has to go, not the layer that has to shrink. The two are complementary,
 and the finer grid makes this stage matter slightly more rather than less.
 
-Called **twice** by `smooth_bathymetry_gaps!`, once each side of slope limiting; see there for why.
+Called **twice** by `smooth_bathymetry_gaps!`, once each side of slope limiting and sill preservation;
+see there for why.
 
 The value written is `snap_to_face(BATHYMETRY_ELTYPE, face_above)`, not `face_above` itself, because
 the snap has to survive being narrowed to the file's precision — see `snap_to_face`.

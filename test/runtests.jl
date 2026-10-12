@@ -1811,6 +1811,7 @@ end
             minimum_cell_fraction = 0.0,
             max_slope_factor = 0.0,
             minimum_depth = 0.0,
+            preserve_sills = false,
         )
         @test smoothing_options(test_bathymetry_config(
             open_boundary_land_cells = 5,
@@ -1820,6 +1821,7 @@ end
             minimum_cell_fraction = 0.2,
             max_slope_factor = 0.4,
             minimum_depth = 2.0,
+            preserve_sills = true,
         )) == (
             open_boundary_land_cells = 5,
             max_island_cells = 6,
@@ -1828,6 +1830,7 @@ end
             minimum_cell_fraction = 0.2,
             max_slope_factor = 0.4,
             minimum_depth = 2.0,
+            preserve_sills = true,
         )
 
         # smooth_bathymetry_gaps! round-trips a Field through the same pipeline
@@ -2043,6 +2046,126 @@ end
         split = [1.0 -10.0 NaN; NaN NaN NaN; 1.0 -1000.0 NaN]
         @test steepest_slope(map(v -> v < 0 ? -v : NaN, [-10.0 0.0 -1000.0])) == zero(Float64)
         @test steepest_slope([10.0 30.0]) == 0.5
+    end
+
+    @testset "sill preservation" begin
+        preserve_sill_depths = FjordSim.Bathymetry.preserve_sill_depths
+
+        # Two 100 m basins in the outer columns of a 5 x 3 target grid, joined along its middle row
+        # by a channel the native grid, at twice the resolution, holds at 20 m between a 2 m flank.
+        # A cell mean gives the channel 11 m: the sill the regrid made shallower than the source's.
+        longitude, latitude = collect(1.0:5.0), collect(1.0:3.0)
+        native_longitude, native_latitude = collect(0.75:0.5:5.25), collect(0.75:0.5:3.25)
+        native_h = zeros(10, 6)
+        native_h[[1, 2, 9, 10], :] .= -100
+        native_h[3:8, 3] .= -20
+        native_h[3:8, 4] .= -2
+        native = (; longitude = native_longitude, latitude = native_latitude, h = native_h)
+
+        regridded = zeros(5, 3)
+        regridded[[1, 5], :] .= -100
+        regridded[2:4, 2] .= -11
+
+        restored = preserve_sill_depths(regridded, longitude, latitude, native)
+        @test restored[2:4, 2] == fill(-20.0, 3)           # the channel is back at the source's sill
+        @test restored[[1, 5], :] == regridded[[1, 5], :]  # the basins are untouched
+        @test all(restored[2:4, [1, 3]] .== 0)             # and no land became water
+
+        # A connection the grid already holds at the sill depth is left alone, and nothing is ever
+        # made shallower.
+        deep = copy(regridded)
+        deep[2:4, 2] .= -25
+        @test preserve_sill_depths(deep, longitude, latitude, native) == deep
+
+        # A basin the grid does not reach below the sill is not resolved, so there is nothing to
+        # connect it to.
+        unresolved = copy(regridded)
+        unresolved[5, :] .= -15
+        @test preserve_sill_depths(unresolved, longitude, latitude, native) == unresolved
+
+        # Two parallel channels on a 5 x 5 grid, each 20 m at the native resolution and 11 m after
+        # the regrid: one is deepened, along the fewest cells, and the other is left as it was.
+        native_h = zeros(10, 10)
+        native_h[[1, 2, 9, 10], :] .= -100
+        native_h[3:8, [3, 7]] .= -20
+        native_h[3:8, [4, 8]] .= -2
+        native = (; longitude = native_longitude, latitude = collect(0.75:0.5:5.25), h = native_h)
+        regridded = zeros(5, 5)
+        regridded[[1, 5], :] .= -100
+        regridded[2:4, [2, 4]] .= -11
+
+        restored = preserve_sill_depths(regridded, longitude, collect(1.0:5.0), native)
+        @test count(restored .!= regridded) == 3
+        @test sort([restored[3, 2], restored[3, 4]]) == [-20.0, -11.0]
+
+        # Wired into smooth_bathymetry_gaps!, which takes the target cell centres from the field's
+        # grid, and opt-in: without `preserve_sills` the native field is never read.
+        grid = LatitudeLongitudeGrid(
+            CPU();
+            size = (5, 3, 1),
+            halo = (1, 1, 1),
+            longitude = (0.5, 5.5),
+            latitude = (0.5, 3.5),
+            z = [-200.0, 0.0],
+        )
+        native_h = zeros(10, 6)
+        native_h[[1, 2, 9, 10], :] .= -100
+        native_h[3:8, 3] .= -20
+        native_h[3:8, 4] .= -2
+        native = (; longitude = native_longitude, latitude = native_latitude, h = native_h)
+        regridded = zeros(5, 3)
+        regridded[[1, 5], :] .= -100
+        regridded[2:4, 2] .= -11
+
+        field = Field{Center, Center, Nothing}(grid)
+        set!(field, regridded)
+        FjordSim.Bathymetry.smooth_bathymetry_gaps!(field; preserve_sills = true, native)
+        @test Array(interior(field, :, :, 1))[2:4, 2] == fill(-20.0, 3)
+
+        set!(field, regridded)
+        FjordSim.Bathymetry.smooth_bathymetry_gaps!(field)
+        @test Array(interior(field, :, :, 1))[2:4, 2] == fill(-11.0, 3)
+    end
+
+    @testset "sounding gridding" begin
+        # A basin sampled by one deep sounding inside a ring of shallow ones, the shape a chart's
+        # selected soundings give a fjord basin. The cell holding the deep sounding has to keep its
+        # depth: a mean over the nearest soundings, which is what the inverse-distance gridding
+        # amounted to, would give it far less.
+        ring = [(10.0 + 0.04cos(θ), 59.0 + 0.02sin(θ)) for θ in range(0, 2π; length = 13)[1:12]]
+        points = [(10.0, 59.0), ring...]
+        depths = [-150.0; fill(-20.0, 12)]
+
+        config = test_bathymetry_config(
+            longitude = (9.95, 10.05),
+            latitude = (58.975, 59.025),
+            size = (21, 21, 1),
+        )
+        gridded = ArchGDAL.importEPSG(4326; order = :trad) do srs
+            ArchGDAL.create(ArchGDAL.getdriver("Memory")) do dataset
+                ArchGDAL.createlayer(
+                    name = "bathymetry_points",
+                    dataset = dataset,
+                    geom = ArchGDAL.wkbPoint,
+                    spatialref = srs,
+                ) do layer
+                    ArchGDAL.addfielddefn!(layer, "z", ArchGDAL.OFTReal)
+                    z = ArchGDAL.findfieldindex(layer, "z", false)
+                    for ((x, y), depth) in zip(points, depths)
+                        ArchGDAL.createfeature(layer) do feature
+                            ArchGDAL.setfield!(feature, z, depth)
+                            ArchGDAL.setgeom!(feature, 0, ArchGDAL.createpoint(x, y))
+                        end
+                    end
+                    FjordSim.Bathymetry.grid_point_dataset(dataset, config)
+                end
+            end
+        end
+
+        @test size(gridded) == (21, 21)
+        @test gridded[11, 11] < -140                 # the cell on the deep sounding keeps it
+        @test minimum(gridded) >= -150               # and nothing is deeper than a sounding
+        @test gridded[11, 11] == minimum(gridded)
     end
 
     @testset "point sampling" begin

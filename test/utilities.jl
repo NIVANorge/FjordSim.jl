@@ -46,15 +46,9 @@ struct MinimalRivers <: AbstractRiverConfig
     data_root::String
     output_file::String
     plot_file::String
-    relaxation_timescale::Float64
     search_radius::Int
-    standalone::Bool
+    maximum_inflow_velocity::Float64
 end
-
-# `standalone` last with a default, so a site that only cares about the supertype's older fields
-# names them positionally as before.
-MinimalRivers(data_root, output_file, plot_file, relaxation_timescale, search_radius) =
-    MinimalRivers(data_root, output_file, plot_file, relaxation_timescale, search_radius, false)
 
 struct MinimalAtmosphere <: AbstractAtmosphereConfig
     data_root::String
@@ -93,18 +87,18 @@ struct ClockHolder{C}
     clock::C
 end
 
-# A river config the rivers round-trip drives `add_rivers` with, standing in for a real dataset:
-# fixed outlets and a value that counts up in time, so a misplaced write is visible.
+# A river config the river testsets drive `add_rivers` with, standing in for a real dataset: fixed
+# outlets, and a discharge and values stated per river and record, so a misplaced write is visible.
+# Both matrices are `(river, time)` on the daily axis `river_forcing_times` builds for the window.
 struct StubRivers <: AbstractRiverConfig
     data_root::String
     output_file::String
     plot_file::String
-    relaxation_timescale::Float64
     search_radius::Int
+    maximum_inflow_velocity::Float64
     locations::Vector{FjordSim.Forcing.RiverLocation}
+    discharge::Matrix{Float64}
     series::Dict{String,Matrix{Float32}}
-    standalone::Bool
-    plume_depth::Float64
 end
 
 # `plot_file` is derived from `output_file` rather than named, since no caller cares what it is —
@@ -112,25 +106,19 @@ end
 StubRivers(
     data_root,
     output_file,
-    relaxation_timescale,
-    search_radius,
     locations,
-    series,
-    standalone = false;
-    plume_depth = 0.0,
+    discharge,
+    series;
+    search_radius = 10,
+    maximum_inflow_velocity = 1.0,
 ) = StubRivers(
-    data_root, output_file, first(splitext(output_file)) * ".png", relaxation_timescale,
-    search_radius, locations, series, standalone, plume_depth,
+    data_root, output_file, first(splitext(output_file)) * ".png", search_radius,
+    maximum_inflow_velocity, locations, discharge, series,
 )
 
 FjordSim.Forcing.river_locations(config::StubRivers) = config.locations
+FjordSim.Forcing.river_discharge(config::StubRivers, times) = config.discharge
 FjordSim.Forcing.river_series(config::StubRivers, times) = config.series
-
-# One depth for every river, so the round-trip can drive the plume path without a per-river table.
-# `0.0` is the default, which is the generic fallback's value, so the surface-only assertions the
-# round-trip already makes are unaffected.
-FjordSim.Forcing.river_plume_depth(config::StubRivers, ::FjordSim.Forcing.RiverLocation) =
-    config.plume_depth
 
 # New behavior for a new grid config, added without touching Grids.jl. `domain_grid` is overloaded
 # and `simulation_grid` deliberately is not, so the extensibility testset can assert both halves of
@@ -434,8 +422,9 @@ end
     land_column_test_grid(filepath)
 
 The 5 x 4 x 2 basin the river testsets share: a land column at `i = 2`, so columns 1 and 3 are
-coastal while 4 and 5 are open water. The land is off the domain edge because an outlet has to sit
-strictly inside the grid to be accepted at all.
+coastal while 4 and 5 are open water, and column 1 is cut off from the other three by the land. The
+land is off the domain edge because an outlet has to sit strictly inside the grid to be accepted at
+all.
 """
 function land_column_test_grid(filepath)
     bottom_height = fill(-20.0, (5, 4))

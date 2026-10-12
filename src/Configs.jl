@@ -158,9 +158,8 @@ config's `relaxation_timescale` set the rate of; that band is gone.
 - `forcing_variable_names(config)`: source variable name => FjordSim forcing name. Required.
 - `download_forcing(target_grid, config)`: fetch the source data. Only if it downloads.
 - `simulation_forcing(config, grid, filepath, tracers, reference_date)`: the forcing term object
-  `coupled_simulation` consumes, read from the resolved forcing file at `filepath` — which may be
-  the rivers-augmented copy rather than `forcing_path(config)` itself, so this takes the path
-  rather than resolving it. Optional; defaults to `forcing_from_file`, the FjordSim NetCDF layout
+  `coupled_simulation` consumes, read from the resolved forcing file at `filepath`, so this takes
+  the path rather than resolving it. Optional; defaults to `forcing_from_file`, the FjordSim NetCDF layout
   every built-in source already writes. A source whose prepared files are not that contract
   overrides it.
 - `forcing_date_range(config, filepath)`: first and last date the prepared file covers, as a
@@ -177,51 +176,42 @@ abstract type AbstractForcingConfig end
 """
     AbstractRiverConfig
 
-Supertype for river configurations. A concrete subtype describes one river dataset and how to
-turn it into river relaxation written on top of a forcing file prepared by `prepare_forcing`.
+Supertype for river configurations. A concrete subtype describes one river dataset: where its
+rivers reach the sea, how much water each one carries, and what that water is. `add_rivers` turns
+it into a river file of its own, which the run reads as a volume inflow through the surface of a
+few columns at every mouth.
 
 Rivers are optional: a forcing config whose `rivers` field is `nothing` skips the step
 entirely.
 
 # Fields a subtype provides
-- `data_root`, `output_file`, `plot_file`: resolved by `river_forcing_path`, the rivers-augmented
-  copy of the forcing file, and by `plot_path`.
-- `relaxation_timescale`: seconds; its reciprocal is the lambda written at each river cell.
+- `data_root`, `output_file`, `plot_file`: resolved by `river_forcing_path`, the river file, and by
+  `plot_path`.
 - `search_radius`: read by the default `river_search_radius`.
-- `standalone`: whether `add_rivers` writes a forcing file carrying *only* rivers, instead of
-  patching a copy of the one `prepare_forcing` wrote. `true` skips the interior forcing entirely —
-  no download, no regrid — and takes the time axis from the run window instead of from the prepared
-  file. `false` is today's behaviour, including the error when no prepared forcing exists, so a
-  forgotten `prepare_forcing` still fails loudly.
+- `maximum_inflow_velocity`: m/s, read by the default `river_maximum_inflow_velocity` — how fast a
+  river's water may cross the surface of the columns it enters through, which decides how many
+  columns a large river is spread over.
 
 # Methods a subtype provides
 - `river_locations(config)`: the river outlets, as `RiverLocation`s. Required.
-- `river_series(config, times)`: FjordSim forcing variable name => a `(river, time)` matrix of
-  values, one row per `river_locations` entry. Required.
+- `river_discharge(config, times)`: a `(river, time)` matrix of discharge in m³/s, one row per
+  `river_locations` entry. Required.
+- `river_series(config, times)`: FjordSim tracer name => a `(river, time)` matrix of the values the
+  river water carries, one row per `river_locations` entry. Every entry of a river the grid carries
+  has to be finite — there is no "carries the water it enters", which is unstable — and a model
+  tracer it names no matrix for enters at zero. Required.
 - `download_rivers(target_grid, config)`: fetch the source data. Only if it downloads. Takes the
   bare domain grid, like `download_forcing` and `download_boundaries`, because a dataset that has
   to *find* its rivers rather than being told where they are needs the domain bounds; one whose
   outlets are stated in the config ignores it.
 - `river_search_radius(config)`: how far to look for a coastal cell, in cells. Optional,
   defaults to `config.search_radius`.
-- `river_minimum_levels(config)`: how many wet levels a column must have to receive an outlet.
-  Optional, defaults to `0` — which accepts any water cell, and, unlike `river_search_radius`,
-  reads no field, so a config written before the hook existed keeps working.
-- `river_plume_depth(config, location)`: how deep, in metres, one river's relaxation reaches.
-  Optional, defaults to `0.0` — the surface level alone. `Inf` asks for the whole wet column.
-- `river_lambdas(config, cells, target_grid)`: the relaxation coefficient at each river cell, in
-  s⁻¹. Optional, defaults to `1 / config.relaxation_timescale` everywhere. Takes the grid because
-  a coefficient derived from discharge needs the plume volume.
+- `river_maximum_inflow_velocity(config)`: in m/s. Optional, defaults to
+  `config.maximum_inflow_velocity`.
 
-The last two are the extension points for a source whose rivers are not interchangeable: a plume
-depth per river, and a coefficient scaled by river size. Both fallbacks reproduce what the
-pipeline did before they existed, so a source that ignores them is unaffected.
-
-Two built-in implementations. `FjordSim.Forcing.OF800RiversConfig` reads the OF800 Oslofjord
-river dataset from two published files; `FjordSim.Forcing.NVERiversConfig` queries NVE's HydAPI
-for observed discharge and water temperature at named gauging stations, and needs an API key.
-Either of `src/Forcing/of800_rivers.jl` and `src/Forcing/nve_rivers.jl` is a template to copy for
-a new dataset — the second also demonstrates the two optional hooks.
+`FjordSim.Forcing.NVERiversConfig` is the built-in implementation: it discovers river mouths from
+NVE's map services and reads observed discharge and water temperature from NVE's HydAPI, which needs
+an API key. `src/Forcing/nve_rivers.jl` is the template to copy for a new dataset.
 """
 abstract type AbstractRiverConfig end
 
@@ -381,10 +371,11 @@ model assembly is a new subtype rather than an edit to an existing method body.
 
 # Methods a subtype provides
 - `coupled_simulation(model, grid; forcing, boundary_conditions, initial_conditions, atmosphere,
-  radiation, boundary_config, stop_time, initial_time_step)`: build and return the coupled
-  `Simulation`. Required. `boundary_config` is the setup's `AbstractBoundaryDataConfig` (or
+  radiation, boundary_config, river_columns, stop_time, initial_time_step)`: build and return the
+  coupled `Simulation`. Required. `boundary_config` is the setup's `AbstractBoundaryDataConfig` (or
   `nothing`), passed for the same reason `boundary_condition_sides` receives it — so a nested config
-  that acts on the open edges reads them from the one place they are stated.
+  that acts on the open edges reads them from the one place they are stated. `river_columns` is
+  every column a river enters through, or `nothing`, for the same reason: `model_closure` takes it.
 - `model_tracers(model)`: the tracer names the model carries, as a tuple of `Symbol`s. Required —
   `build_simulation` needs them before the model exists, to pick which forcing terms to build,
   which lateral tracer boundaries to open and which state variables to read back.
@@ -415,8 +406,8 @@ abstract type AbstractFreeSurfaceConfig end
     AbstractClosureConfig
 
 Supertype for *closure* configurations. A concrete subtype names a turbulence closure's knobs, and
-its `model_closure(config, grid, boundary_config)` method builds the closure — or closure tuple —
-that `coupled_simulation` passes to `HydrostaticFreeSurfaceModel`.
+its `model_closure(config, grid, boundary_config, river_columns)` method builds the closure — or
+closure tuple — that `coupled_simulation` passes to `HydrostaticFreeSurfaceModel`.
 
 The `closure` field of a coupled-simulation config holds either a pre-built Oceananigans closure
 (the usual case, and what every setup wrote before this supertype existed) or one of these. Which
@@ -425,26 +416,28 @@ one it is is resolved by dispatch on `model_closure`, the way `initial_condition
 identity fallback so a pre-built closure passes through untouched and no existing setup changes.
 
 It exists because a closure can need what only exists at build time. `FjordSim.Simulations.BoundarySponge`
-is the built-in implementation and needs two such things: the grid, for the domain extent and cell
-size its ramp is expressed in, and the *open edges*, which are stated once on the
-`AbstractBoundaryDataConfig` and read back with `open_edges` — so a setup that opens a second edge
-cannot end up sponging only the first.
+needs two such things: the grid, for the domain extent and cell size its ramp is expressed in, and
+the *open edges*, which are stated once on the `AbstractBoundaryDataConfig` and read back with
+`open_edges` — so a setup that opens a second edge cannot end up sponging only the first.
+`FjordSim.Simulations.RiverMouthMixing` needs the columns the rivers enter through, which only the
+river file `add_rivers` wrote knows.
 
 # Methods a subtype provides
-- `model_closure(config, grid, boundary_config)`: build the closure. Required.
+- `model_closure(config, grid, boundary_config, river_columns)`: build the closure. Required.
 """
 abstract type AbstractClosureConfig end
 
 """
-    model_closure(closure, grid, boundary_config)
+    model_closure(closure, grid, boundary_config, river_columns)
 
 The closure `coupled_simulation` gives `HydrostaticFreeSurfaceModel`.
 
 The fallback is the identity, so anything a setup already writes — a single Oceananigans closure, or
 a tuple of them — passes through unchanged. An `AbstractClosureConfig` overloads it to build one
-from the grid and the setup's open-boundary data config.
+from the grid, the setup's open-boundary data config, and `river_columns` — every column a river
+enters through, as `(; target_i, target_j)`, or `nothing` for a setup with no rivers.
 """
-model_closure(closure, grid, boundary_config) = closure
+model_closure(closure, grid, boundary_config, river_columns) = closure
 
 """
     AbstractBoundaryConditionConfig
@@ -626,9 +619,9 @@ forcing_directory(config::AbstractForcingConfig) = joinpath(config.data_root, co
 """
     river_forcing_path(config)
 
-Resolve `config.output_file` against `config.data_root`: the rivers-augmented copy of the
-forcing file written by `add_rivers`. Defined for every `AbstractRiverConfig`, so a new river
-dataset inherits path resolution. An absolute `output_file` is returned unchanged.
+Resolve `config.output_file` against `config.data_root`: the river file written by `add_rivers`.
+Defined for every `AbstractRiverConfig`, so a new river dataset inherits path resolution. An absolute
+`output_file` is returned unchanged.
 """
 river_forcing_path(config::AbstractRiverConfig) = joinpath(config.data_root, config.output_file)
 

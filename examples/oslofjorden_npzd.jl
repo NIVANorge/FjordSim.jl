@@ -14,16 +14,17 @@
 #   3. **A new method on a *pipeline* generic.** `prepare_forcing` and `prepare_boundaries` are
 #      generic functions dispatching on the config type, so `NPZDForcing` and `NPZDBoundaries` add a
 #      method that runs the built-in pipeline and then *appends* the biogeochemical variables to the
-#      file it wrote. Same copy-then-patch shape `add_rivers` already uses on the forcing file.
+#      file it wrote.
 #
-# (3) is what buys everything else for free. Once `forcing_npzd.nc` carries `N`/`N_lambda` and
-# `boundaries_npzd.nc` carries `south_N`, three pieces of FjordSim that were written to be
-# name-driven pick the new tracers up with no further code:
+# (2) and (3) are what buy everything else for free. Once `forcing_npzd.nc` carries `N`/`N_lambda`,
+# `boundaries_npzd.nc` carries `south_N` and the river series carry `N`, three pieces of FjordSim
+# that were written to be name-driven pick the new tracers up with no further code:
 #
 #   * `state_variables` intersects `model_tracers` with the file's variables, so `FromForcing()`
 #     starts N, P, Z and D from the prepared field.
-#   * `write_rivers` patches any series variable the file already carries, so river nitrate lands in
-#     the same cells and on the same relaxation rates as river temperature and salinity.
+#   * `river_forcing` builds a source for every model tracer the river file carries, so river nitrate
+#     enters with the same water, through the same columns, as river temperature and salinity. P, Z
+#     and D, which no river names, enter at the value of the water the river flows into.
 #   * `open_tracer_boundary_conditions` radiates *every* model tracer towards its own prepared
 #     series, so `OpenLateralBoundaryFromData` needs no change at all — it would in fact **error**
 #     without `south_N`, which is why the boundary append is not optional.
@@ -247,7 +248,7 @@ Dissolved inorganic nitrogen in the river whose outlet is called `name`, in mmol
 
 Discovered rivers the report does not gauge fall back to the domain-mean concentration, so an
 ungauged stream still carries nitrogen in proportion to its own discharge — the volume, and hence
-the load, comes from the river forcing's own relaxation rate.
+the load, comes from the river inflow itself.
 """
 river_nitrate(name) =
     get(RIVER_TOTAL_NITROGEN, name, RIVER_TOTAL_NITROGEN_DEFAULT) * RIVER_NITRATE_FRACTION /
@@ -301,9 +302,7 @@ Add one `name`/`name_lambda` pair per entry of `profiles` to the prepared forcin
 `filepath`, horizontally uniform and evaluated on the file's own depth and time axes.
 
 Every relaxation rate is zero, exactly as `prepare_forcing` writes them for T and S: the prepared
-forcing is a *state* to start from, not an interior nudging band. The only nonzero rates in the file
-are the ones `add_rivers` puts at river mouths afterwards, and it can only put them where the
-variable already exists — which is the whole reason this runs before it.
+forcing is a *state* to start from, not an interior nudging band.
 
 Land is copied from the file's own salinity mask rather than recomputed: `ForcingFromFile` reads a
 non-finite value as its land sentinel, and a mask that disagreed with S's would force a cell the
@@ -494,25 +493,21 @@ FjordSim.coupled_simulation(model::NPZDModel, grid; kwargs...) =
 `base`'s rivers, carrying nitrate as well as temperature and salinity.
 
 Every hook but `river_series` delegates, so the outlets are still the ones `NVERiversConfig`
-discovers from NVE's ELVIS network, still placed at the same cells, still relaxed at the same
-λ = Q̄/V. Only the values change, and only by one variable.
+discovers from NVE's ELVIS network, still entering through the same columns with the same
+discharge. Only the values change, and only by one variable.
 
 The alternative was `NVERiversConfig`'s `constants` field, which already writes one fixed value per
 variable at every outlet. It is rejected here for what it cannot say: nitrogen in a Norwegian river
 is a catchment property — Glomma drains the agricultural Østlandet at 638 µg TotN/L, Drammenselva
 463 — and one number for all twenty-one outlets would throw that away.
-
-`standalone` stays `false`: this patches a copy of the prepared forcing, so `FromForcing()` below
-still has a full ocean state to start from.
 """
 struct NPZDRivers{R} <: AbstractRiverConfig
     base::R
     data_root::String
     output_file::String
     plot_file::String
-    relaxation_timescale::Float64
     search_radius::Int
-    standalone::Bool
+    maximum_inflow_velocity::Float64
 end
 
 NPZDRivers(base; output_file, plot_file) = NPZDRivers(
@@ -520,18 +515,15 @@ NPZDRivers(base; output_file, plot_file) = NPZDRivers(
     base.data_root,
     String(output_file),
     String(plot_file),
-    base.relaxation_timescale,
     base.search_radius,
-    base.standalone,
+    base.maximum_inflow_velocity,
 )
 
 FjordSim.river_locations(rivers::NPZDRivers) = river_locations(rivers.base)
+FjordSim.river_discharge(rivers::NPZDRivers, times) = river_discharge(rivers.base, times)
 FjordSim.river_search_radius(rivers::NPZDRivers) = river_search_radius(rivers.base)
-FjordSim.river_minimum_levels(rivers::NPZDRivers) = river_minimum_levels(rivers.base)
-FjordSim.river_plume_depth(rivers::NPZDRivers, location::RiverLocation) =
-    river_plume_depth(rivers.base, location)
-FjordSim.river_lambdas(rivers::NPZDRivers, cells, target_grid) =
-    river_lambdas(rivers.base, cells, target_grid)
+FjordSim.river_maximum_inflow_velocity(rivers::NPZDRivers) =
+    river_maximum_inflow_velocity(rivers.base)
 FjordSim.download_rivers(target_grid, rivers::NPZDRivers) = download_rivers(target_grid, rivers.base)
 
 """
@@ -542,8 +534,8 @@ FjordSim.download_rivers(target_grid, rivers::NPZDRivers) = download_rivers(targ
 Constant in time, which is a deliberate limit rather than an oversight: NIVA publishes an annual
 *load* and an annual water volume, and their ratio is a flow-weighted mean concentration with no
 seasonal information in it. A seasonal cycle here would be invention, and the discharge these
-concentrations multiply is already the observed HydAPI series — so the river nitrogen *flux* varies
-through the year even though its concentration does not.
+concentrations multiply is already the observed daily HydAPI series — so the river nitrogen *flux*
+follows the floods even though its concentration does not.
 
 Keyed by outlet *name*, which is the only identifier a `RiverLocation` carries — `vassdragsnr`, what
 `oslofjorden()` keys its own overrides by, does not survive into one. A name is a weaker key: the
@@ -687,12 +679,12 @@ end
 base = oslofjorden()
 
 # The rivers first, since the forcing config holds them. `output_file` is a new name so
-# `oslofjorden()`'s own `forcing_rivers_nve.nc` survives for comparison, and so does every other
-# file this example writes.
+# `oslofjorden()`'s own `rivers_nve.nc` survives for comparison, and so does every other file this
+# example writes.
 rivers = NPZDRivers(
     base.forcing_config.rivers,
-    output_file = "forcing_rivers_npzd.nc",
-    plot_file = "forcing_rivers_npzd.png",
+    output_file = "rivers_npzd.nc",
+    plot_file = "rivers_npzd.png",
 )
 
 # A fresh `NorKystConfig` rather than a mutated copy of `base.forcing_config`, because `rivers` is a

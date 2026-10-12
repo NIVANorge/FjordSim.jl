@@ -1,6 +1,6 @@
 # NVE rivers adapter: the source-specific half of the river pipeline, backed by two NVE services.
-# It owns a config subtype and the hooks `river_locations`, `river_series`, `download_rivers`,
-# `river_plume_depth`, `river_lambdas` and `river_minimum_levels`.
+# It owns a config subtype and the hooks `river_locations`, `river_series`, `river_discharge` and
+# `download_rivers`.
 #
 # **Where the outlets come from** — NVE's map services, an unauthenticated ArcGIS REST endpoint at
 # https://kart.nve.no/enterprise/rest/services. The ELVIS river network gives the river *mouths*
@@ -66,10 +66,9 @@ const NVE_MAP_PAGE_SIZE = 2000
 """
     NVERiver(; vassdragsnr = "", id = 0, name = "", longitude = NaN, latitude = NaN,
              temperature_station = "", discharge_station = "", mean_discharge = NaN,
-             discharge_fraction = 1.0, plume_depth = 0.0)
+             discharge_fraction = 1.0)
 
-One river of an `NVERiversConfig`: where its **outlet** is, which HydAPI stations describe it, and
-how deep into the water column it is relaxed.
+One river of an `NVERiversConfig`: where its **outlet** is, and which HydAPI stations describe it.
 
 `vassdragsnr` decides which of the two things this is, and it is the only field that does:
 
@@ -94,25 +93,19 @@ Glomma is the case in point: discharge at Solbergfoss (`2.605.0`, 40 464 km², 9
 catchment) and temperature 40 km downstream at Sarpfossen (`2.1087.0`), with no station carrying
 both. Either may be `""`:
 
-- `temperature_station = ""` writes `NaN` for that river, which `ForcingFromFile` reads as the
-  `-999.0` sentinel and ignores — so the river still freshens its cells, it just does not force
-  their temperature. This is the escape for a station whose sensor is not trustworthy, and one is
-  needed: Akerselva's 2020 water temperature averages 21.2 °C and peaks at 31.1 °C.
-- `discharge_station = ""` skips the discharge download. `river_lambdas` then falls back to the
-  catchment normal or to the config's `relaxation_timescale`.
+- `temperature_station = ""` gives that river the mean temperature of the gauged ones
+  (`nve_fill_temperatures!`). This is the escape for a station whose sensor is not trustworthy,
+  and one is needed: Akerselva's 2020 water temperature averages 21.2 °C and peaks at 31.1 °C.
+- `discharge_station = ""` skips the discharge download. `river_discharge` then falls back to the
+  catchment normal, constant in time.
 
 `mean_discharge`, in m³/s, overrides both, for a river whose size is known from somewhere other
-than HydAPI. `NaN` means "derive it"; see `river_lambdas`.
+than HydAPI. `NaN` means "derive it"; see `river_discharge`.
 
-`discharge_fraction` multiplies whatever `Q̄` that precedence resolves to, and exists for a river
-that reaches the sea through more than one mouth. Glomma is the case: it divides around Kråkerøy
-into Østerelva and Vesterelva, ELVIS gives both mouths, and both take Solbergfoss's series scaled
-by a fraction. NVE publishes no split, so the fraction is the setup's stated assumption.
-
-`plume_depth` is metres below the surface, read by `river_plume_depth`. `0.0` relaxes the surface
-cell alone; `Inf` relaxes the whole wet column, which is the right reading where the model cell is
-inside a river bed — Glomma and Drammenselva both are. On an *override*, `0.0` means "keep the
-config's `default_plume_depth`", since `0.0` is a real depth rather than a sentinel.
+`discharge_fraction` multiplies whatever discharge that precedence resolves to, and exists for a
+river that reaches the sea through more than one mouth. Glomma is the case: it divides around
+Kråkerøy into Østerelva and Vesterelva, ELVIS gives both mouths, and both take Solbergfoss's series
+scaled by a fraction. NVE publishes no split, so the fraction is the setup's stated assumption.
 
 `catchment_discharge` is derived, not stated: `nve_outlets` fills it with what REGINE says the
 catchment's normal annual runoff is, and `nve_mean_discharge` falls back to it. A setup that wants
@@ -128,7 +121,6 @@ struct NVERiver
     discharge_station::String
     mean_discharge::Float64
     discharge_fraction::Float64
-    plume_depth::Float64
     catchment_discharge::Float64
 end
 
@@ -142,7 +134,6 @@ function NVERiver(;
     discharge_station = "",
     mean_discharge = NaN,
     discharge_fraction = 1.0,
-    plume_depth = 0.0,
     catchment_discharge = NaN,
 )
     river = NVERiver(
@@ -155,7 +146,6 @@ function NVERiver(;
         String(discharge_station),
         Float64(mean_discharge),
         Float64(discharge_fraction),
-        Float64(plume_depth),
         Float64(catchment_discharge),
     )
 
@@ -176,11 +166,11 @@ end
     NVERiversConfig(; data_root, outlets, years, kwargs...)
 
 River forcing from NVE: river mouths and catchment sizes from the ELVIS/REGINE map services, and
-observed daily water temperature and discharge from HydAPI, turned into surface — or full-column —
-relaxation towards river properties.
+observed daily water temperature and discharge from HydAPI, turned into a volume inflow carrying the
+river's properties.
 
-`years` is the calendar years to download and is required, along with `data_root` and `outlets`;
-everything else has a default.
+`years` is the calendar years to download and is required, along with `data_root`, `outlets` and
+`maximum_inflow_velocity`; everything else has a default.
 
 # Outlet discovery
 `minimum_discharge` decides where the outlets come from, and it is the field to reach for first.
@@ -204,8 +194,6 @@ non-zero: a spatial query returns whole features, but a segment whose *successor
 outside the box would then look like a river mouth, so the network is read wider than it is used
 and the mouths are filtered back to the domain.
 
-`default_plume_depth` is the `river_plume_depth` a discovered outlet gets when nothing overrides it.
-
 # Requesting data
 An API key is required for every **HydAPI** endpoint (no key answers HTTP 401 with an empty body).
 Keys are free and self-service at <https://hydapi.nve.no/Users>. `api_key` may state one directly;
@@ -218,9 +206,9 @@ its rivers without one.
 
 | code | name | unit | used |
 |---|---|---|---|
-| 1001 | Vannføring / Discharge | m³/s | yes, to size `river_lambdas` |
+| 1001 | Vannføring / Discharge | m³/s | yes, as the inflow `Q(t)` of `river_discharge` |
 | 1003 | Vanntemperatur / Water temperature | °C | yes, as the `T` river value |
-| 1002 | Vannhastighet / Water speed | m/s | no — **9 stations nationwide**, and it is the gauge cross-section mean velocity tens of km upstream, not a river-mouth inflow. Rivers enter here as relaxation, not as a momentum or volume flux |
+| 1002 | Vannhastighet / Water speed | m/s | no — **9 stations nationwide**, and it is the gauge cross-section mean velocity tens of km upstream, not a river-mouth inflow. Rivers enter here as a volume flux through the surface, carrying no momentum |
 | 1006 | Ledningsevne / Conductivity | µS/cm | no — 16 stations nationwide, and river values (20–200 µS/cm) are fresh anyway |
 
 There is **no salinity parameter**, which is why `constants` writes `S = 0` rather than reading it.
@@ -233,27 +221,20 @@ station is absent from `/Stations` while `/Series?StationId=…` still has it. N
 accepts a comma-separated station list; only `/Observations` does.
 
 # Fields
-- `data_root`, `output_file`, `plot_file`: resolved by `river_forcing_path` and `plot_path`. Both
-  defaults differ from `OF800RiversConfig`'s so the two sources can be prepared under one
-  `data_root` without either overwriting the other.
+- `data_root`, `output_file`, `plot_file`: resolved by `river_forcing_path` and `plot_path`.
 - `download_directory`: where cached responses go, under `data_root`.
 - `outlets`, `years`: the rivers — stated or overridden — and the calendar years to fetch.
-- `minimum_discharge`, `margin`, `default_plume_depth`: outlet discovery, above.
+- `minimum_discharge`, `margin`: outlet discovery, above.
 - `discovered`: where `nve_outlets` memoises what it derived. Never written by a setup.
 - `base_url`, `map_url`, `api_key`, `resolution_time`: the requests.
 - `temperature_name`: the FjordSim variable the temperature series is written into.
-- `constants`: variable => constant value, written at every plume level of every river.
-- `relaxation_timescale`: the fallback λ⁻¹ for a river whose size is unknown.
-- `minimum_relaxation_timescale`: the floor on λ⁻¹ derived from discharge. See `river_lambdas`.
-- `search_radius`, `minimum_levels`, `standalone`: as `AbstractRiverConfig` documents.
-
-`minimum_levels` defaults to `0`, unlike the value `oslofjorden()` gives its `OF800RiversConfig`,
-because a plume is the better answer to a shallow outlet than relocation: see `river_plume_depth`.
+- `constants`: variable => constant value, carried by every river at every step.
+- `search_radius`, `maximum_inflow_velocity`: as `AbstractRiverConfig` documents.
 """
 Base.@kwdef mutable struct NVERiversConfig <: AbstractRiverConfig
     data_root::String
-    output_file::String = "forcing_rivers_nve.nc"
-    plot_file::String = "forcing_rivers_nve.png"
+    output_file::String = "rivers_nve.nc"
+    plot_file::String = "rivers_nve.png"
     download_directory::String = "nve"
     outlets::Vector{NVERiver}
     years::Vector{Int}
@@ -263,34 +244,11 @@ Base.@kwdef mutable struct NVERiversConfig <: AbstractRiverConfig
     resolution_time::Int = NVE_DAILY_RESOLUTION
     minimum_discharge::Float64 = Inf
     margin::Float64 = 0.1
-    default_plume_depth::Float64 = 0.0
     discovered::Vector{NVERiver} = NVERiver[]
     temperature_name::String = "T"
     constants::Dict{String,Float64} = Dict("S" => 0.0)
-    relaxation_timescale::Float64 = 3600.0
-    minimum_relaxation_timescale::Float64 = 600.0
     search_radius::Int = 10
-    minimum_levels::Int = 0
-    standalone::Bool = false
-end
-
-"""
-    river_minimum_levels(config::NVERiversConfig)
-
-The wet-level floor for outlet placement, from `config.minimum_levels`. See the generic
-`river_minimum_levels` for why the supertype fallback is a plain `0` rather than this field read.
-"""
-river_minimum_levels(config::NVERiversConfig) = config.minimum_levels
-
-"""
-    river_plume_depth(config::NVERiversConfig, location)
-
-How deep `location`'s relaxation reaches, from the matching outlet's `plume_depth`. See the generic
-`river_plume_depth` for what the number means and why it is a depth rather than a level count.
-"""
-function river_plume_depth(config::NVERiversConfig, location::RiverLocation)
-    outlet = nve_outlet(config, location.id)
-    return outlet.plume_depth
+    maximum_inflow_velocity::Float64
 end
 
 """
@@ -728,7 +686,6 @@ function nve_discover_outlets(segments, catchments, domain, config::NVERiversCon
                     longitude = node[1],
                     latitude = node[2],
                     catchment_discharge = discharge,
-                    plume_depth = config.default_plume_depth,
                 ),
             ),
         )
@@ -759,7 +716,6 @@ nve_river_with_id(river::NVERiver, id) = NVERiver(
     river.discharge_station,
     river.mean_discharge,
     river.discharge_fraction,
-    river.plume_depth,
     river.catchment_discharge,
 )
 
@@ -821,10 +777,7 @@ end
 One discovered mouth with its override folded in, or the mouth unchanged when nothing overrides it.
 
 An unset field keeps what discovery derived: `id = 0` keeps the discharge rank, `name = ""` keeps
-NVE's catchment name, a `NaN` coordinate keeps NVE's mouth, and `plume_depth = 0.0` keeps
-`config.default_plume_depth`. That last one costs an override the ability to ask for the surface
-level alone on a config whose default is deeper, which is the price of `0.0` being a real depth
-rather than a sentinel; nothing needs it yet.
+NVE's catchment name, and a `NaN` coordinate keeps NVE's mouth.
 
 `catchment_discharge` is never overridden — it is what NVE says the catchment is, and an override
 that wants a different size states `mean_discharge`, which outranks it.
@@ -845,7 +798,6 @@ function nve_merge_override(outlet::NVERiver, config::NVERiversConfig)
         override.discharge_station,
         override.mean_discharge,
         override.discharge_fraction,
-        iszero(override.plume_depth) ? outlet.plume_depth : override.plume_depth,
         outlet.catchment_discharge,
     )
 end
@@ -979,6 +931,28 @@ function nve_request(config::NVERiversConfig, url, filepath, description)
 end
 
 """
+    validate_river_download(filepath, url)
+
+Reject a download that is a web page rather than the file, or nothing at all, and delete it. A
+service that answers with an HTML page and HTTP 200 — a login wall, a maintenance notice — makes the
+download report success and write that page over the data file, which would otherwise surface much
+later as a confusing parse error.
+"""
+function validate_river_download(filepath, url)
+    first_byte = open(io -> read(io, 1), filepath)
+
+    if isempty(first_byte) || first_byte[1] == UInt8('<')
+        rm(filepath; force = true)
+        error(
+            "Downloading $(basename(filepath)) from $url returned a web page or nothing at all " *
+            "instead of the data.",
+        )
+    end
+
+    return filepath
+end
+
+"""
     download_rivers(target_grid, config::NVERiversConfig)
 
 Fetch everything this config's rivers need into `nve_download_directory(config)`, in two halves.
@@ -996,7 +970,8 @@ re-run and a partial download resumes.
 
 A configured station with no data for a requested year is an **error**, not a `NaN` row: the setup
 named that station and that year, so an empty answer is a statement about the setup. A river that
-genuinely has no temperature says so with `temperature_station = ""` instead. Station *metadata*
+genuinely has no temperature says so with `temperature_station = ""` instead, and borrows the gauged
+rivers' mean. Station *metadata*
 is the exception — it is only ever a sanity log and a fallback size, so a station missing from
 `/Stations` (which hides discontinued stations) is a warning.
 
@@ -1218,11 +1193,10 @@ fresh.
 Rows are in `river_locations` order, matched to `times` by **calendar date**, because HydAPI stamps
 a daily mean at 11:00 UTC while a prepared forcing file's axis sits wherever its own source put it.
 
-A river with no temperature station, and a date no response covers, both come out as `NaN`, which
-is the file's `_FillValue` and reads back as the `-999.0` sentinel every `ForcingFromFile` branch
-gates on — so those cells are simply not temperature-forced. `nve_fill_gaps!` first fills the
-short gaps that a single missing observation leaves, since a river blinking out of its temperature
-forcing for one day of a year is noise rather than information.
+A date no response covers is filled from the nearest date by `nve_fill_gaps!`, since a river
+blinking out of its temperature for one day of a year is noise rather than information. A river
+with no temperature station, or none with records in the window, then carries the mean of the
+gauged ones — `nve_fill_temperatures!`.
 """
 function river_series(config::NVERiversConfig, times)
     outlets = nve_outlets(config)
@@ -1239,6 +1213,7 @@ function river_series(config::NVERiversConfig, times)
 
         nve_fill_gaps!(view(temperatures, row, :), "$(outlet.name) temperature")
     end
+    nve_fill_temperatures!(temperatures, outlets)
 
     series = Dict{String,Matrix{Float32}}(config.temperature_name => temperatures)
     for (name, value) in config.constants
@@ -1249,10 +1224,38 @@ function river_series(config::NVERiversConfig, times)
 end
 
 """
+    nve_fill_temperatures!(temperatures, outlets)
+
+Give every outlet without a temperature record the mean, date by date, of those that have one. The
+rivers of one region share their weather, so the gauged ones are the best estimate there is for the
+rest. An outlet cannot be left without one: the river inflow has no "carries the ambient value",
+since that is unstable — see `RiverTracerSource`. An error when no outlet has a record at all.
+"""
+function nve_fill_temperatures!(temperatures, outlets)
+    gauged = [row for row in axes(temperatures, 1) if all(isfinite, view(temperatures, row, :))]
+    length(gauged) == size(temperatures, 1) && return temperatures
+    isempty(gauged) && error(
+        "None of the $(length(outlets)) NVE outlets has a water temperature record in the run " *
+        "window, so there is no temperature for the rivers to carry. Give at least one a " *
+        "`temperature_station`.",
+    )
+
+    regional = vec(sum(view(temperatures, gauged, :); dims = 1)) ./ length(gauged)
+    for row in axes(temperatures, 1)
+        row in gauged && continue
+        temperatures[row, :] .= regional
+        @info "River $(outlets[row].name) has no temperature record; it carries the mean of the " *
+              "$(length(gauged)) gauged rivers"
+    end
+
+    return temperatures
+end
+
+"""
     nve_fill_gaps!(row, label)
 
 Replace each non-finite entry of `row` with the nearest finite one in time, in place. A row with
-nothing finite in it at all is left alone and stays inert.
+nothing finite in it at all is left alone, for `nve_fill_temperatures!` to fill.
 
 Nearest-in-time is the choice `SourceFill` and `fill_boundary_gaps!` already make elsewhere in this
 module, for the same reason: the alternative to a neighbouring value is no forcing at that step,
@@ -1277,87 +1280,78 @@ function nve_fill_gaps!(row, label)
 end
 
 """
-    river_lambdas(config::NVERiversConfig, cells, target_grid)
+    river_discharge(config::NVERiversConfig, times)
 
-The relaxation coefficient at each river cell, `λ = Q̄ / V`, capped at
-`1 / config.minimum_relaxation_timescale`.
+The discharge of every outlet on `times`, in m³/s, as a `(river, time)` matrix in `river_locations`
+order. Like `river_series`, the gauge records are matched to `times` by calendar date.
 
-Relaxing a plume of volume `V` towards `S = 0` at rate `λ` removes salt at `λ V S`, while a
-discharge `Q` dilutes it at `Q S` — so `Q̄ / V` is the rate a river of that size actually implies,
-and it is the reason this hook exists. One shared timescale cannot express it: across Oslofjord's
-rivers `Q̄` spans Akerselva's ≈3 m³/s to Glomma's ≈846 m³/s, a factor of 300, which becomes a
-factor of 50 in `λ` once each river's plume volume is accounted for.
+The discharge resolves in a stated order, and only the first that is available is used, with the
+outlet's `discharge_fraction` applied to whichever answered:
 
-`V` is summed over the cell's own `levels`, so a river given a deeper plume by `river_plume_depth`
-is nudged proportionally more gently — the freshwater is spread through more water, which is what a
-plume depth means.
-
-`Q̄` resolves in a stated order, and only the first that is available is used, with the outlet's
-`discharge_fraction` applied to whichever answered:
-
-1. the outlet's `mean_discharge`, if it states one;
-2. the mean of the downloaded daily discharge series;
+1. the outlet's `mean_discharge`, if it states one — constant in time;
+2. the downloaded daily discharge series of its `discharge_station`, which is the only rule that
+   gives the river its seasonal cycle and its floods. Gaps are filled from the nearest date by
+   `nve_fill_gaps!`;
 3. the **REGINE catchment normal** the outlet was discovered with — the 1961–90 normal annual
    runoff of the catchment that actually drains through this mouth — which is what makes a river
    with no gauge at all still scale by its size, and is why most of a discovered river list needs
-   no station;
+   no station. Constant in time;
 4. `annualRunoff` from the cached station metadata, the same quantity for the *gauge's* catchment
-   rather than the outlet's, which is all a manually stated outlet can reach;
-5. nothing, in which case `1 / config.relaxation_timescale` is used and the outlet is named in a
-   warning.
+   rather than the outlet's, which is all a manually stated outlet can reach. Constant in time;
+5. nothing, which is an error naming the outlet: a river is now a volume of water, and there is no
+   neutral volume to fall back on.
 
-# The cap is not optional
-`ForcingFromFile` reads `λ > 1` as an x-flux, and the relaxation term is explicit, so `λ Δt` must
-stay well below 1. Neither bound is comfortable at the top of the range: Drammenselva's peak
-1012 m³/s into a single surface cell of Drammensfjord's 99 m grid gives `λ = 0.102 s⁻¹`, i.e.
-`λ Δt = 1.02` at the 10 s steps that run actually takes — an unstable relaxation, from the
-physically correct coefficient. `minimum_relaxation_timescale` is what keeps `λ Δt` bounded
-regardless of how large a river is or how small its cell.
+A gauge whose cached years hold no record on any date of `times` is an error too, rather than a
+silent fall through to the normal: it means `years` does not cover the run window.
 """
-function river_lambdas(config::NVERiversConfig, cells, target_grid)
-    maximum_lambda = 1 / config.minimum_relaxation_timescale
-    fallback = 1 / config.relaxation_timescale
+function river_discharge(config::NVERiversConfig, times)
+    outlets = nve_outlets(config)
+    dates = Date.(times)
+    discharge = Matrix{Float64}(undef, length(outlets), length(dates))
 
-    # A timescale of a second or less puts λ outside the relaxation regime entirely, where
-    # `ForcingFromFile` reads it as an x-flux — a silent change of forcing term, not a strong nudge.
-    # Checked here rather than left to the cap because the cap is what would otherwise enforce it.
-    for (name, timescale) in
-        (:minimum_relaxation_timescale => config.minimum_relaxation_timescale,
-         :relaxation_timescale => config.relaxation_timescale)
-        timescale > 1 || error(
-            "The river config's `$name` is $timescale s, which makes λ = $(1 / timescale) ≥ 1. " *
-            "`ForcingFromFile` reads λ > 1 as an x-flux, so a relaxation coefficient has to stay " *
-            "inside (-1, 1) — give it a timescale of more than one second.",
-        )
+    for (row, outlet) in enumerate(outlets)
+        discharge[row, :] = nve_discharge_row(config, outlet, dates)
     end
 
-    lambdas = Vector{Float32}(undef, length(cells))
+    return discharge
+end
 
-    for (n, cell) in enumerate(cells)
-        outlet = nve_outlet(config, cell.location.id)
-        discharge, source = nve_mean_discharge(config, outlet)
+"""
+    nve_discharge_row(config, outlet, dates)
 
-        if isnothing(discharge)
-            @warn "No discharge for river $(outlet.id) ($(outlet.name)): using the config's " *
-                  "relaxation_timescale of $(config.relaxation_timescale) s. Give the outlet a " *
-                  "`discharge_station` or a `mean_discharge` to scale it by river size."
-            lambdas[n] = Float32(fallback)
-            continue
+One outlet's row of `river_discharge`, in m³/s on `dates`, with `discharge_fraction` applied. The
+precedence is documented on `river_discharge`.
+"""
+function nve_discharge_row(config::NVERiversConfig, outlet::NVERiver, dates)
+    if !isfinite(outlet.mean_discharge) && !isempty(outlet.discharge_station)
+        records = nve_station_series(config, outlet.discharge_station, NVE_DISCHARGE)
+
+        if !isempty(records)
+            row = [get(records, date, NaN) for date in dates]
+            nve_fill_gaps!(row, "$(outlet.name) discharge")
+            any(isfinite, row) || error(
+                "Discharge station $(outlet.discharge_station) of river $(outlet.id) " *
+                "($(outlet.name)) has no record between $(first(dates)) and $(last(dates)). " *
+                "Give the river config `years` covering the run window and re-run `download_rivers`.",
+            )
+            @info "River $(outlet.id) ($(outlet.name)): daily discharge from station " *
+                  "$(outlet.discharge_station)" *
+                  (isone(outlet.discharge_fraction) ? "" :
+                   ", scaled by $(round(outlet.discharge_fraction, digits = 3))")
+            return row .* outlet.discharge_fraction
         end
-
-        plume_volume = sum(
-            volume(cell.i, cell.j, level, target_grid, Center(), Center(), Center()) for
-            level in cell.levels
-        )
-        lambda = min(discharge / plume_volume, maximum_lambda)
-        capped = lambda == maximum_lambda ? " (capped)" : ""
-        @info "River $(outlet.id) ($(outlet.name)): Q̄ = $(round(discharge, digits = 2)) m³/s " *
-              "from $source, plume $(round(plume_volume, digits = 0)) m³, " *
-              "λ = $lambda s⁻¹ (τ = $(round(Int, 1 / lambda)) s)$capped"
-        lambdas[n] = Float32(lambda)
     end
 
-    return lambdas
+    discharge, source = nve_mean_discharge(config, outlet)
+    isnothing(discharge) && error(
+        "No discharge for river $(outlet.id) ($(outlet.name)): it states no `mean_discharge`, its " *
+        "gauge has no records, and no catchment normal is known. Give the outlet a " *
+        "`discharge_station` or a `mean_discharge`.",
+    )
+    @info "River $(outlet.id) ($(outlet.name)): constant discharge " *
+          "$(round(discharge, digits = 2)) m³/s from $source"
+
+    return fill(discharge, length(dates))
 end
 
 """
@@ -1365,7 +1359,7 @@ end
 
 `(discharge, source)` in m³/s for one outlet, or `(nothing, source)` when its size is unknown.
 `source` names which rule supplied it, so a run's log states where the number came from. The
-precedence is documented on `river_lambdas`.
+precedence is documented on `river_discharge`.
 
 `discharge_fraction` is applied last, to whatever that precedence resolved, so a river reaching the
 sea through two mouths can share one gauge between them.

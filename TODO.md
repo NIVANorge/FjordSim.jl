@@ -23,14 +23,24 @@ while the model's falls from 32 to 27.7. In the Drammensfjord, FjordSim's upper 
 about 1 g/kg of the observations, but the deep basin freshens steadily. In the open fjord, the
 surface is 2–4 g/kg saltier than NorKyst.
 
-- [ ] Implement rivers the way ROMS does (`LuvSrc`/`LwSrc`): a volume transport `Q` through a cell
-      face or into a cell, carrying the river's T and S. That needs a volume source in the free
-      surface and the continuity equation. Find out what Oceananigans' `HydrostaticFreeSurfaceModel`
-      and `SplitExplicitFreeSurface` allow before designing the hook. The tracer half already has an
-      unused entry point: `ForcingFromFile` reads `λ > 1` as an x-flux and `λ < -1` as a y-flux
-      (`forcing_term_x_flux`/`forcing_term_y_flux` in `src/Forcing/Forcing.jl`).
-- [ ] Check that the river cell's mass and salt budgets close, so that `∫S dV` changes only by
+- [x] Implement rivers as a volume source.
+      - Oceananigans allows exactly one volume hook without type piracy, `forcing.η` (m/s), so the
+        water enters through the surface face of its columns; `LwSrc`-with-`Qshape` and `LuvSrc`
+        would both need overrides of `compute_w_from_continuity!` or the immersed masking.
+      - The tracer half is `w (c_r − c) / Δz` in the top cell, replacing the top cell's own value
+        that the surface inflow carries in — NumericalEarth's correction, as a forcing.
+      - Each river is spread over connected columns until its peak discharge enters no faster than
+        `maximum_inflow_velocity` (1 mm/s in the setups): Glomma's eastern arm takes 47 columns.
+      - Rivers moved to a file of their own (`rivers_nve.nc`, ~3 MB, daily over the run window)
+        instead of a patched copy of `forcing.nc`; `FromForcing` no longer starts river cells at
+        S = 0. Relaxation, plume depths and `OF800RiversConfig` are gone; optional
+        `RiverMouthMixing` reuses NumericalEarth's mouth diffusivity.
+      - "Rivers as a volume source" in `docs/architecture.md` has the details.
+- [x] Check that the river cell's mass and salt budgets close, so that `∫S dV` changes only by
       boundary fluxes. Do it with a test on a small offline grid.
+      - "river budget" in `test/runtests.jl`: on a closed basin `Σ η A` rises by `Q t` to ~5e-9, and
+        a fresh river leaves the linear-free-surface salt content `Σ S V + Σ S_N η A` unchanged to
+        ~2e-8.
 - [ ] Then re-check the D-2 and D-3 basin salinity trend and the near-surface salinity bias.
 
 ## Vertical mixing is too strong

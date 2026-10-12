@@ -5,6 +5,7 @@ export SimulationConfig,
     SplitExplicitFreeSurfaceConfig,
     free_surface,
     BoundarySponge,
+    RiverMouthMixing,
     SnapshotWriter,
     FieldSnapshotWriter,
     Station,
@@ -64,7 +65,10 @@ using ..Forcing:
     interpolation_architecture,
     boundary_series,
     boundary_date_range,
-    RIVERS_ONLY_ATTRIBUTE,
+    river_forcing,
+    river_date_range,
+    read_river_columns,
+    combine_forcing,
     column_wet_levels
 using ..BoundaryConditions: field_boundary_conditions
 
@@ -256,7 +260,7 @@ function sponge_parameters(config::BoundarySponge, grid, edges)
 end
 
 """
-    model_closure(config::BoundarySponge, grid, boundary_config)
+    model_closure(config::BoundarySponge, grid, boundary_config, river_columns)
 
 Append the sponge to `config.base`, or return `base` unchanged when the domain has no open edge.
 
@@ -265,7 +269,7 @@ coordinates, so it needs no field, no allocation and no architecture — the sam
 and GPU. `discrete_form = true` because that is the only form `ScalarDiffusivity` passes
 `parameters` to; see `sponge_viscosity`.
 """
-function Configs.model_closure(config::BoundarySponge, grid, boundary_config)
+function Configs.model_closure(config::BoundarySponge, grid, boundary_config, river_columns)
     edges = open_edges(boundary_config)
     isempty(edges) && return config.base
 
@@ -288,6 +292,60 @@ the same way.
 """
 closure_tuple(closure::Tuple) = closure
 closure_tuple(closure) = (closure,)
+
+"""
+    RiverMouthMixing(; base, diffusivity, mixing_depth)
+
+A closure config adding a vertical diffusivity over the top of every column a river enters through,
+on top of `base`.
+
+A river's water enters through the surface of its columns, into the top cell alone, so a large
+river can hold that cell near fresh while the cell below it stays salt: a one-metre plume the
+closure in `base` has no reason to mix down, since it is as stable as stratification gets. This is
+NumericalEarth's own answer to the same problem, `river_mouth_vertical_diffusivity`, given the
+columns `add_rivers` placed rather than NumericalEarth's routing — the plume is mixed into the top
+`mixing_depth` metres at `diffusivity`, and nothing outside the river columns changes.
+
+Opt-in, and a tuning choice: no setup needs it to run, and extra mixing at the mouths is a statement
+about what the plume does that the run should earn.
+
+# Fields
+- `base`: the closure, closure tuple, or closure config it is added to. A closure config is
+  resolved first, so `RiverMouthMixing(base = BoundarySponge(...), ...)` adds both.
+- `diffusivity`: m² s⁻¹, applied over the mixed depth of every river column.
+- `mixing_depth`: m below the surface; a cell whose centre is shallower is mixed.
+"""
+struct RiverMouthMixing{B} <: AbstractClosureConfig
+    base::B
+    diffusivity::Float64
+    mixing_depth::Float64
+end
+
+RiverMouthMixing(; base, diffusivity, mixing_depth) =
+    RiverMouthMixing(base, Float64(diffusivity), Float64(mixing_depth))
+
+"""
+    model_closure(config::RiverMouthMixing, grid, boundary_config, river_columns)
+
+`config.base`'s closure with NumericalEarth's `river_mouth_vertical_diffusivity` appended over
+`river_columns`. An error for a setup with no rivers, which has no columns to mix.
+"""
+function Configs.model_closure(config::RiverMouthMixing, grid, boundary_config, river_columns)
+    isnothing(river_columns) && error(
+        "RiverMouthMixing mixes the columns the rivers enter through, but this setup names no " *
+        "rivers. Name an `AbstractRiverConfig` on the forcing config, or drop RiverMouthMixing.",
+    )
+
+    base = model_closure(config.base, grid, boundary_config, river_columns)
+    mixing = NumericalEarth.river_mouth_vertical_diffusivity(
+        grid,
+        (; rivers = river_columns);
+        river_mouth_diffusivity = config.diffusivity,
+        river_mouth_mixing_depth = config.mixing_depth,
+    )
+
+    return (closure_tuple(base)..., mixing)
+end
 
 """
     CoupledHydrostaticSimulation(; buoyancy, closure, tracer_advection, momentum_advection,
@@ -1067,19 +1125,9 @@ results_state_path(initial_conditions::FromResults, config) =
 The state variables a prepared forcing file holds at `date`.
 
 The `_lambda` twins are relaxation rates rather than state, so only the bare names are read.
-
-A file `add_rivers` wrote in `standalone` mode is refused: it carries river values at a handful of
-cells and nothing anywhere else, so every other cell would come back as a zero from `finite_slab` and
-the run would start from `T = S = 0` across the whole domain with nothing reported. It says so in its
-own `rivers_only` attribute.
 """
 function forcing_state(filepath, grid, date, tracers)
     return NCDataset(filepath) do ds
-        haskey(ds.attrib, RIVERS_ONLY_ATTRIBUTE) && error(
-            "Forcing file $filepath carries only rivers, so it holds no ocean state to start from — " *
-            "every cell outside a river mouth is empty. Give `initial_conditions` a `NamedTuple` of " *
-            "constants, or start from a previous run's snapshot with `FromResults`.",
-        )
         validate_state_dimensions(filepath, ds, grid, ("Nx", "Ny", "Nz"))
         dates = ds["time"][:]
         index = findfirst(==(date), dates)
@@ -1187,28 +1235,39 @@ end
 """
     simulation_forcing_path(config)
 
-Which prepared forcing file the simulation reads: the rivers-augmented copy `add_rivers` wrote
-when the setup names rivers, so they are never silently dropped, and the file `prepare_forcing`
-wrote when it does not. Dispatched on `config.rivers` exactly like `add_rivers` — or `nothing`,
-for a setup naming no forcing at all.
+Which prepared forcing file the simulation reads: the one `prepare_forcing` wrote, or `nothing`
+for a setup naming no forcing at all. The rivers are not in it — they have a file of their own,
+`resolve_river_file`.
 """
 simulation_forcing_path(config::FjordConfig) = simulation_forcing_path(config.forcing_config)
 
 simulation_forcing_path(::Nothing) = nothing
-simulation_forcing_path(config::AbstractForcingConfig) =
-    simulation_forcing_path(config, config.rivers)
-
-simulation_forcing_path(config::AbstractForcingConfig, ::Nothing) = forcing_path(config)
-simulation_forcing_path(::AbstractForcingConfig, rivers::AbstractRiverConfig) =
-    river_forcing_path(rivers)
+simulation_forcing_path(config::AbstractForcingConfig) = forcing_path(config)
 
 """
-    forcing_prerequisite(rivers)
+    setup_rivers(forcing_config)
 
-The subcommand that writes the file `simulation_forcing_path` picked, for its error message.
+The setup's river config, or `nothing` when it names no rivers or no forcing at all.
 """
-forcing_prerequisite(::Nothing) = "prepare_forcing"
-forcing_prerequisite(::AbstractRiverConfig) = "add_rivers"
+setup_rivers(::Nothing) = nothing
+setup_rivers(config::AbstractForcingConfig) = config.rivers
+
+"""
+    resolve_river_file(rivers)
+
+The river file `build_simulation` reads: `river_forcing_path(rivers)`, checked to exist and reported
+by the step that writes it if it does not — or `nothing`, for a setup naming no rivers.
+"""
+resolve_river_file(::Nothing) = nothing
+
+function resolve_river_file(rivers::AbstractRiverConfig)
+    river_file = river_forcing_path(rivers)
+    isfile(river_file) || error(
+        "River file $river_file does not exist. Run `julia --project -m FjordSim add_rivers` for " *
+        "this setup first.",
+    )
+    return river_file
+end
 
 """
     resolve_forcing_file(config::FjordConfig)
@@ -1225,7 +1284,7 @@ function resolve_forcing_file(forcing_config::AbstractForcingConfig)
     forcing_file = simulation_forcing_path(forcing_config)
     isfile(forcing_file) || error(
         "Prepared forcing $forcing_file does not exist. Run `julia --project -m FjordSim " *
-        "$(forcing_prerequisite(forcing_config.rivers))` for this setup first.",
+        "prepare_forcing` for this setup first.",
     )
     return forcing_file
 end
@@ -1951,9 +2010,13 @@ run!(simulation)
 ```
 
 Every input comes from the setup's own prepared files — `bathymetry_path`, the forcing file
-`simulation_forcing_path` picks, and the atmosphere the `prescribed_atmosphere` and
-`prescribed_radiation` hooks read. A missing prerequisite is reported naming the step that writes
-it, rather than as a read error from deep inside NetCDF.
+`simulation_forcing_path` picks, the river file `add_rivers` wrote, and the atmosphere the
+`prescribed_atmosphere` and `prescribed_radiation` hooks read. A missing prerequisite is reported
+naming the step that writes it, rather than as a read error from deep inside NetCDF.
+
+The rivers are forcing terms of their own, added to the file forcing by `combine_forcing`: a
+free-surface source `η` and a top-cell source on each tracer the river file carries. The open
+boundaries are built from the file forcing alone, which is what they always saw.
 
 The initial conditions go through `resolve_initial_conditions`, so a `FromForcing` or `FromResults`
 is read here — where the grid and the forcing path are known — and what `coupled_simulation`
@@ -1973,6 +2036,8 @@ function build_simulation(config::FjordConfig)
     )
 
     forcing_file = resolve_forcing_file(config)
+    rivers = setup_rivers(config.forcing_config)
+    river_file = resolve_river_file(rivers)
 
     simulation_config.loops >= 1 ||
         throw(ArgumentError("loops must be at least 1, got $(simulation_config.loops)"))
@@ -1989,6 +2054,13 @@ function build_simulation(config::FjordConfig)
         start_date,
         stop_time,
         "prepare more years of forcing",
+    )
+    validate_time_coverage(
+        "rivers $river_file",
+        river_date_range(rivers),
+        start_date,
+        stop_time,
+        "re-run add_rivers for this run window",
     )
     validate_time_coverage(
         "atmosphere",
@@ -2045,7 +2117,7 @@ function build_simulation(config::FjordConfig)
     simulation = coupled_simulation(
         simulation_config.model,
         grid;
-        forcing = forcing,
+        forcing = combine_forcing(forcing, river_forcing(rivers, grid, river_file, tracers, start_date)),
         boundary_conditions = model_boundary_conditions,
         initial_conditions = initial_conditions,
         atmosphere = prescribed_atmosphere(
@@ -2059,6 +2131,7 @@ function build_simulation(config::FjordConfig)
             reference_date = start_date,
         ),
         boundary_config = config.boundary_config,
+        river_columns = read_river_columns(rivers),
         stop_time = stop_time,
         initial_time_step = initial_time_step(simulation_config.time_stepping),
     )
@@ -2170,7 +2243,8 @@ end
 
 """
     coupled_simulation(model, grid; forcing, boundary_conditions, initial_conditions,
-                       atmosphere, radiation, boundary_config, stop_time, initial_time_step)
+                       atmosphere, radiation, boundary_config, river_columns, stop_time,
+                       initial_time_step)
 
 Assemble the coupled `Simulation` a model config describes, on `grid`, and return it without
 running it.
@@ -2183,13 +2257,15 @@ neither `build_simulation` nor anything above it changes.
 The method below builds a `HydrostaticFreeSurfaceModel` inside a NumericalEarth `OceanSeaIceModel`.
 Two of its components are resolved here rather than arriving prebuilt, and for the same reason:
 `model.free_surface`'s `free_surface(config, grid)` hook, because `SplitExplicitFreeSurface` needs
-the grid, and `model.closure` through `model_closure`, because a closure may need the grid *and* the
-open edges. `model_closure`'s fallback is the identity, so a plain Oceananigans closure — which is
-what most setups write — passes through untouched.
+the grid, and `model.closure` through `model_closure`, because a closure may need the grid, the
+open edges *and* the river columns. `model_closure`'s fallback is the identity, so a plain
+Oceananigans closure — which is what most setups write — passes through untouched.
 
 `boundary_config` is the setup's `AbstractBoundaryDataConfig`, or `nothing`. It is passed rather than
 read, for the same reason `boundary_condition_sides` takes it: the edges are stated once, on that
-config, and a second statement of them could only disagree.
+config, and a second statement of them could only disagree. `river_columns` is every column a
+river enters through, as `read_river_columns` reads them from the river file, or `nothing` without
+rivers.
 """
 function coupled_simulation(
     model::CoupledHydrostaticSimulation,
@@ -2200,6 +2276,7 @@ function coupled_simulation(
     atmosphere,
     radiation,
     boundary_config,
+    river_columns,
     stop_time,
     initial_time_step,
 )
@@ -2210,7 +2287,7 @@ function coupled_simulation(
     ocean_model = HydrostaticFreeSurfaceModel(
         grid;
         buoyancy = model.buoyancy,
-        closure = model_closure(model.closure, grid, boundary_config),
+        closure = model_closure(model.closure, grid, boundary_config, river_columns),
         tracer_advection = model.tracer_advection,
         momentum_advection = model.momentum_advection,
         tracers = model.tracers,

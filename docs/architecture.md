@@ -23,7 +23,7 @@ modules, in `include` order from `src/FjordSim.jl`:
    `atmosphere_config` and `simulation_config` all default to
    `nothing`, so a setup opts in by naming one. A river config is the exception: it hangs off the
    forcing config's `rivers` field, where `nothing` means the setup has no rivers, because rivers
-   really are interior forcing — they are written into the forcing file itself. Open-boundary data is
+   really are interior forcing — a volume source the run adds to the forcing terms. Open-boundary data is
    *not*: `boundary_config` is a `FjordConfig` field of its own, since the exterior state is a
    separate hourly file from a separate collection read by a separate pipeline, and either config is
    nameable without the other. It hung off `NorKystConfig.boundaries` until the day a setup needed an
@@ -118,7 +118,7 @@ modules, in `include` order from `src/FjordSim.jl`:
    indexing a `CuArray` cell by cell.
 
 4. **Plotting** (`src/Plotting.jl`) — `plot_bathymetry(grid, bottom_height, config)`,
-   `plot_forcing(grid, config)`, `plot_rivers(grid, config, cells)`, `plot_boundaries(config)` and
+   `plot_forcing(grid, config)`, `plot_rivers(grid, config, mouths)`, `plot_boundaries(config)` and
    `plot_atmosphere(config)`, all
    dispatching on the config *supertypes* so a new source inherits them, writing to
    `plot_path(config)`. `plot_boundaries` reads its edge from the config, because a boundary file's
@@ -128,14 +128,11 @@ modules, in `include` order from `src/FjordSim.jl`:
    them because each pipeline's setup-level driver plots as its last step, and `Plotting` itself
    only needs `Configs`, so there is no cycle.
 
-   `plot_rivers` is the one that cannot be a heatmap alone: a river is a single cell out of a
-   hundred thousand, so the maps are context and the scattered, labelled outlet markers are the
-   content. It draws three rows — the surface maps (`T_lambda` first, since `prepare_forcing` writes
-   zero lambdas everywhere and so every nonzero cell in it was put there by `add_rivers`), one value
-   line per river over the whole axis, and `λ` against depth per river, which is the only view that
-   shows how far down `river_plume_depth` reached. It takes `cells` rather than recovering them from
-   the file because which river a cell is, how far it moved and which levels it owns is what the
-   pipeline knows and the file does not.
+   `plot_rivers` is the one that cannot be a heatmap alone: a river is a few cells out of a hundred
+   thousand, so it draws each river's columns as coloured cells over the surface water with its
+   mouth marked, beside each river's discharge and temperature over the whole axis. It takes `mouths`
+   rather than recovering them from the file because which river a column is and how far its outlet
+   moved is what the pipeline knows.
 
 5. **Bathymetry** (`src/Bathymetry/Bathymetry.jl` generic core, `src/Bathymetry/geonorge.jl`
    source adapter, included into the same `Bathymetry` module).
@@ -530,7 +527,7 @@ modules, in `include` order from `src/FjordSim.jl`:
 7. **Forcing** (`src/Forcing/Forcing.jl` generic core, `src/Forcing/norkyst.jl` dataset adapter,
    included into the same `Forcing` module).
 
-   The read side loads river relaxation from NetCDF via `forcing_from_file`. The
+   The read side loads relaxation from NetCDF via `forcing_from_file`. The
    `ForcingFromFile` struct carries two `FieldTimeSeries` (values + lambdas) and dispatches to
    flux, advection, or relaxation terms based on the sign of lambda: `λ > 1` → x-flux,
    `λ < -1` → y-flux, `|λ| < 1` → relaxation. Uses a custom `NetCDFBackend` keeping 2 time
@@ -540,10 +537,10 @@ modules, in `include` order from `src/FjordSim.jl`:
    `build_simulation` reaches this through one more layer of dispatch, `simulation_forcing(config,
    grid, filepath, tracers, reference_date)`, rather than calling `forcing_from_file` directly: the
    hook is what a forcing source overloads if its prepared files are not this NetCDF layout, and it
-   takes `filepath` rather than resolving it because `build_simulation` may pass the
-   rivers-augmented copy (`simulation_forcing_path`, in `Simulations`) instead of `forcing_path`
-   itself. Every built-in source shares one default, since the layout is a contract fixed by the
-   read side, not a per-source choice.
+   takes the `filepath` `build_simulation` resolved (`simulation_forcing_path`, in `Simulations`).
+   Every built-in source shares one default, since the layout is a contract fixed by the read side,
+   not a per-source choice. The rivers are not in it; they come from their own file through
+   `river_forcing`.
 
    `prepare_forcing(target_grid, config::AbstractForcingConfig)` regrids the downloaded source
    files onto the simulation grid: `forcing_variable_names(config)` picks the variables →
@@ -557,14 +554,14 @@ modules, in `include` order from `src/FjordSim.jl`:
    (`ProjectedSourceGrid`, `source_field_grid`) → **zero** lambdas → streaming NetCDF write. Only the
    three hooks are dataset-specific; the rest is shared.
 
-   **There is no interior relaxation band.** `prepare_forcing` writes `λ = 0` everywhere, and
-   `add_rivers` writes the only nonzero lambdas the file ever carries. The band used to taper
+   **There is no interior relaxation band.** `prepare_forcing` writes `λ = 0` everywhere. The band
+   used to taper
    `1/relaxation_timescale` inward from `relaxation_edge` across `relaxation_cells`; it is gone
    because the open lateral boundary now nudges towards hourly exterior data *at* the boundary
    (`NormalRadiation`, `GravityWaveRadiation` — see `BoundaryConditions`), and a band relaxing the
    same variables a few cells inside would fight it. `relaxation_lambda` and `edge_distance` were
    deleted with it, and `NorKystConfig` lost `relaxation_cells` and `relaxation_timescale`. What
-   `forcing.nc`'s *values* are still read for is initial conditions (`FromForcing`) and rivers.
+   `forcing.nc`'s *values* are still read for is initial conditions (`FromForcing`).
 
    This is a physics change, not a refactor: nothing damps the interior near the boundary any more.
    If a run turns out to need it, the fix is a viscosity sponge through the closure, not a
@@ -638,127 +635,96 @@ modules, in `include` order from `src/FjordSim.jl`:
    ~59° from east here; and `inpaint_mask!` cannot fill a fully masked depth level, so on this
    regional subset it either never terminates or silently writes zeros.
 
-   `rivers.jl` (generic core) and two dataset adapters, `of800_rivers.jl` and `nve_rivers.jl`, are
-   included into the same `Forcing` module and hold the rivers step, which runs *after*
-   `prepare_forcing` unless the river config is `standalone`.
-   `add_rivers(target_grid, config::AbstractForcingConfig)` dispatches on `config.rivers` — a
-   `nothing` river config is a no-op, so a setup opts in by naming one. The pipeline:
-   `river_forcing_times` → `river_locations(rivers)` → a plume depth per river
-   (`river_plume_depth`) → snap each outlet to a grid cell and a level range (`river_cells`,
-   `plume_levels`) → a coefficient per cell (`river_lambdas`) → river values for that time axis
-   (`river_series`) → get the base file → patch each cell's level range (`write_rivers`) → plot
-   (`plot_rivers`).
+   `rivers.jl` (generic core) and the dataset adapter `nve_rivers.jl` are included into the same
+   `Forcing` module and hold the rivers step. `add_rivers(target_grid, config::AbstractForcingConfig)`
+   dispatches on `config.rivers` — a `nothing` river config is a no-op, so a setup opts in by naming
+   one. The pipeline: `river_forcing_times` (daily over the run window) → `river_locations` →
+   `river_discharge` and `river_series` on that axis → snap each outlet and give it its columns
+   (`river_mouths`, `grow_river_columns`) → `write_river_file` → plot (`plot_rivers`).
 
-   ### `standalone`
+   ### Rivers as a volume source
 
-   The base file is where the river config's `standalone` decides. `false` copies the prepared forcing
-   to `river_forcing_path(rivers)` and patches the copy, taking the time axis from it: the original is
-   never modified, so the step is re-runnable without redoing `prepare_forcing`, and a missing prepared
-   forcing is an error naming the step that produces it. `true` writes the file from scratch
-   (`create_river_forcing_file`), carrying **only** rivers — so a setup can have rivers with no
-   interior forcing at all, no NorKyst download and no regrid.
+   A river is a volume of water entering the fjord, not a property of the cells it enters. The
+   relaxation this step used to write — T and S nudged towards the river values at `λ = Q̄ / V` over a
+   few plume levels — got the tracer dilution right and put no water into the domain: the sea level
+   did not rise, the fresh surface layer drove no outflow of its own and entrained nothing from below,
+   and with no estuarine circulation there was no compensating deep inflow over the sills. The
+   2014-15 validation run showed exactly that: basin water diluted from above and never renewed (D-2 at
+   50 m fell from 32 to 27.7 g/kg against an observed 31.0–31.4).
 
-   It is opt-in rather than inferred from whether `forcing.nc` happens to exist, because the two
-   failure modes are not symmetric: a setup that meant to prepare forcing and forgot gets an error
-   naming the step, where an inferred fallback would have silently run a whole year forcing-free. A
-   `standalone` config never copies either, even when a prepared forcing is there — copying it would
-   pull interior forcing into a run that asked for none.
+   **What Oceananigans offers.** A `HydrostaticFreeSurfaceModel` takes `forcing = (; η = F)`, `F` in
+   m/s, and the split-explicit, explicit and implicit free surfaces and the z-star coordinate all add
+   it to `∂η/∂t`. Nothing else: `w` is diagnosed from continuity starting at zero on the floor, with no
+   per-cell source, and an immersed coastal face cannot carry a normal velocity. So ROMS'
+   `LwSrc`-with-`Qshape` (a volume source spread over levels) and `LuvSrc` (a transport through a
+   coastal face) would both need method overrides on Oceananigans' own types — type piracy — and the
+   only volume hook is the surface. NumericalEarth uses the same one: on a z-star grid its runoff is
+   `forcing.η = Jʷ` plus a `c_N Jʷ − c_content Jʷ` surface tracer flux; on a static grid it gives up the
+   volume and applies a virtual salt flux. Since 0.8 it also spreads each mouth's discharge evenly over
+   the wet cells within 1.2° of it.
 
-   Three things about the standalone file are load-bearing. Its **time axis** comes from the run window
-   (`coverage`, hence a `simulation_config`) rather than from a prepared file, daily, anchored at
-   `start_date` and extended past `start_date + stop_time` so `validate_time_coverage` accepts it;
-   daily because `river_series` matches records by *calendar date*, so a finer axis would only ask for
-   the same record repeatedly. Its **variables** are whatever `river_series` returns, since there is
-   nothing else in the file. And only the **levels its rivers reach** are written — `NaN32` values and
-   zero lambdas, the levels `write_rivers` patches, which is the surface alone unless a river names a
-   `river_plume_depth` — with the levels below left unwritten and read back as
-   the file's `_FillValue`, which is inert twice over: a non-finite value becomes the `-999.0` sentinel
-   every branch of `ForcingFromFile` gates on with `value > -990`, and a non-finite lambda fails each of
-   `λ > 1`, `λ < -1` and `-1 < λ < 1`. That is the same treatment dry cells already get in a prepared
-   file, and it keeps the write to a fraction of a full 4D one.
+   **What it implies for tracers.** With `η` forced, the river's water enters through the *surface
+   face* of its column, as a downward `w`. Oceananigans does not zero the tracer advective flux through
+   that face, so the inflow arrives carrying the top cell's own value. `RiverTracerSource` therefore
+   adds `w (c_r − c) Az / V` in the top cell — replace what the inflow carried with what the river
+   carries — so the column gains exactly `Q c_r`. That is NumericalEarth's correction, as a forcing
+   rather than a boundary flux because FjordSim's top boundary conditions are the air–sea fluxes, and
+   it holds on a static grid as on a z-star one. Every model tracer gets the term, and a river has to
+   carry a value of its own: one left carrying the water it enters runs away, because the inflow
+   brings in `c` while upwind-biased WENO reconstructs the outflow faces of that local extremum below
+   `c`. A stratified test column went from 9.5 to 15 °C in five hours, and the first 60-day run with
+   rivers as a volume source reached 59 °C beside Numedalslågen, which has no temperature gauge,
+   before crashing. So `add_rivers` refuses a non-finite river value, a tracer the river file does
+   not name enters at zero, and the NVE source gives an ungauged river the gauged ones' mean
+   temperature. The "river budget" test closes both budgets on a closed basin: `Σ η A` rises by `Q t` to about 5e-9, and the
+   salt content of the linear free surface, `Σ S V + Σ S_N η A`, is unchanged to about 2e-8 by a fresh
+   river.
 
-   The file carries a `rivers_only` global attribute so it states what it is, and
-   `Simulations.forcing_state` refuses it: `FromForcing` initial conditions would otherwise start a run
-   from `T = S = 0` everywhere, silently, since `finite_slab` zeroes every non-finite cell.
+   **Why the columns are spread.** All of a river's water crosses the top face of its columns at
+   `w = Q / A`, and the tracer source runs at the same rate, `w / Δz`. One 193 m Oslofjord column
+   taking Glomma's eastern arm (~470 m³/s) is `w ≈ 1.2 cm/s`, a vertical Courant number of 2 through
+   the 1 m top cell at a 180 s step — either unstable, or the time-step wizard throttles the whole run
+   to the river mouths. So `river_mouths` gives each river as many columns as its *peak* discharge
+   needs to enter no faster than `maximum_inflow_velocity`: grown from the mouth through
+   edge-connected water, nearest first (`grow_river_columns`). Connected, unlike NumericalEarth's
+   radius, because the nearest cells by distance can be across a peninsula; largest river first, so
+   where mouths are close the river whose speed matters most gets the nearest water; and no column
+   carries two rivers, so the file can say which river owns each. The speed is a config field with no
+   default because it is a Courant bound on the setup's own top cell and time step.
 
-   Rivers enter as **relaxation, not as a mass flux**: each river cell gets its value and a λ from
-   `river_lambdas` — by default `1 / relaxation_timescale`, 1 hour — over the level range
-   `river_plume_depth` asks for, for every time step,
-   which lands in the existing `|λ| < 1` regime — no new forcing term or λ convention. Outlets are
-   located by
-   independent nearest-node lookups in longitude and latitude, then moved to the nearest
-   *coastal* water cell — water with at least one land neighbour, so a river cannot be injected
-   into open water — of at least `minimum_levels` wet levels, so it cannot be injected into a column
-   too shallow to carry it either. An outlet outside the grid, or with no such cell within
-   `search_radius`, is dropped with a warning rather than written into land.
+   **Why a mouth moves up a river bed.** The land mask often carries the lower river as water — both
+   Glomma arms run 16 to 22 cells up through Fredrikstad on the 200 m Oslofjord grid, Drammenselva 8
+   — while NVE puts the outlet where the river meets the sea on its own map, at the seaward end of
+   that bed. Entering there leaves the bed a stagnant dead end and puts the fresh water straight into
+   the fjord. `narrow_water` finds channels by morphological opening (what a disk of
+   `RIVER_BED_RADIUS = 2` cells cannot fit in), and `river_bed_head` moves a mouth on or beside one
+   to the channel cell farthest from open water, so the columns grow down the bed from its head.
 
-   That depth rule exists because a river written into the **surface level alone** — the default —
-   leaves the column *beneath* it to carry the exchange the freshening drives, and one cell cannot. The
-   fresh surface cell sets up an estuarine circulation, and the salty inflow at depth concentrates in
-   the single cell below instead of spreading through a column. On `oslofjorden` four outlets had
-   snapped onto the 2 m `minimum_depth` floor, a column of two 1 m cells, and held 32 to 64 psu under
-   a surface cell relaxed to 0, while all fifteen outlets with four levels or more stayed between 29
-   and 35. Column salt was conserved throughout — nothing was created, the column simply could not
-   resolve the redistribution — and it oscillated rather than diverging, which is what distinguishes
-   it from the open-boundary runaway `snap_partial_bottom_cells` fixes. All four had a four-to-six
-   level coastal cell within three cells, so `minimum_levels = 4` moves them ~500 m and no further.
+   **Why a file of its own.** The relaxation was written into a full copy of `forcing.nc` — 343 MB to
+   1.1 GB of 4D value and λ pairs to carry a few dozen columns — on the forcing's own axis, so every
+   `prepare_forcing` meant an `add_rivers` re-copy, and `FromForcing` initial conditions read the
+   patched copy and started the plume cells at S = 0 (and at T = 0 °C where a river had no
+   temperature). The river file is `(Nx, Ny, time)`: `inflow` in m/s (`Q(t) / area` on a river's
+   columns, zero elsewhere), one variable per river series (`NaN` off-river), the `river` ownership map,
+   and per-river `discharge`, `river_id`, `river_name`, `river_i`, `river_j`. Daily over the run window,
+   because the river records are daily and matched by calendar date. Everything about *where* a river
+   enters is decided here, once, against the same land mask the model uses; the run only reads gridded
+   series.
 
-   `minimum_levels` is applied by masking the too-shallow columns out of `coastal_water_mask` itself
-   rather than by a separate depth test, which is what keeps `is_coastal_cell` and
-   `nearest_coastal_cell` unchanged: a column a river cannot enter simply counts as shore for this
-   purpose, so the nearest acceptable cell is by construction both coastal and deep enough. The water mask comes from the same
-   `water_mask` that `prepare_forcing` uses, so "water" means the same thing in both.
-   `write_rivers` reads, patches and writes back whole slabs because the file is
-   chunked one horizontal slab per `(level, time)`.
+   **The read side.** `river_forcing` builds `η = RiverInflow` and a `RiverTracerSource` per model
+   tracer the file carries, sharing one inflow `FieldTimeSeries` (a `RiverBackend` paging `(Nx, Ny,
+   time)` like `BoundaryBackend` pages its slabs). `RiverInflow` reads nothing but its own series,
+   which is not a style choice: the split-explicit substep calls `forcing.η` with `(; η, U, V)` for
+   fields. `build_simulation` adds the terms to the file forcing with `combine_forcing` — a tracer
+   forced by both gets the pair, which Oceananigans sums as `MultipleForcings` — and validates the river
+   file's coverage like every other input. The open boundaries are built from the file forcing alone.
 
-   ### `river_plume_depth` and `river_lambdas`
-
-   Two **optional** hooks on `AbstractRiverConfig`, both added for `NVERiversConfig` and both with
-   fallbacks that reproduce exactly what the pipeline did before them — `0.0` and
-   `1 / config.relaxation_timescale` — so `OF800RiversConfig` and every existing test are untouched.
-   They exist because a river dataset with real per-river information has nowhere to put it: the
-   pipeline treated every river as interchangeable, one level deep and one timescale strong.
-
-   **`river_plume_depth(config, location)`** is how deep in metres one river's relaxation reaches,
-   and it is the *other* answer to the failure `minimum_levels` addresses. That hook **relocates** a
-   shallow outlet to a column deep enough to resolve an estuarine exchange; this one **fills the
-   column** instead, which is the right reading where the model cell is inside a river bed and there
-   is no estuary to resolve — Glomma and Drammenselva both are. `Inf` states exactly that.
-
-   A **depth** is the unit, where `minimum_levels` uses a count, and the setup file already records
-   why: four levels is 3.7 m on one vertical grid and 5.5 m on another, so a count silently means
-   something different on every grid. One number in metres also covers both regimes — 5 m in a 300 m
-   column is a surface plume, 5 m in a 3 m river bed is the whole column. On `oslofjorden`'s 24 faces:
-   `0.0` → `24:24`; `5.0` → `21:24`, 4 cells, 5.5 m; `10.0` → `19:24`, 6 cells, 10.8 m; `Inf` → the
-   wet column, clipped so it can never reach into rock. `plume_levels` always includes `Nz`, so a
-   river is never written nowhere.
-
-   Three things about the mechanics. `RiverCell` carries the range as `levels`, computed in
-   `river_cells` from `column_wet_levels` — which is `coastal_water_mask`'s own body, split out
-   because the wet count is what bounds a plume, and `water_mask` is an `Nz`-deep `peripheral_node`
-   walk worth doing once. `write_rivers` sweeps `river_level_range(cells)` in one pass, patching each
-   level only for the rivers that reach it; the union is contiguous because every range ends at the
-   surface. And **nothing on the read side changed**: the `ForcingFromFile` kernel is a plain
-   `(i, j, k)` function, `load_from_netcdf` reads whole 3D arrays, and `coalesce(…, -999.0)` keeps
-   the untouched levels below a plume inert. The `[nx, ny, 1, 1]` chunking makes the cost exactly
-   linear in plume depth with no format change and no file growth in the copy-the-forcing case.
-
-   **`river_lambdas(config, cells, target_grid)`** is the coefficient per cell. Relaxing a plume of
-   volume `V` towards `S = 0` at rate λ removes salt at `λ V S` while a discharge `Q` dilutes it at
-   `Q S`, so `λ = Q̄ / V` is the rate a river of that size actually implies. It takes the **grid**
-   because `V` is `sum(volume(...) for k in cell.levels)`, which only the grid knows — so a river
-   given a deeper plume is nudged proportionally more gently, which is what a plume depth means.
-
-   λ is **per cell, constant in time**, not per time step. Q̄ over the run window is what sets the
-   mean dilution, and a `(river, time)` matrix would have to be threaded through `add_rivers` and
-   `write_rivers` for a seasonal signal the stability cap below would mostly flatten anyway.
-
-   The cap is **not** a matter of taste. `ForcingFromFile` reads `λ > 1` as an x-flux and `λ < -1` as
-   a y-flux, and the relaxation term is explicit, so `λ Δt < 1` is required. Neither bound is
-   comfortable at the top of the range: Drammenselva's peak 1012 m³/s into a single surface cell of
-   Drammensfjord's 99 m grid gives `λ = 0.102 s⁻¹`, i.e. `λ Δt = 1.02` at the 10 s steps that run
-   takes — an unstable relaxation, from the physically correct coefficient. Hence
-   `NVERiversConfig.minimum_relaxation_timescale`.
+   **Mixing at the mouths.** Volume can only enter the top cell, so a large river can hold a 1 m
+   surface layer near fresh over salt water — as stable as stratification gets, and nothing in CATKE
+   mixes it down. `RiverMouthMixing` is the opt-in answer: NumericalEarth's
+   `river_mouth_vertical_diffusivity` over the river columns `read_river_columns` reads from the file,
+   at a stated κ down to a stated depth, appended to the base closure through the four-argument
+   `model_closure(config, grid, boundary_config, river_columns)`. No built-in setup turns it on.
 
    `boundaries.jl` (generic core) and `norkyst_boundaries.jl` (dataset adapter) are included into
    the same `Forcing` module and hold the **open-boundary data** step, which is what makes the
@@ -780,8 +746,18 @@ modules, in `include` order from `src/FjordSim.jl`:
    row needs that cadence, so `boundaries.nc` is a few hundred MB where an hourly interior forcing
    would be hundreds of GB. Putting an hourly variable *inside* `forcing.nc` was the alternative and
    was rejected: it would mean a second time axis inside a contract fixed by the read side, touching
-   the streaming write, the padding, `forcing_date_range`, the rivers copy loop, plotting and the
+   the streaming write, the padding, `forcing_date_range`, plotting and the
    test fixture — the same second-axis problem the atmosphere pipeline was built to avoid.
+
+   **Reading the hourly sources needs a large chunk cache.** The downloaded months come with
+   netCDF's default chunking, `(15, 22, 7, 180)` on Norkyst-v3: every compressed chunk spans 180
+   hours, so one hour of one full-depth variable touches 64 chunks, about 106 MB inflated. Under the
+   library's default cache those were decompressed again for every hour — 88 ms per slab, 77 % of
+   the regrid, about 2.4 h for the validation example's 640 days. `open_source_file` gives each
+   variable a 256 MB cache for the source reader's own open and restores the process default after
+   it, which makes a slab read 1.0 ms and the whole step about 0.7 h; the rest is now split evenly
+   between `set!`, the interpolation and the write. Rewriting the downloads with one chunk per hour
+   would fix it at the source, but not for the months already downloaded.
 
    Every variable is named for its side — `south_T`, `west_T`, … — which is how several open edges live
    in one file: `prepare_boundaries` loops over `open_edges(config)` and writes every side's variables
@@ -885,22 +861,7 @@ modules, in `include` order from `src/FjordSim.jl`:
    Orlanski-plus-nudging. That is exactly the scheme set FjordSim now applies at its own edge, which
    is not a coincidence so much as a reason to trust the choice.
 
-   `of800_rivers.jl` holds `OF800RiversConfig <: AbstractRiverConfig` and reads two files: an
-   outlet CSV (hand-parsed; the project carries no CSV reader and the file is a couple of dozen
-   rows) and a ROMS river NetCDF whose values repeat across `s_rho`, so only the top level is
-   read and whose `river` coordinate is offset by `OF800_RIVER_NUMBER_OFFSET` from the CSV's
-   numbering. `river_transport`, `river_Vshape` and `river_direction` are present in that file
-   but deliberately unused — the reference pipeline this ports does not do a discharge
-   conversion. `download_rivers` fetches both files from the per-file Dropbox links defaulted on
-   the config, skipping any file already present. Those links must be per-*file* `/scl/fi/` URLs
-   ending in `dl=1`: Dropbox renders folder listings client-side and serves a `/scl/fo/` folder
-   link as one whole-folder archive, and without `dl=1` it serves the web app. A link that is not
-   publicly shared answers HTTP 200 with a login page rather than failing, so
-   `validate_river_download` rejects and deletes a downloaded file that starts with `<` instead
-   of letting an HTML page masquerade as the data.
-
-   `nve_rivers.jl` holds `NVERiversConfig <: AbstractRiverConfig` and the second river source. It
-   reads **two** NVE services, and the split matters: the map services say *where* the rivers are,
+   `nve_rivers.jl` holds `NVERiversConfig <: AbstractRiverConfig`, the river source. It reads **two** NVE services, and the split matters: the map services say *where* the rivers are,
    HydAPI says *what* they carry.
 
    **HydAPI** (`https://hydapi.nve.no/api/v1`) serves observed Norwegian hydrology under NLOD,
@@ -938,7 +899,7 @@ modules, in `include` order from `src/FjordSim.jl`:
    a river that genuinely has no temperature says so with `temperature_station = ""` instead.
 
    **Daily records are stamped 11:00 UTC**, not midnight — HydAPI's convention for a daily mean — so
-   `river_series` matches by **calendar date**, the same choice `of800_rivers.jl` already makes. A
+   `river_series` and `river_discharge` match by **calendar date**. A
    `value` may be `null` on an otherwise gap-free axis; such a record is dropped and
    `nve_fill_gaps!` fills the hole from the nearest date, the choice `SourceFill` and
    `fill_boundary_gaps!` already make elsewhere.
@@ -952,12 +913,13 @@ modules, in `include` order from `src/FjordSim.jl`:
    **An outlet names two stations, not one**, because discharge and temperature are frequently not
    co-located. Glomma is the case: discharge at Solbergfoss (`2.605.0`, 40 464 km², 97 % of the
    outlet catchment) and temperature 40 km downstream at Sarpfossen (`2.1087.0`), with no station
-   carrying both. `Q̄` then resolves in a stated precedence — the outlet's `mean_discharge`, the
-   downloaded series mean, the **REGINE catchment normal** the outlet was discovered with,
-   `annualRunoff` at the gauge, else the config's `relaxation_timescale` with a warning — and
-   `discharge_fraction` scales whichever answered. That third rule is what makes a river with no
-   gauge at all still scale by its own size, which is why most of a discovered river list needs no
-   station: on `oslofjorden`, eleven of twenty-one.
+   carrying both. `river_discharge` then resolves in a stated precedence — the outlet's
+   `mean_discharge` (constant), the downloaded **daily series** (the one rule that carries the floods
+   into the run), the **REGINE catchment normal** the outlet was discovered with, `annualRunoff` at
+   the gauge, else an error naming the outlet, since a river is now a volume and has no neutral size
+   to fall back on — and `discharge_fraction` scales whichever answered. The third rule is what makes
+   a river with no gauge at all still enter at its own size, which is why most of a discovered river
+   list needs no station: on `oslofjorden`, eleven of twenty-one.
 
    ### Outlet discovery
 
@@ -1006,7 +968,7 @@ modules, in `include` order from `src/FjordSim.jl`:
    happens to Glomma's western arm, since ELVIS puts Vesterelva in the small Seutelva catchment.
 
    **Nothing here tests the model's land mask, deliberately.** An outlet that survives every step and
-   is still inland is dropped by `river_cells`, which already refuses to place a river with no coastal
+   is still inland is dropped by `river_mouths`, which already refuses to place a river with no coastal
    water cell within `river_search_radius` and says so. One rule, already written.
 
    **`vassdragsnr` is the override key, and an unmatched override is an error.** A typo would
@@ -1017,8 +979,7 @@ modules, in `include` order from `src/FjordSim.jl`:
    `download_rivers` gained a `target_grid` argument for this, matching `download_forcing` and
    `download_boundaries`: a dataset that has to *find* its rivers needs the domain bounds, and
    `x_domain`/`y_domain` give them for any grid. `add_rivers(config::FjordConfig)` supplies
-   `domain_grid(config.grid_config, CPU())`. A config that states its own outlets ignores it, which
-   is what `OF800RiversConfig` does.
+   `domain_grid(config.grid_config, CPU())`. A config that states its own outlets ignores it.
 
    The caches are reduced, not mirrored: the network file keeps each segment's two endpoints and its
    attributes and throws the intermediate vertices away — 1.8 MB against 8 MB, and all of the
@@ -1031,14 +992,12 @@ modules, in `include` order from `src/FjordSim.jl`:
 
    | code | name | unit | used |
    |---|---|---|---|
-   | 1001 | Vannføring / Discharge | m³/s | yes, to size `river_lambdas` |
+   | 1001 | Vannføring / Discharge | m³/s | yes, as the inflow `Q(t)` of `river_discharge` |
    | 1003 | Vanntemperatur / Water temperature | °C | yes, as the river `T` value |
-   | 1002 | Vannhastighet / Water speed | m/s | **no** — 9 stations nationwide, and it is the gauge cross-section mean velocity tens of km upstream, not a river-mouth inflow. Rivers are relaxation terms here, not momentum or volume fluxes |
+   | 1002 | Vannhastighet / Water speed | m/s | **no** — 9 stations nationwide, and it is the gauge cross-section mean velocity tens of km upstream, not a river-mouth inflow. Rivers enter as a volume flux through the surface, carrying no momentum |
    | 1006 | Ledningsevne / Conductivity | µS/cm | **no** — 16 stations nationwide, and river values (20–200 µS/cm) are fresh anyway |
 
    There is **no salinity parameter**, which is why `constants` writes `S = 0` rather than reading it.
-   A real freshwater *volume flux* remains the honest fix for river mass balance and is a new forcing
-   term, not a configuration of this one — the λ-regime comment in `Forcing.jl` is where it starts.
 
    To author a station list for a new fjord,
    `GET /Stations?Polygon=POLYGON((lat lon, …))` — **latitude first**, unusually for WKT — returns

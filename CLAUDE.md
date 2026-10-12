@@ -22,10 +22,10 @@ julia --project -m FjordSim download_forcing --config oslofjorden
 # Regrid the downloaded forcing onto the fjord's grid (needs the bathymetry and download first)
 julia --project -m FjordSim prepare_forcing --config oslofjorden
 
-# Write river relaxation on top of the prepared forcing (needs prepare_forcing first, unless the
-# river config is `standalone`, which writes a forcing file carrying only rivers). `oslofjorden`
-# discovers its river mouths from NVE's open map services and reads its gauges from NVE's HydAPI,
-# so this step needs `NVE_API_KEY` — free at https://hydapi.nve.no/Users.
+# Write the river inflow file (rivers_nve.nc, beside forcing.nc — not a copy of it): each river's
+# discharge and values on the surface columns it enters through. Needs only the bathymetry and the
+# run window. `oslofjorden` discovers its river mouths from NVE's open map services and reads its
+# gauges from NVE's HydAPI, so this step needs `NVE_API_KEY` — free at https://hydapi.nve.no/Users.
 julia --project -m FjordSim add_rivers --config oslofjorden
 
 # Download the hourly exterior state along the open lateral boundary (a thin band, not the box)
@@ -90,17 +90,13 @@ Both prepare steps pad their time axes to span the run window the simulation con
 
 ```bash
 julia --project -m FjordSim prepare_forcing     --config oslofjorden   # rewrites forcing.nc
-julia --project -m FjordSim add_rivers          --config oslofjorden   # re-copies forcing_rivers_nve.nc
+julia --project -m FjordSim add_rivers          --config oslofjorden   # rewrites rivers_nve.nc
 julia --project -m FjordSim prepare_boundaries  --config oslofjorden   # rewrites boundaries.nc
 julia --project -m FjordSim prepare_atmosphere  --config oslofjorden   # rewrites atmosphere.nc
 ```
 
-`add_rivers` is not optional here: it `cp`s the forcing file and patches the copy, so the river file
-— which is what `simulation_forcing_path` gives the simulation, `forcing_rivers_nve.nc` on
-both `oslofjorden` and `drammensfjorden` — still carries
-the *old* axis until it is re-run. A `standalone` river config takes the window even more directly,
-building its whole time axis from it. No download step is affected; all three prepares are pure
-regrids.
+`add_rivers` is not optional here: the river file's daily axis *is* the run window, so it carries the
+old one until re-run. No download step is affected; the prepares are pure regrids.
 `loops` is not part of the window, so changing it re-runs nothing.
 
 ### Changing `z_faces` or the grid `size`
@@ -112,7 +108,7 @@ about the run, and every 3D prepared file was regridded onto the old geometry. R
 ```bash
 julia --project -m FjordSim prepare_bathymetry  --config oslofjorden   # rewrites bathymetry.nc
 julia --project -m FjordSim prepare_forcing     --config oslofjorden   # rewrites forcing.nc
-julia --project -m FjordSim add_rivers          --config oslofjorden   # re-copies forcing_rivers_nve.nc
+julia --project -m FjordSim add_rivers          --config oslofjorden   # rewrites rivers_nve.nc
 julia --project -m FjordSim prepare_boundaries  --config oslofjorden   # rewrites boundaries.nc
 ```
 

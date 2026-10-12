@@ -258,12 +258,11 @@ rivers.years = years
 # - Akerselva discharge. 6.38.0 has nothing in the window; the Maridalsvatn outflow (6.9.0), 209 km²
 #   of the catchment, does.
 # - Lysakerelva discharge. 7.29.0 has nothing in the window and no gauge in area 7 does, so it is
-#   left to `river_lambdas`' fallback, the REGINE catchment normal.
+#   left to `river_discharge`'s fallback, the REGINE catchment normal.
 restated = Dict(
     "012.A2" => NVERiver(
         vassdragsnr = "012.A2", name = "Drammenselva",
         discharge_station = "12.534.0", temperature_station = "12.15.0",
-        plume_depth = Inf,
     ),
     "006.A10" => NVERiver(vassdragsnr = "006.A10", name = "Akerselva", discharge_station = "6.9.0"),
     "007.A0" => NVERiver(vassdragsnr = "007.A0"),
@@ -277,8 +276,8 @@ atmosphere.years = years
 simulation = base.simulation_config
 
 # The one physics departure from `oslofjorden()`: salinity is advected by bounds-preserving WENO.
-# Plain WENO is not bounded, and this domain adds Numedalslågen at Larvik, a large river relaxed to
-# S = 0 among two-level columns. The horizontal reconstruction across that front drove the
+# Plain WENO is not bounded, and this domain adds Numedalslågen at Larvik, a large river entering
+# among two-level columns (measured while rivers were still a relaxation to S = 0). The horizontal reconstruction across that front drove the
 # neighbouring surface cells to -29 psu over a 110 psu cell beneath by day 1.5, and past -32 a step
 # later, where TEOS10's `sqrt(Sᴬ + 32)` threw a DomainError on the GPU. Measured on a Larvik
 # sub-domain with no atmosphere: WENO order 3 or 5, `PartialCellBottom` or `GridFittedBottom`,

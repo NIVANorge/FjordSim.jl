@@ -58,12 +58,14 @@ export forcing_from_file,
     download_rivers,
     river_locations,
     river_series,
+    river_discharge,
     river_search_radius,
-    river_minimum_levels,
-    river_plume_depth,
-    river_lambdas,
+    river_maximum_inflow_velocity,
+    river_forcing,
+    river_date_range,
+    read_river_columns,
+    combine_forcing,
     RiverLocation,
-    OF800RiversConfig,
     NVERiversConfig,
     NVERiver,
     download_boundaries,
@@ -143,8 +145,8 @@ Only dimensionally valid for a tracer-like field: a velocity tendency needs acce
 which nothing here supplies. `ForcingFromFile` is generic in `field_name`, so this is reachable for
 any field whose `λ` happens to fall in `λ > 1` — it is the caller's responsibility to only route a
 field here when `flux` really is a flux density for that field. There is currently no producer of
-this `λ` regime at all — `prepared_variable` writes zeros and the river forcing writes
-`|λ| = 1/relaxation_timescale < 1` — so this function is unreachable in practice; it is kept, named
+this `λ` regime at all — `prepared_variable` writes zeros, and the rivers enter through a file of
+their own (`river_forcing`) — so this function is unreachable in practice; it is kept, named
 honestly, for the day a producer of `λ > 1` exists.
 """
 function forcing_term_x_flux(λ, flux, i, j, k, grid, args...)
@@ -342,8 +344,9 @@ forcing_from_file(config::AbstractForcingConfig; grid, tracers, reference_date =
     simulation_forcing(config::AbstractForcingConfig, grid, filepath, tracers, reference_date)
 
 The forcing term object `coupled_simulation` consumes, read from `filepath` — the file
-`build_simulation` resolved via `simulation_forcing_path`, which may be the rivers-augmented copy
-rather than `forcing_path(config)` itself, so this hook takes the path instead of resolving it.
+`build_simulation` resolved via `simulation_forcing_path`, so this hook takes the path instead of
+resolving it. The rivers are not in it: `build_simulation` adds them from their own file through
+`river_forcing`.
 
 A dispatched hook rather than a hardcoded `forcing_from_file` call, so a forcing source whose
 prepared files are not the FjordSim NetCDF layout `forcing_from_file` reads could supply a
@@ -647,8 +650,7 @@ memory profile.
 Relaxation lambdas are written as **zero everywhere**. The interior sponge band this file used to
 carry along the open edge is gone: the open lateral boundary now nudges towards hourly exterior data at
 the boundary itself (`NormalRadiation`, `GravityWaveRadiation`), and a band relaxing the same
-variables a few cells inside would fight it. `add_rivers` writes the only nonzero lambdas the file
-ever carries, so the `*_lambda` variables exist for that step and for
+variables a few cells inside would fight it. So the `*_lambda` variables exist only for
 `forcing_from_file`'s own contract, and the prepared values are otherwise read only as initial
 conditions (`FromForcing`).
 
@@ -1018,8 +1020,7 @@ function prepared_variable(source_name, target_grid, source, filepath, config::A
     x, y = projected_target_nodes(longitude, latitude, source)
     shape = (length(longitude), length(latitude))
     mask_fill = source_fill(source_validity(filepath, source_name))
-    # Zero everywhere: the interior relaxation band is gone, and `add_rivers` writes the only
-    # nonzero lambdas this file ever carries. See `prepare_forcing`.
+    # Zero everywhere: the interior relaxation band is gone. See `prepare_forcing`.
     lambda = zeros(Float32, size(mask))
 
     return PreparedVariable(
@@ -1338,7 +1339,40 @@ mutable struct SourceReader{D}
     dataset::D
 end
 
-SourceReader(filepath::String) = SourceReader(filepath, NCDataset(filepath))
+SourceReader(filepath::String) = SourceReader(filepath, open_source_file(filepath))
+
+# The chunk cache each variable of a source file gets, and how many chunks it may hold. Sized for a
+# downloaded month written with netCDF's default chunking: NorKyst-v3 hourly boundary months come as
+# `(15, 22, 7, 180)` chunks, so one hour of a full-depth variable touches 64 compressed chunks — about
+# 106 MB once inflated — that each hold 180 hours. Below that, every hour decompresses the same 64
+# chunks again: 88 ms per slab measured, against 1.0 ms with the block cached.
+const SOURCE_CHUNK_CACHE_BYTES = 256 * 2^20
+const SOURCE_CHUNK_CACHE_SLOTS = 1009
+const SOURCE_CHUNK_CACHE_PREEMPTION = 0.75
+
+"""
+    open_source_file(filepath)
+
+Open a downloaded source file for reading one time record at a time, with a per-variable chunk cache
+large enough to hold every chunk one record touches — see `SOURCE_CHUNK_CACHE_BYTES`.
+
+netCDF takes a variable's cache from the process-wide default at the moment the file is opened, so
+the default is raised for the open and put back straight after: every other file this process opens
+keeps the library's own setting.
+"""
+function open_source_file(filepath)
+    size, nelems, preemption = NCDatasets.get_chunk_cache()
+    NCDatasets.set_chunk_cache(
+        size = SOURCE_CHUNK_CACHE_BYTES,
+        nelems = SOURCE_CHUNK_CACHE_SLOTS,
+        preemption = SOURCE_CHUNK_CACHE_PREEMPTION,
+    )
+    try
+        return NCDataset(filepath)
+    finally
+        NCDatasets.set_chunk_cache(; size, nelems, preemption)
+    end
+end
 
 Base.close(reader::SourceReader) = close(reader.dataset)
 
@@ -1351,7 +1385,7 @@ depth axis comes back as a single level, per `as_source_slab`.
 function source_slab(reader::SourceReader, record::SourceRecord, source_name)
     if reader.filepath != record.filepath
         close(reader.dataset)
-        reader.dataset = NCDataset(record.filepath)
+        reader.dataset = open_source_file(record.filepath)
         reader.filepath = record.filepath
     end
 
@@ -1453,8 +1487,8 @@ end
 Define the dimensions and coordinate variables `forcing_from_file` checks against the grid, on the
 time axis `dates`.
 
-Takes the dates rather than the `ForcingTimeStep`s they come from, because `create_river_forcing_file`
-writes this same layout for a file that has no source records behind it.
+Takes the dates rather than the `ForcingTimeStep`s they come from, because `write_river_file` writes
+this same layout for a file that has no source records behind it.
 """
 function define_forcing_dimensions!(ds, target_grid, dates)
     coordinates = (
@@ -1485,7 +1519,6 @@ include("norkyst.jl")
 include("norkyst_boundaries.jl")
 include("norkyst_hindcast.jl")
 include("norkyst_hindcast_boundaries.jl")
-include("of800_rivers.jl")
 include("nve_rivers.jl")
 
 end # module

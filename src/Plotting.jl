@@ -7,7 +7,7 @@ using NCDatasets
 using Oceananigans
 using Oceananigans.Architectures: on_architecture
 using Oceananigans.Fields: interior
-using Oceananigans.Grids: x_domain, y_domain
+using Oceananigans.Grids: x_domain, y_domain, inactive_node
 
 using ..Configs:
     AbstractBathymetryConfig,
@@ -57,21 +57,13 @@ const BOUNDARY_PLOT_PANELS = (
     (name = "vbar", label = "vbar (m s⁻¹)", colormap = :balance),
 )
 
-# The three surface maps a rivers plot draws behind its inlet markers. `T_lambda` comes first
-# because it is the one field that shows *only* the rivers: `prepare_forcing` writes zero lambdas
-# everywhere, so every nonzero cell in it was put there by `add_rivers`.
-const RIVER_PLOT_PANELS = (
-    (name = "T_lambda", label = "Relaxation rate (s⁻¹)", colormap = :viridis),
-    (name = "T", label = "Temperature (ᵒC)", colormap = :thermal),
-    (name = "S", label = "Salinity (g kg⁻¹)", colormap = :haline),
-)
+# Size of each of the two line panels beside a rivers map — discharge and temperature — since
+# neither is sized per grid cell.
+const RIVER_PLOT_DETAIL_SIZE = (560, 320)
 
-# The lambda field a rivers plot draws, and the one whose land mask it has to borrow.
-const LAMBDA_PANEL_NAME = "T_lambda"
-
-# Extra figure height for the two rows below the maps — the value time series and the plume
-# sections — since neither is sized per grid cell.
-const RIVER_PLOT_DETAIL_HEIGHT = 320
+# The river variable a rivers plot draws over time beside the discharge. Salinity is not worth a
+# panel: a river is fresh, and every built-in source writes it as a constant zero.
+const RIVER_PLOT_VALUE_NAME = "T"
 
 # Every river gets a distinguishable colour in the two line panels. `tab20` rather than the seven
 # `wong_colors` this used to be: a setup that discovers its outlets from NVE has as many rivers as
@@ -201,25 +193,6 @@ function surface_slice(ds, name)
 end
 
 """
-    river_surface_slice(ds, name)
-
-`surface_slice`, but with land blanked out for a `_lambda` field.
-
-`prepare_forcing` writes zero lambdas at *every* cell, wet or dry, so a lambda field plotted on its
-own is a featureless rectangle with no coastline in it — the one panel that shows only what
-`add_rivers` wrote would be the one panel you cannot read. Its paired value field is `NaN` on land,
-so borrowing that mask puts the coastline back.
-"""
-function river_surface_slice(ds, name)
-    data = surface_slice(ds, name)
-    endswith(name, "_lambda") || return data
-
-    base = first(split(name, "_lambda"))
-    haskey(ds, base) || return data
-    return ifelse.(isnan.(surface_slice(ds, base)), NaN32, data)
-end
-
-"""
     plot_forcing(grid, config::AbstractForcingConfig)
 
 Write a diagnostic plot of the prepared forcing file at `forcing_path(config)` to
@@ -275,128 +248,112 @@ function plot_forcing(grid, config::AbstractForcingConfig)
 end
 
 """
-    plot_rivers(grid, config::AbstractRiverConfig, cells)
+    plot_rivers(grid, config::AbstractRiverConfig, mouths)
 
-Write a diagnostic plot of the river forcing at `river_forcing_path(config)` to `plot_path(config)`.
+Write a diagnostic plot of the river file at `river_forcing_path(config)` to `plot_path(config)`.
 Returns the plot path.
 
-Three rows, because a rivers plot has to answer three different questions and a river occupies one
-grid cell out of a hundred thousand — a heatmap alone would show nine invisible dots:
+Three panels, one per question a river file has to answer:
 
-- **the maps**, one per `RIVER_PLOT_PANELS` entry present in the file, at the surface level of the
-  first time step, with every placed outlet scattered on top and labelled. The markers, not the
-  heatmap, are the content; the field behind them is there for the coastline.
-- **the values**, one line per river over the whole time axis, which is what says whether the
-  series actually arrived and whether it is physically plausible. A river whose value is `NaN`
-  throughout — a source that has no temperature for it — is named in the legend and draws nothing,
-  which is the honest rendering of "not forced".
-- **the plumes**, `λ` against depth at each river cell, which is the only view that shows how far
-  down `river_plume_depth` reached. A surface-only river is a single point at the top; one given the
-  whole column is a line down to the sea floor.
+- **where the water enters** — a map of the surface water with every river's columns drawn in its
+  own colour and its mouth marked. The columns are the content: they are what the spreading by
+  `maximum_inflow_velocity` decided, and a river that ended up across a sound or up a side arm is
+  visible here and nowhere else.
+- **how much** — each river's discharge over the whole axis, which is what says whether the series
+  arrived and whether its floods are plausible.
+- **at what temperature** — each river's `T` at its mouth over the whole axis. A river whose `T` is
+  `NaN` throughout carries the temperature of the water it enters; it is named in the legend and
+  draws nothing.
 
-`cells` comes from `add_rivers`' own result rather than being recovered from the file, because a
-cell's identity — which river it is, how far it moved, which levels it owns — is what the pipeline
-knows and the file does not.
+`mouths` comes from `add_rivers`' own result, in the order the file numbers its rivers.
 """
-function plot_rivers(grid, config::AbstractRiverConfig, cells)
-    forcing_file = river_forcing_path(config)
+function plot_rivers(grid, config::AbstractRiverConfig, mouths)
+    river_file = river_forcing_path(config)
     plot_file = prepare_plot_file(config)
 
-    NCDataset(forcing_file) do ds
-        panels = [panel for panel in RIVER_PLOT_PANELS if haskey(ds, panel.name)]
-        width, height = default_figure_size(
-            grid, FORCING_PLOT_PIXELS_PER_CELL, FORCING_PLOT_MARGIN; columns = length(panels),
-        )
-        figure = Figure(size = (width, height + RIVER_PLOT_DETAIL_HEIGHT))
+    Nx, Ny, Nz = size(grid)
+    longitude, latitude = plot_axes(grid, Nx, Ny)
+    cell_width = step(range(first(longitude), last(longitude), length = Nx))
+    cell_height = step(range(first(latitude), last(latitude), length = Ny))
+    water = [!inactive_node(i, j, Nz, grid, Center(), Center(), Center()) for i in 1:Nx, j in 1:Ny]
+    river_color(n) = RIVER_PLOT_COLORS[mod1(n, length(RIVER_PLOT_COLORS))]
+    label(mouth) = "$(mouth.location.id) $(mouth.location.name)"
+
+    NCDataset(river_file) do ds
         dates = ds["time"][:]
-        depths = Array(ds["Nz"][:])
-        surface = ds.dim["Nz"]
-        river_color(n) = RIVER_PLOT_COLORS[mod1(n, length(RIVER_PLOT_COLORS))]
-
-        for (column, panel) in enumerate(panels)
-            data = river_surface_slice(ds, panel.name)
-            Nx, Ny = size(data)
-            longitude, latitude = plot_axes(grid, Nx, Ny)
-
-            axis = Axis(
-                figure[1, column];
-                xlabel = "Longitude",
-                ylabel = column == 1 ? "Latitude" : "",
-                title = panel.name,
-            )
-            finite = filter(isfinite, data)
-            colorrange = isempty(finite) || allequal(finite) ? (0, 1) : extrema(finite)
-            plot = heatmap!(
-                axis, longitude, latitude, data;
-                colormap = panel.colormap, colorrange, nan_color = :ivory,
-            )
-            # One marker per outlet, on the cell it actually landed on rather than where the
-            # dataset put it — the two differ by `cell.distance`, and it is the snapped cell that
-            # carries the forcing. Colours match the two line panels below.
-            scatter!(
-                axis,
-                [longitude[min(cell.i, Nx)] for cell in cells],
-                [latitude[min(cell.j, Ny)] for cell in cells];
-                color = [river_color(n) for n in eachindex(cells)],
-                markersize = 11,
-                strokecolor = :black,
-                strokewidth = 1,
-            )
-            Colorbar(figure[2, column], plot; label = panel.label, vertical = false)
-        end
-
-        columns = max(length(panels), 1)
-        value_name = first(panel.name for panel in panels if !endswith(panel.name, "_lambda"))
-
-        # The values each river is relaxed towards, over the whole axis, read at the surface level —
-        # which every plume includes whatever its depth.
-        value_axis = Axis(
-            figure[3, 1:max(columns - 1, 1)];
-            xlabel = "Date",
-            ylabel = "$value_name at the outlet",
-            title = "River $value_name over the prepared axis",
+        discharge = Array(ds["discharge"][:, :])
+        width, height = default_figure_size(grid, FORCING_PLOT_PIXELS_PER_CELL, FORCING_PLOT_MARGIN)
+        figure = Figure(
+            size = (
+                width + RIVER_PLOT_DETAIL_SIZE[1],
+                max(height, 2 * RIVER_PLOT_DETAIL_SIZE[2]),
+            ),
         )
-        for (n, cell) in enumerate(cells)
-            series = Float32.(coalesce.(ds[value_name][cell.i, cell.j, surface, :], NaN32))
-            label = "$(cell.location.id) $(cell.location.name)"
-            if any(isfinite, series)
-                lines!(value_axis, dates, series; color = river_color(n), label)
-            else
-                # Nothing to draw, but the river still belongs in the legend: an all-`NaN` series is
-                # a river this source has no values for, and that is worth seeing rather than hiding.
-                lines!(
-                    value_axis, empty(dates), Float32[];
-                    color = river_color(n), label = "$label (no $value_name)",
-                )
-            end
+
+        map_axis = Axis(
+            figure[1:2, 1];
+            xlabel = "Longitude",
+            ylabel = "Latitude",
+            title = "Columns each river enters through",
+        )
+        heatmap!(
+            map_axis, longitude, latitude, ifelse.(water, 1.0f0, NaN32);
+            colormap = [:lightsteelblue, :lightsteelblue], colorrange = (0, 1), nan_color = :ivory,
+        )
+        for (n, mouth) in enumerate(mouths)
+            cells = [
+                Rect2f(
+                    longitude[i] - cell_width / 2, latitude[j] - cell_height / 2,
+                    cell_width, cell_height,
+                ) for (i, j) in mouth.columns
+            ]
+            poly!(map_axis, cells; color = river_color(n))
+        end
+        # The mouth itself, on the cell the outlet snapped to rather than where the dataset put it —
+        # the two differ by `mouth.distance`, and it is the snapped cell the columns grow from.
+        scatter!(
+            map_axis,
+            [longitude[mouth.i] for mouth in mouths],
+            [latitude[mouth.j] for mouth in mouths];
+            color = [river_color(n) for n in eachindex(mouths)],
+            markersize = 11,
+            strokecolor = :black,
+            strokewidth = 1,
+        )
+
+        discharge_axis = Axis(
+            figure[1, 2];
+            xlabel = "Date",
+            ylabel = "Discharge (m³ s⁻¹)",
+            title = "River discharge",
+            yscale = Makie.pseudolog10,
+        )
+        for (n, mouth) in enumerate(mouths)
+            lines!(discharge_axis, dates, discharge[n, :]; color = river_color(n), label = label(mouth))
         end
         # Two banks, because a discovered river list is long enough that one column of labels runs
         # off the bottom of the panel it sits in.
-        axislegend(value_axis; position = :lt, labelsize = 8, nbanks = 2, framevisible = false)
+        axislegend(discharge_axis; position = :lt, labelsize = 8, nbanks = 2, framevisible = false)
 
-        # How deep each plume reaches and how hard it is nudged — the one view no map can give.
-        # `λ` is logarithmic because it spans four orders of magnitude across these rivers, which is
-        # the whole point of deriving it from discharge rather than sharing one timescale.
-        plume_axis = Axis(
-            figure[3, columns];
-            xlabel = "Relaxation rate (s⁻¹)",
-            ylabel = "Depth (m)",
-            title = "Plume extent and strength",
-            xscale = log10,
-        )
-        for (n, cell) in enumerate(cells)
-            lambdas = Float32.(coalesce.(ds[LAMBDA_PANEL_NAME][cell.i, cell.j, :, 1], NaN32))
-            levels = [level for level in cell.levels if isfinite(lambdas[level]) && lambdas[level] > 0]
-            isempty(levels) && continue
-            scatterlines!(
-                plume_axis, lambdas[levels], depths[levels]; color = river_color(n), markersize = 6,
+        if haskey(ds, RIVER_PLOT_VALUE_NAME)
+            value_axis = Axis(
+                figure[2, 2];
+                xlabel = "Date",
+                ylabel = "$RIVER_PLOT_VALUE_NAME at the mouth",
+                title = "River $RIVER_PLOT_VALUE_NAME",
             )
+            for (n, mouth) in enumerate(mouths)
+                i, j = first(mouth.columns)
+                series = Float32.(coalesce.(ds[RIVER_PLOT_VALUE_NAME][i, j, :], NaN32))
+                lines!(value_axis, dates, series; color = river_color(n), label = label(mouth))
+            end
+            axislegend(value_axis; position = :lt, labelsize = 8, nbanks = 2, framevisible = false)
         end
 
         Label(
             figure[0, :],
-            "River forcing from $(dataset_label(config)): $(length(cells)) outlet(s), " *
-            "surface level at $(first(dates))",
+            "River inflow from $(dataset_label(config)): $(length(mouths)) river(s) over " *
+            "$(sum(mouth -> length(mouth.columns), mouths)) column(s)",
             fontsize = 20,
         )
         save(plot_file, figure)

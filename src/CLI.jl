@@ -65,10 +65,10 @@ Subcommands, in the order a setup is prepared and run:
   prepare_forcing       Regrid the download onto the simulation grid. Needs prepare_bathymetry.
                         Where the interpolation runs is the forcing config's `architecture` field,
                         not a command-line option. A setup with no forcing config does nothing.
-  add_rivers            Write river relaxation into a copy of the prepared forcing, leaving the
-                        original untouched — or, when the river config is `standalone`, into a
-                        forcing file carrying only rivers, needing no prepared forcing at all. A
-                        setup with no rivers does nothing.
+  add_rivers            Write the river inflow file: each river's discharge and water properties on
+                        the surface columns it enters through, on a daily axis over the run window.
+                        Needs prepare_bathymetry, not prepare_forcing; re-run it when start_date or
+                        stop_time change. A setup with no rivers does nothing.
   download_boundaries   Download and subset hourly source data along the open lateral boundary. A
                         thin band rather than the whole domain, since the exterior state an open
                         boundary needs has to resolve the tide and daily means do not. A setup

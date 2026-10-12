@@ -91,10 +91,11 @@ simulation grid:
    built-in source is the public [Geonorge](https://www.geonorge.no/) Sjøkart Dybdedata dataset.
 
 2. **Forcing** — the interior state from a larger-scale ocean model. `prepare_forcing` regrids a
-   regional reanalysis (built in: NorKyst-800m daily means) onto the simulation grid; `add_rivers`
-   then writes river relaxation into a copy of that file. The prepared file is read for river forcing
-   and, optionally, for a run's initial conditions, so the ocean starts from a realistic state rather
-   than a uniform water column.
+   regional reanalysis (built in: NorKyst-800m daily means) onto the simulation grid. The prepared
+   file is read, optionally, for a run's initial conditions, so the ocean starts from a realistic
+   state rather than a uniform water column. `add_rivers` writes the rivers to a file of their own:
+   each river's daily discharge and temperature on the surface columns it enters through, which the
+   run adds as a volume source.
 
 3. **Open-boundary data** — the exterior state along the open lateral edges, which is what makes them
    open. `prepare_boundaries` regrids the *hourly* NorKyst collection onto the boundary rows,
@@ -120,7 +121,7 @@ atmosphere is independent.
 Only the grid and the bathymetry are always required. 
 Every other component is a config field defaulting to `nothing`, and a step whose config is absent is a no-op rather than an error — so a setup names what it wants and skips the rest.
 
-With `download_forcing` and `prepare_forcing` skipped rivers can be kept without the NorKyst download and regrid by giving the river config `standalone = true`, which makes `add_rivers` write a river-only forcing file from scratch. 
+Rivers need no prepared forcing: `add_rivers` writes their own file from the bathymetry and the run window alone, so a setup can keep them with `download_forcing` and `prepare_forcing` skipped.
 What does need a prepared forcing file is `FromForcing` initial conditions;
 use constants, functions, or `FromResults` from an earlier run instead.
 

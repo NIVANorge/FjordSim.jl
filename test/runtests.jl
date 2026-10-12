@@ -1,7 +1,7 @@
 using FjordSim
 using FjordSim.Bathymetry: write_bathymetry_file
 using FjordSim.Configs: open_edges, coverage_window
-using Dates: Date, DateFormat, DateTime, Hour, Millisecond, Minute, Month
+using Dates: Date, DateFormat, DateTime, Day, Hour, Millisecond, Minute, Month
 using JLD2
 using Test
 using ArchGDAL
@@ -28,7 +28,6 @@ include("utilities.jl")
             :EvenGrid,
             :DybdedataConfig,
             :NorKystConfig,
-            :OF800RiversConfig,
             :NVERiversConfig,
             :NVERiver,
             :forcing_from_file,
@@ -62,9 +61,8 @@ include("utilities.jl")
             :river_locations,
             :river_series,
             :river_search_radius,
-            :river_minimum_levels,
-            :river_plume_depth,
-            :river_lambdas,
+            :river_discharge,
+            :river_maximum_inflow_velocity,
             :boundary_time_steps,
             :boundary_source_grid,
             :boundary_variable_names,
@@ -77,6 +75,7 @@ include("utilities.jl")
             :AbstractClosureConfig,
             :model_closure,
             :BoundarySponge,
+            :RiverMouthMixing,
             :ProjectedSourceGrid,
             :RiverLocation,
             :geodatabase_path,
@@ -454,15 +453,15 @@ include("utilities.jl")
 
         # `model_closure` is the hook, and its fallback is the identity — which is what keeps every
         # setup that names a plain Oceananigans closure working untouched.
-        @test model_closure(base, grid, nothing) === base
-        @test model_closure(base[1], grid, nothing) === base[1]
+        @test model_closure(base, grid, nothing, nothing) === base
+        @test model_closure(base[1], grid, nothing, nothing) === base[1]
 
         # A sponge with no open edge is the base closure, not a base closure plus a zero sponge.
-        @test model_closure(sponge, grid, nothing) === base
+        @test model_closure(sponge, grid, nothing, nothing) === base
 
         mktempdir() do tmp
             boundaries_config = test_boundaries_config(data_root = tmp)
-            built = model_closure(sponge, grid, boundaries_config)
+            built = model_closure(sponge, grid, boundaries_config, nothing)
             @test length(built) == length(base) + 1
             @test built[1:length(base)] == base
             @test last(built) isa Oceananigans.TurbulenceClosures.ScalarDiffusivity
@@ -471,7 +470,7 @@ include("utilities.jl")
             single = BoundarySponge(
                 base = base[1], width_cells = 4, viscosity = 30.0, diffusivity = 15.0,
             )
-            @test length(model_closure(single, grid, boundaries_config)) == 2
+            @test length(model_closure(single, grid, boundaries_config, nothing)) == 2
 
             # The coefficient has to be reachable through Oceananigans' *own* dispatch, not just
             # callable. `ScalarDiffusivity` only threads `parameters` through in its discrete form;
@@ -480,7 +479,7 @@ include("utilities.jl")
             # `MethodError` surfaces as an `InvalidIRError` pointing at an unrelated frame. Going
             # through `νᶜᶜᶜ` here is what makes that a test failure instead of a compile failure an
             # hour into a run.
-            built = model_closure(sponge, grid, boundaries_config)
+            built = model_closure(sponge, grid, boundaries_config, nothing)
             νᶜᶜᶜ = Oceananigans.TurbulenceClosures.νᶜᶜᶜ
             κᶜᶜᶜ = Oceananigans.TurbulenceClosures.κᶜᶜᶜ
             clock = Oceananigans.TimeSteppers.Clock(grid)
@@ -494,6 +493,55 @@ include("utilities.jl")
             @test edge_κ < edge_ν                    # κ is the weaker of the two
             @test νᶜᶜᶜ(1, 20, 1, grid, location, last(built).ν, clock, nothing) == 0
         end
+    end
+
+    @testset "river mouth mixing" begin
+        base = (VerticalScalarDiffusivity(ν = 1e-4),)
+        grid = LatitudeLongitudeGrid(
+            CPU();
+            size = (10, 20, 2),
+            halo = (1, 1, 1),
+            longitude = (10.0, 11.0),
+            latitude = (59.0, 60.0),
+            z = [-10.0, -5.0, 0.0],
+        )
+        columns = (; target_i = [3, 4], target_j = [5, 5])
+        mixing = RiverMouthMixing(base = base, diffusivity = 0.1, mixing_depth = 5)
+        @test mixing isa AbstractClosureConfig
+
+        built = model_closure(mixing, grid, nothing, columns)
+        @test length(built) == length(base) + 1
+        @test built[1:length(base)] == base
+        @test last(built) isa Oceananigans.TurbulenceClosures.ScalarDiffusivity
+
+        # Through Oceananigans' own dispatch, for the reason the sponge testset gives: the river
+        # columns are mixed above `mixing_depth` (the cell centred at -2.5 m) and nowhere else.
+        κᶜᶜᶜ = Oceananigans.TurbulenceClosures.κᶜᶜᶜ
+        clock = Oceananigans.TimeSteppers.Clock(grid)
+        location = (Center(), Center(), Center())
+        κ(i, j, k) = κᶜᶜᶜ(i, j, k, grid, location, last(built).κ, clock, nothing)
+        @test κ(3, 5, 2) == 0.1
+        @test κ(4, 5, 2) == 0.1
+        @test κ(3, 5, 1) == 0                   # below the mixed depth
+        @test κ(5, 5, 2) == 0                   # not a river column
+        @test κ(3, 6, 2) == 0
+
+        # The base is resolved first, so a sponge under it is built rather than passed through as a
+        # config the model cannot use.
+        mktempdir() do tmp
+            boundaries_config = test_boundaries_config(data_root = tmp)
+            sponged = RiverMouthMixing(
+                base = BoundarySponge(base = base, width_cells = 4, viscosity = 30.0, diffusivity = 15.0),
+                diffusivity = 0.1,
+                mixing_depth = 5,
+            )
+            both = model_closure(sponged, grid, boundaries_config, columns)
+            @test length(both) == length(base) + 2
+            @test all(closure -> closure isa Oceananigans.TurbulenceClosures.AbstractTurbulenceClosure, both)
+        end
+
+        # A setup with no rivers has no columns to mix, which is a configuration error, not a no-op.
+        @test_throws ErrorException model_closure(mixing, grid, nothing, nothing)
     end
 
     @testset "boundary condition configs" begin
@@ -909,7 +957,7 @@ end
             ),
             simulation_config = MinimalSimulation(data_root, DateTime(2021, 3, 4, 5), 7200.0),
         )
-        rivers = MinimalRivers(data_root, "column_rivers.nc", "column_rivers.png", 3600.0, 10)
+        rivers = MinimalRivers(data_root, "column_rivers.nc", "column_rivers.png", 10, 1.0e-3)
 
         @test config.grid_config isa AbstractGridConfig
         @test config.bathymetry_config isa AbstractBathymetryConfig
@@ -970,8 +1018,10 @@ end
         @test coverage_window(config.simulation_config) ==
               (DateTime(2021, 3, 4, 5), DateTime(2021, 3, 4, 7))
 
-        # `river_search_radius` is the river pipeline's one optional hook.
+        # `river_search_radius` and `river_maximum_inflow_velocity` are the river pipeline's optional
+        # hooks, each falling back to the field of its name.
         @test river_search_radius(rivers) == 10
+        @test river_maximum_inflow_velocity(rivers) == 1.0e-3
 
         # A method overloaded on the new grid config is picked up by existing call sites.
         grid = domain_grid(config.grid_config, CPU())
@@ -998,6 +1048,7 @@ end
         @test_throws MethodError forcing_source_grid(config.forcing_config, "unused.nc")
         @test_throws MethodError river_locations(rivers)
         @test_throws MethodError river_series(rivers, [DateTime(2020, 1, 1)])
+        @test_throws MethodError river_discharge(rivers, [DateTime(2020, 1, 1)])
         @test_throws MethodError atmosphere_time_steps(config.atmosphere_config)
         @test_throws MethodError atmosphere_source_grid(config.atmosphere_config, "unused.nc")
         @test_throws MethodError atmosphere_variable_names(config.atmosphere_config)
@@ -2370,7 +2421,6 @@ end
         # `prepare_forcing` writes zero lambdas everywhere: the interior relaxation band it used to
         # carry along the open edge is gone, because the boundary itself now nudges towards hourly
         # exterior data and a band relaxing the same variables a few cells in would fight it.
-        # `add_rivers` writes the only nonzero lambdas the file ever carries.
 
         # Every cell resolves to the nearest valid source cell, so a fjord arm NorKyst treats as
         # land still receives data. Valid cells resolve to themselves.
@@ -2447,7 +2497,7 @@ end
 
             # The `ForcingFromFile` kernel routes to the matching term by λ's sign/magnitude. No
             # producer in this repo ever writes `|λ| > 1` (`prepare_forcing` writes zeros and the
-            # river forcing stays inside `(-1, 1)`), so this is the only coverage of that routing.
+            # rivers have a file of their own), so this is the only coverage of that routing.
             forcing_config = test_forcing_config(data_root = tmp)
 
             function forced_value(lambda)
@@ -2529,7 +2579,7 @@ end
             # state to read there.
             @test !any(water_mask(grid, Center, Face, nothing)[:, 1, :])
             @test !any(water_mask(grid, Center, Face, nothing)[:, 3, :])
-            # ...and the tracer mask is edge-independent, which is why `add_rivers` needs no edge:
+            # ...and the tracer mask is edge-independent, which is why placing rivers needs no edge:
             # every `open_boundary_water!` method returns early unless the location is staggered
             # across its own edge.
             @test water_mask(grid, Center, Center, nothing) == water_mask(grid, Center, Center, :south)
@@ -2558,8 +2608,8 @@ end
 
             # `simulation_forcing` is the hook `build_simulation` calls instead of a hardcoded
             # `forcing_from_file` — dispatched on the forcing config, taking the resolved filepath
-            # rather than resolving it, so it also serves the rivers-augmented copy. Every
-            # built-in source shares the default, which just forwards to `forcing_from_file`.
+            # rather than resolving it. Every built-in source shares the default, which just
+            # forwards to `forcing_from_file`.
             @test Set(keys(simulation_forcing(
                 forcing_config, grid, forcing_path(forcing_config), (:T, :S), nothing,
             ))) == Set((:T, :S, :u, :v))
@@ -2579,48 +2629,6 @@ end
         end
     end
 
-    @testset "OF800 rivers config" begin
-        rivers = OF800RiversConfig(data_root = "/data/oslofjord")
-
-        @test rivers isa AbstractRiverConfig
-        @test all(isconcretetype, fieldtypes(typeof(rivers)))
-        @test river_forcing_path(rivers) == "/data/oslofjord/forcing_rivers.nc"
-        @test FjordSim.Forcing.river_locations_path(rivers) == "/data/oslofjord/OF800_rivers.csv"
-        @test FjordSim.Forcing.river_series_path(rivers) == "/data/oslofjord/of800_rivers_v9_1990_2022_RA1.nc"
-        @test river_search_radius(rivers) == 10
-        @test rivers.relaxation_timescale == 3600.0
-
-        # Both source files download from per-file links by default; a folder link cannot work.
-        for url in (rivers.locations_url, rivers.series_url)
-            @test occursin("/scl/fi/", url)   # a per-file link, not a /scl/fo/ folder archive
-            @test occursin("dl=1", url)       # serves the file rather than the web app
-        end
-
-        # An expired Dropbox `st` token answers with a login page and HTTP 200, so the download
-        # reports success. That page must be rejected and removed, not left to masquerade as data.
-        mktempdir() do tmp
-            page = joinpath(tmp, "OF800_rivers.csv")
-            write(page, "<!DOCTYPE html>\n<html><title>Log in to Dropbox</title></html>")
-            @test_throws ErrorException FjordSim.Forcing.validate_river_download(page, "https://example.invalid")
-            @test !isfile(page)
-
-            empty_file = joinpath(tmp, "empty.nc")
-            write(empty_file, "")
-            @test_throws ErrorException FjordSim.Forcing.validate_river_download(empty_file, "https://example.invalid")
-
-            # Real data is passed through untouched: the CSV header, and the HDF5 magic the
-            # NetCDF-4 series file starts with.
-            good_csv = joinpath(tmp, "good.csv")
-            write(good_csv, "River number,Name,LatOutlet,LonOutlet,Zero\n1,A,59.0,10.5,0\n")
-            @test FjordSim.Forcing.validate_river_download(good_csv, "https://example.invalid") == good_csv
-            @test isfile(good_csv)
-
-            good_nc = joinpath(tmp, "good.nc")
-            write(good_nc, UInt8[0x89, 0x48, 0x44, 0x46, 0x0d, 0x0a, 0x1a, 0x0a])
-            @test FjordSim.Forcing.validate_river_download(good_nc, "https://example.invalid") == good_nc
-        end
-    end
-
     @testset "NVE rivers config" begin
         forcing = FjordSim.Forcing
 
@@ -2633,7 +2641,6 @@ end
             latitude = 59.1859,
             discharge_station = "2.605.0",
             temperature_station = "2.1087.0",
-            plume_depth = Inf,
         )
         # A small river taking only its location and its size: no temperature it can be trusted on,
         # and a stated mean discharge instead of a series.
@@ -2648,34 +2655,29 @@ end
             data_root = "/data/oslofjord",
             outlets = [glomma, akerselva],
             years = [2020],
+            maximum_inflow_velocity = 1.0e-3,
         )
 
         @test rivers isa AbstractRiverConfig
         @test all(isconcretetype, fieldtypes(typeof(rivers)))
         @test all(isconcretetype, fieldtypes(NVERiver))
 
-        # The default output file differs from `OF800RiversConfig`'s, so both sources can be
-        # prepared under one `data_root` without one overwriting the other.
-        @test river_forcing_path(rivers) == "/data/oslofjord/forcing_rivers_nve.nc"
-        @test river_forcing_path(rivers) != river_forcing_path(OF800RiversConfig(data_root = "/data/oslofjord"))
-
+        @test river_forcing_path(rivers) == "/data/oslofjord/rivers_nve.nc"
         @test river_search_radius(rivers) == 10
-        # Zero, unlike the value `oslofjorden()` gives OF800: a plume is the better answer to a
-        # shallow outlet than relocating it.
-        @test river_minimum_levels(rivers) == 0
-        @test rivers.relaxation_timescale == 3600.0
+        @test river_maximum_inflow_velocity(rivers) == 1.0e-3
+
+        # The inflow speed is a stability bound on the setup's own grid and time step, so it has no
+        # default to fall back on: a config that omits it fails at construction.
+        @test_throws UndefKeywordError NVERiversConfig(
+            data_root = "/data/oslofjord", outlets = [glomma], years = [2020],
+        )
 
         # `river_locations` reads no file, so it works before anything is downloaded — which is what
-        # lets the two per-river hooks index back through it.
+        # lets the per-river hooks index back through it.
         locations = river_locations(rivers)
         @test [location.id for location in locations] == [1, 2]
         @test [location.name for location in locations] == ["Glomma", "Akerselva"]
         @test (locations[1].longitude, locations[1].latitude) == (10.9709, 59.1859)
-
-        # The plume depth is per river, which is the whole point: Glomma's cell is inside a river
-        # bed and takes the column, Akerselva's takes the surface cell alone.
-        @test river_plume_depth(rivers, locations[1]) == Inf
-        @test river_plume_depth(rivers, locations[2]) == 0.0
         @test_throws ErrorException forcing.nve_outlet(rivers, 99)
 
         # Only the series an outlet names are fetched, so an unnamed station costs no request.
@@ -2699,12 +2701,15 @@ end
         mktempdir() do tmp
             keyed = NVERiversConfig(
                 data_root = tmp, outlets = [glomma], years = [2020], api_key = "stated",
+                maximum_inflow_velocity = 1.0e-3,
             )
             @test forcing.nve_api_key(keyed) == "stated"
 
             # A stated key wins over the environment; with neither, the error names the variable and
             # where to get a key, rather than surfacing as an HTTP 401 with an empty body.
-            unkeyed = NVERiversConfig(data_root = tmp, outlets = [glomma], years = [2020])
+            unkeyed = NVERiversConfig(
+                data_root = tmp, outlets = [glomma], years = [2020], maximum_inflow_velocity = 1.0e-3,
+            )
             withenv(forcing.NVE_API_KEY_VARIABLE => "from-env") do
                 @test forcing.nve_api_key(unkeyed) == "from-env"
                 @test forcing.nve_api_key(keyed) == "stated"
@@ -2733,6 +2738,7 @@ end
 
             cached = NVERiversConfig(
                 data_root = tmp, outlets = [glomma], years = [2020], api_key = "stated",
+                maximum_inflow_velocity = 1.0e-3,
             )
             mkpath(forcing.nve_download_directory(cached))
             write(
@@ -2773,11 +2779,19 @@ end
             # A file with no `data` array at all counts as empty rather than throwing.
             @test forcing.nve_observation_count(joinpath(tmp, "absent.json")) == 0
 
-            # A JSON body starts `{`, so the shared download validator passes it — the check exists
-            # for an HTML page served with HTTP 200, which starts `<`.
+            # A JSON body starts `{`, so the download validator passes it — the check exists for an
+            # HTML page served with HTTP 200, which starts `<`, and that page is rejected and
+            # removed rather than left to masquerade as data. So is an empty body.
             json_file = joinpath(tmp, "response.json")
             write(json_file, response)
             @test forcing.validate_river_download(json_file, "https://example.invalid") == json_file
+            page = joinpath(tmp, "page.json")
+            write(page, "<!DOCTYPE html>\n<html><title>Log in</title></html>")
+            @test_throws ErrorException forcing.validate_river_download(page, "https://example.invalid")
+            @test !isfile(page)
+            blank = joinpath(tmp, "blank.json")
+            write(blank, "")
+            @test_throws ErrorException forcing.validate_river_download(blank, "https://example.invalid")
 
             # `river_series` matches by calendar date and fills the one-day hole from its nearest
             # neighbour, so a single missing observation is noise rather than a step with no forcing.
@@ -2792,96 +2806,117 @@ end
             @test all(iszero, series["S"])
             @test size(series["S"]) == (1, 3)
 
-            # A date no response covers stays NaN and is inert: the file's `_FillValue` reads back as
-            # the -999.0 sentinel every `ForcingFromFile` branch gates on.
-            far = river_series(cached, [DateTime(2021, 6, 1)])
-            @test all(isnan, far["T"])
+            # A river cannot be left without a temperature — the inflow has no "carries the water
+            # it enters" — so a window no outlet has a record in is an error naming the fix.
+            @test_throws "temperature_station" river_series(cached, [DateTime(2021, 6, 1)])
 
             # An outlet naming no temperature station is the documented escape for an untrustworthy
-            # sensor, and yields a NaN row rather than an error.
+            # sensor: it borrows the gauged outlets' temperature, date by date.
+            mixed = NVERiversConfig(
+                data_root = tmp, outlets = [glomma, akerselva], years = [2020], api_key = "stated",
+                maximum_inflow_velocity = 1.0e-3,
+            )
+            series = @test_logs (:warn, r"Filled 1 of 3") (:info, r"Akerselva has no temperature") (
+                river_series(mixed, times)
+            )
+            @test series["T"][2, :] == series["T"][1, :]
+            @test all(iszero, series["S"])
+
+            # With nothing gauged at all there is no temperature to borrow.
             quiet = NVERiversConfig(
                 data_root = tmp, outlets = [akerselva], years = [2020], api_key = "stated",
+                maximum_inflow_velocity = 1.0e-3,
             )
-            @test all(isnan, river_series(quiet, times)["T"])
-            @test all(iszero, river_series(quiet, times)["S"])
+            @test_throws "temperature_station" river_series(quiet, times)
 
             # A missing cache names the step that fills it rather than failing on a JSON read.
             absent = NVERiversConfig(
                 data_root = tmp, outlets = [glomma], years = [2019], api_key = "stated",
+                maximum_inflow_velocity = 1.0e-3,
             )
             @test_throws ErrorException river_series(absent, times)
 
-            # Q̄ precedence: a stated `mean_discharge` wins, and it is what makes a small river with
-            # no series still scale by its size.
-            @test forcing.nve_mean_discharge(quiet, akerselva)[1] == 3.0
-            @test forcing.nve_mean_discharge(quiet, akerselva)[2] == "the config"
-
-            # A named discharge station whose year was never downloaded is an error naming the step
-            # that fills the cache, not a silent fallback — `river_lambdas` only runs after
-            # `download_rivers`, so a missing file means the download did not happen.
-            @test_throws ErrorException forcing.nve_mean_discharge(cached, glomma)
-        end
-
-        mktempdir() do tmp
-            (; grid) = land_column_test_grid(joinpath(tmp, "bathymetry.nc"))
-            location = FjordSim.Forcing.RiverLocation(2, "Akerselva", 10.0, 59.0)
-            surface_cell = FjordSim.Forcing.RiverCell(location, 1, 2, 0.0, 2:2)
-            column_cell = FjordSim.Forcing.RiverCell(location, 1, 2, 0.0, 1:2)
-
-            # λ = Q̄ / V, with V the plume volume — so the same river given a deeper plume is nudged
-            # proportionally more gently, because the freshwater is spread through more water.
-            # This grid's cells are ~11 km across, so the raw Q̄/V is around 5e-9 s⁻¹ and a 100 s
-            # floor leaves it far below the cap — the raw rate, but still a timescale the λ-regime
-            # guard accepts.
-            sized = NVERiversConfig(
-                data_root = tmp, outlets = [akerselva], years = [2020], api_key = "stated",
-                minimum_relaxation_timescale = 100.0,
+            # The discharge, cached the same way: Solbergfoss with one missing day.
+            discharge_response = """
+            {"apiVersion":"1.0","itemCount":1,
+             "data":[{"stationId":"2.605.0","parameter":1001,"unit":"m³/s","observationCount":3,
+               "observations":[
+                 {"time":"2020-01-01T11:00:00Z","value":900.0,"correction":0,"quality":1},
+                 {"time":"2020-01-02T11:00:00Z","value":null,"correction":0,"quality":1},
+                 {"time":"2020-01-03T11:00:00Z","value":1100.0,"correction":0,"quality":1}]}]}
+            """
+            write(
+                forcing.nve_observations_path(cached, "2.605.0", forcing.NVE_DISCHARGE, 2020),
+                discharge_response,
             )
-            surface_lambda = only(river_lambdas(sized, [surface_cell], grid))
-            column_lambda = only(river_lambdas(sized, [column_cell], grid))
-            @test surface_lambda ≈ 2 * column_lambda rtol = 1e-5
-            volume = FjordSim.Forcing.volume
-            @test surface_lambda ≈
-                  Float32(3.0 / volume(1, 2, 2, grid, Center(), Center(), Center())) rtol = 1e-5
 
-            # The cap is not optional: the physically correct coefficient reaches λ·Δt > 1 for a
-            # large river in a small cell, and `ForcingFromFile` reads λ > 1 as an x-flux outright.
-            # This grid's cells are ~11 km across, so the cap is made to bind by raising the floor
-            # on τ rather than by inventing an unphysical discharge.
-            capped = NVERiversConfig(
-                data_root = tmp, outlets = [akerselva], years = [2020], api_key = "stated",
-                minimum_relaxation_timescale = 1.0e9,
-            )
-            @test surface_lambda > Float32(1 / 1.0e9)   # the raw rate would exceed the cap
-            @test only(river_lambdas(capped, [surface_cell], grid)) == Float32(1 / 1.0e9)
+            # A gauge gives the river its daily series, by calendar date, with the hole filled from
+            # the nearest day — the one rule that carries the floods into the run.
+            discharge = @test_logs (:warn, r"Filled 1 of 3") match_mode = :any river_discharge(cached, times)
+            @test size(discharge) == (1, 3)
+            @test discharge[1, 1] == 900.0
+            @test discharge[1, 3] == 1100.0
+            @test discharge[1, 2] ∈ (900.0, 1100.0)
 
-            # Whatever the cap, λ stays strictly inside the relaxation regime: `ForcingFromFile`
-            # reads λ > 1 as an x-flux and λ < -1 as a y-flux.
-            for config in (sized, capped)
-                @test all(0 .< river_lambdas(config, [surface_cell, column_cell], grid) .< 1)
-            end
-
-            # A timescale of a second or less would put λ outside the relaxation regime, where
-            # `ForcingFromFile` reads it as an x-flux — a silent change of forcing term. That is
-            # rejected rather than left for the cap to enforce.
-            for field in (:minimum_relaxation_timescale, :relaxation_timescale)
-                unstable = NVERiversConfig(
-                    data_root = tmp, outlets = [akerselva], years = [2020], api_key = "stated",
-                    ; (field => 1.0,)...,
-                )
-                @test_throws ErrorException river_lambdas(unstable, [surface_cell], grid)
-            end
-
-            # With no size known at all, the config's own timescale is used and the river is named.
-            sizeless = NVERiversConfig(
+            # `discharge_fraction` scales whatever answered, so two mouths can share one gauge.
+            halved = NVERiversConfig(
                 data_root = tmp,
-                outlets = [NVERiver(id = 2, name = "Akerselva", longitude = 10.0, latitude = 59.0)],
+                outlets = [NVERiver(
+                    id = 1, name = "Glomma", longitude = 10.9709, latitude = 59.1859,
+                    discharge_station = "2.605.0", discharge_fraction = 0.5,
+                )],
                 years = [2020],
                 api_key = "stated",
+                maximum_inflow_velocity = 1.0e-3,
             )
-            @test @test_logs (:warn, r"No discharge for river 2") only(
-                river_lambdas(sizeless, [surface_cell], grid),
-            ) == Float32(1 / 3600)
+            @test river_discharge(halved, times)[1, [1, 3]] == [450.0, 550.0]
+
+            # A stated `mean_discharge` outranks the gauge, and is constant in time.
+            stated = NVERiversConfig(
+                data_root = tmp,
+                outlets = [NVERiver(
+                    id = 1, name = "Glomma", longitude = 10.9709, latitude = 59.1859,
+                    discharge_station = "2.605.0", mean_discharge = 5.0,
+                )],
+                years = [2020],
+                api_key = "stated",
+                maximum_inflow_velocity = 1.0e-3,
+            )
+            @test river_discharge(stated, times) == fill(5.0, 1, 3)
+            @test river_discharge(quiet, times) == fill(3.0, 1, 3)
+            @test forcing.nve_mean_discharge(quiet, akerselva) == (3.0, "the config")
+
+            # With neither, the catchment normal the outlet was discovered with, constant in time —
+            # what lets a river with no gauge still enter at its own size.
+            normal = NVERiversConfig(
+                data_root = tmp,
+                outlets = [NVERiver(
+                    id = 3, name = "Ungauged", longitude = 10.5, latitude = 59.5,
+                    catchment_discharge = 7.0,
+                )],
+                years = [2020],
+                api_key = "stated",
+                maximum_inflow_velocity = 1.0e-3,
+            )
+            @test river_discharge(normal, times) == fill(7.0, 1, 3)
+
+            # A river of unknown size is an error naming it: there is no neutral volume to add.
+            sizeless = NVERiversConfig(
+                data_root = tmp,
+                outlets = [NVERiver(id = 4, name = "Sizeless", longitude = 10.5, latitude = 59.5)],
+                years = [2020],
+                api_key = "stated",
+                maximum_inflow_velocity = 1.0e-3,
+            )
+            @test_throws "Sizeless" river_discharge(sizeless, times)
+
+            # A gauge whose cached years hold nothing in the window means `years` does not cover the
+            # run — an error, not a silent fall through to the normal.
+            @test_throws ErrorException river_discharge(cached, [DateTime(2021, 6, 1)])
+
+            # A named discharge station whose year was never downloaded is an error naming the step
+            # that fills the cache.
+            @test_throws ErrorException river_discharge(absent, times)
         end
     end
 
@@ -2924,7 +2959,8 @@ end
 
         fixture(tmp; kwargs...) = begin
             config = NVERiversConfig(;
-                data_root = tmp, outlets = NVERiver[], years = [2020], kwargs...,
+                data_root = tmp, outlets = NVERiver[], years = [2020],
+                maximum_inflow_velocity = 1.0e-3, kwargs...,
             )
             forcing.nve_write_cache(forcing.nve_catchment_path(config), domain, "catchments", catchments)
             forcing.nve_write_cache(forcing.nve_network_path(config), domain, "segments", segments)
@@ -2965,13 +3001,14 @@ end
                 data_root = tmp,
                 outlets = [NVERiver(id = 7, name = "Manual", longitude = 10.5, latitude = 59.5)],
                 years = [2020],
+                maximum_inflow_velocity = 1.0e-3,
             )
             @test forcing.nve_outlets(stated) == stated.outlets
             @test [location.id for location in river_locations(stated)] == [7]
         end
 
         mktempdir() do tmp
-            config = fixture(tmp; minimum_discharge = 0.5, default_plume_depth = 5.0)
+            config = fixture(tmp; minimum_discharge = 0.5)
 
             # 003.Z reaches the sea twice inside the domain, which is warned about rather than
             # silently halved: a real distributary is exactly what a setup would want to override.
@@ -2987,9 +3024,8 @@ end
             # The mouth is the segment's downstream end, not its start.
             @test (outlets[1].longitude, outlets[1].latitude) == (10.3, 59.3)
             @test (outlets[2].longitude, outlets[2].latitude) == (10.75, 59.75)
-            # A discovered outlet takes the config's default plume depth and no gauge at all: a
-            # river with no station still scales by its own size, through `catchment_discharge`.
-            @test all(outlet.plume_depth == 5.0 for outlet in outlets)
+            # A discovered outlet takes no gauge at all: a river with no station still enters at its
+            # own size, through `catchment_discharge`.
             @test all(isempty(outlet.discharge_station) for outlet in outlets)
             @test isnan(outlets[1].mean_discharge)
 
@@ -3037,6 +3073,7 @@ end
             )
             config = NVERiversConfig(
                 data_root = tmp, outlets = NVERiver[], years = [2020], minimum_discharge = 0.5,
+                maximum_inflow_velocity = 1.0e-3,
             )
             forcing.nve_write_cache(
                 forcing.nve_catchment_path(config), domain, "catchments", tied_catchments,
@@ -3055,12 +3092,11 @@ end
             config = fixture(
                 tmp;
                 minimum_discharge = 0.5,
-                default_plume_depth = 5.0,
                 outlets = [
                     NVERiver(
                         vassdragsnr = "001.B", name = "Storelva (east)",
                         discharge_station = "1.1.0", temperature_station = "1.2.0",
-                        discharge_fraction = 2 // 3, plume_depth = Inf,
+                        discharge_fraction = 2 // 3,
                     ),
                     NVERiver(vassdragsnr = "002.A", discharge_station = "2.1.0"),
                 ],
@@ -3071,11 +3107,10 @@ end
             @test (outlets[1].longitude, outlets[1].latitude) == (10.3, 59.3)
             @test outlets[1].id == 1
             @test outlets[1].discharge_station == "1.1.0"
-            @test outlets[1].plume_depth == Inf
+            @test outlets[1].discharge_fraction == 2 / 3
             @test outlets[1].catchment_discharge ≈ 100.0
-            # Unset fields keep the derivation: NVE's name, the default plume, no temperature.
+            # Unset fields keep the derivation: NVE's name, no temperature.
             @test outlets[3].name == "Lilleelva"
-            @test outlets[3].plume_depth == 5.0
             @test isempty(outlets[3].temperature_station)
             # An untouched mouth is left exactly as discovered.
             @test outlets[2].name == "Toelva"
@@ -3144,7 +3179,7 @@ end
             # Reading a cache that was never written names the step that writes it.
             missing_config = NVERiversConfig(
                 data_root = joinpath(tmp, "empty"), outlets = NVERiver[], years = [2020],
-                minimum_discharge = 0.5,
+                minimum_discharge = 0.5, maximum_inflow_velocity = 1.0e-3,
             )
             @test_throws ErrorException forcing.nve_outlets(missing_config)
         end
@@ -3186,7 +3221,11 @@ end
 
             steps = hourly_time_steps([SourceRecord(date, stub, index)
                                        for (index, date) in enumerate(dates)])
+            # The reader raises netCDF's chunk cache for its own open only, so every other file the
+            # process opens keeps the library's setting.
+            cache = NCDatasets.get_chunk_cache()
             reader = FjordSim.Forcing.SourceReader(stub)
+            @test NCDatasets.get_chunk_cache() == cache
             try
                 step = first(steps)
 
@@ -3487,11 +3526,12 @@ end
         end
     end
 
-    @testset "river cell snapping" begin
+    @testset "river mouth placement" begin
         is_coastal_cell = FjordSim.Forcing.is_coastal_cell
         nearest_coastal_cell = FjordSim.Forcing.nearest_coastal_cell
-        coastal_water_mask = FjordSim.Forcing.coastal_water_mask
-        river_cells = FjordSim.Forcing.river_cells
+        grow_river_columns = FjordSim.Forcing.grow_river_columns
+        river_mouths = FjordSim.Forcing.river_mouths
+        column_areas = FjordSim.Forcing.column_areas
 
         # A hand-built mask exercises the two rules on their own: a cell is coastal when it is water
         # and touches land, so open water in the middle is not a valid river mouth.
@@ -3515,350 +3555,421 @@ end
         tie_mask[3, 5] = false
         @test nearest_coastal_cell(tie_mask, 3, 3, 10) == (3, 2, 1.0)
 
+        # The columns a river enters through grow from its mouth, nearest first, until they hold the
+        # area asked for. Unit areas make the count the area.
+        areas = ones(5, 5)
+        unclaimed = falses(5, 5)
+        columns, area = grow_river_columns(mask, areas, 2, 3, 3.0, unclaimed)
+        @test first(columns) == (2, 3)
+        @test length(columns) == 3 && area == 3.0
+        @test all(abs(i - 2) + abs(j - 3) == 1 for (i, j) in columns[2:end])
+        @test allunique(columns)
+        # A river always has its mouth, however small it is.
+        @test grow_river_columns(mask, areas, 2, 3, 0.0, unclaimed) == ([(2, 3)], 1.0)
+
+        # Connected rather than near: a land wall stops the growth, so a river that runs out of
+        # water on its own side does not jump across to the nearer cells beyond.
+        walled = trues(5, 5)
+        walled[3, :] .= false
+        columns, area = grow_river_columns(walled, areas, 2, 3, 20.0, unclaimed)
+        @test area == 10.0
+        @test all(i < 3 for (i, _) in columns)
+
+        # A column another river took is passed through but never taken, so no column carries two.
+        claimed = falses(5, 5)
+        claimed[2, 3] = true
+        columns, _ = grow_river_columns(mask, areas, 2, 3, 2.0, claimed)
+        @test (2, 3) ∉ columns
+        @test length(columns) == 2
+
         mktempdir() do tmp
-            # A 5x4 basin with a land column at i = 2, so columns 1 and 3 are coastal while columns
-            # 4 and 5 are open water. The land is off the domain edge because an outlet has to sit
-            # strictly inside the grid to be accepted at all.
+            # Columns 1 and 3 are coastal, 4 and 5 open water, and column 1 is cut off from the rest
+            # by the land column at i = 2.
             (; grid) = land_column_test_grid(joinpath(tmp, "bathymetry.nc"))
-
-            # The mask comes from the same water_mask prepare_forcing uses, taken at the surface.
-            mask = coastal_water_mask(grid, 0)
-            @test size(mask) == (5, 4)
-            @test !mask[2, 1]
-            @test mask[1, 1]
-            @test mask[3, 1]
-
             longitudes = Array(Oceananigans.Grids.λnodes(grid, Center()))
             latitudes = Array(Oceananigans.Grids.φnodes(grid, Center()))
+            cell_areas = column_areas(grid)
+            @test size(cell_areas) == (5, 4)
+            @test all(>(0), cell_areas)
 
             # An outlet on the land column relocates to the coast; one in open water does too; one
-            # outside the domain is dropped rather than clamped to the nearest edge cell.
+            # outside the domain is dropped rather than clamped to the nearest edge cell. A speed no
+            # river reaches keeps each to its one mouth column.
             locations = [
                 FjordSim.Forcing.RiverLocation(1, "on land", longitudes[2], latitudes[2]),
                 FjordSim.Forcing.RiverLocation(2, "open water", longitudes[4], latitudes[2]),
                 FjordSim.Forcing.RiverLocation(3, "outside", 20.0, latitudes[2]),
             ]
-            cells = river_cells(grid, locations, 10, 0, zeros(length(locations)))
-            @test length(cells) == 2
-            @test [cell.location.id for cell in cells] == [1, 2]
-            @test (cells[1].i, cells[1].j, cells[1].distance) == (1, 2, 1.0)
-            @test (cells[2].i, cells[2].j, cells[2].distance) == (3, 2, 1.0)
-            @test all(mask[cell.i, cell.j] for cell in cells)
+            mouths = river_mouths(grid, locations, 10, ones(3), Inf)
+            @test [mouth.location.id for mouth in mouths] == [1, 2]
+            @test (mouths[1].i, mouths[1].j, mouths[1].distance) == (1, 2, 1.0)
+            @test (mouths[2].i, mouths[2].j, mouths[2].distance) == (3, 2, 1.0)
+            @test [mouth.columns for mouth in mouths] == [[(1, 2)], [(3, 2)]]
+            @test mouths[1].area == cell_areas[1, 2]
 
             # An outlet sitting exactly on the outermost node counts as outside, matching the
-            # reference's strict bounds test.
+            # reference's strict bounds test; with no reach, the on-land outlet is dropped too
+            # rather than written into land.
             edge = FjordSim.Forcing.RiverLocation(4, "on the edge", longitudes[1], latitudes[2])
-            @test isempty(river_cells(grid, [edge], 10, 0, [0.0]))
+            @test isempty(river_mouths(grid, [edge], 10, [1.0], Inf))
+            @test isempty(river_mouths(grid, locations[1:1], 0, [1.0], Inf))
 
-            # With no reach, the on-land outlet is dropped too rather than written into land.
-            @test isempty(river_cells(grid, [locations[1]], 0, 0, [0.0]))
+            # A river spreads over as many columns as its peak discharge needs to enter no faster
+            # than the speed asked for, and only through water connected to its mouth.
+            velocity = 1.0e-3
+            peak = velocity * 2.5 * cell_areas[3, 2]
+            spread = only(river_mouths(grid, locations[2:2], 10, [peak], velocity))
+            @test length(spread.columns) == 3
+            @test peak / spread.area <= velocity
+            @test first(spread.columns) == (3, 2)
+            @test all(i >= 3 for (i, _) in spread.columns)
 
-            # A river is relaxed into the surface level alone, so the column beneath it is what has
-            # to carry the exchange that freshening drives — one cell cannot, and runs to 64 psu.
-            # `minimum_levels` masks the too-shallow columns out of the coastal mask itself, which
-            # is why `is_coastal_cell` and `nearest_coastal_cell` need no depth argument: a column
-            # the river cannot enter simply counts as shore.
-            levels = dropdims(
-                sum(FjordSim.Forcing.water_mask(grid, Center, Center, nothing); dims = 3); dims = 3,
+            # Two rivers on one mouth: the larger is placed first and keeps it, the smaller spreads
+            # around it, and neither shares a column. The result keeps the order it was given.
+            small = FjordSim.Forcing.RiverLocation(5, "small", longitudes[4], latitudes[2])
+            large = FjordSim.Forcing.RiverLocation(6, "large", longitudes[3], latitudes[2])
+            pair = river_mouths(grid, [small, large], 10, [peak / 2, peak], velocity)
+            @test [mouth.location.id for mouth in pair] == [5, 6]
+            @test first(pair[2].columns) == (3, 2)
+            @test (3, 2) ∉ pair[1].columns
+            @test isempty(intersect(pair[1].columns, pair[2].columns))
+
+            # Column 1 holds four cells of water, so a river there needing more takes all of them
+            # and says it enters faster than asked.
+            stranded = @test_logs (:warn, r"reaches only") river_mouths(
+                grid, locations[1:1], 10, [velocity * 10 * cell_areas[1, 2]], velocity,
             )
-            @test coastal_water_mask(grid, 0) == coastal_water_mask(grid, 1)
-            @test all(coastal_water_mask(grid, maximum(levels)) .<= coastal_water_mask(grid, 0))
-            @test !any(coastal_water_mask(grid, maximum(levels) + 1))
+            @test sort(only(stranded).columns) == [(1, j) for j in 1:4]
+        end
+    end
 
-            # Demanding more levels than any column has drops every outlet rather than placing one
-            # in a column that cannot carry it.
-            @test isempty(
-                river_cells(grid, locations, 10, maximum(levels) + 1, zeros(length(locations))),
+    @testset "river beds" begin
+        narrow_water = FjordSim.Forcing.narrow_water
+        river_bed_head = FjordSim.Forcing.river_bed_head
+        river_mouths = FjordSim.Forcing.river_mouths
+
+        # A basin along the south with a one-cell channel running up from it at i = 6: the basin is
+        # wide enough for the disk, so only the channel is narrow, and the open southern and side
+        # edges do not make the water beside them narrow.
+        water = falses(12, 12)
+        water[:, 1:6] .= true
+        water[6, 7:11] .= true
+        narrow = narrow_water(water, 2)
+        @test findall(narrow) == [CartesianIndex(6, j) for j in 7:11]
+
+        # An outlet at the channel's seaward end, or beside it, moves to the head; one on the
+        # basin's coast away from any channel stays.
+        @test river_bed_head(water, narrow, 6, 6) == (6, 11)
+        @test river_bed_head(water, narrow, 5, 6) == (6, 11)
+        @test river_bed_head(water, narrow, 2, 6) == (2, 6)
+
+        # A water body narrow all through has no open water to measure from, so nothing moves.
+        strip = falses(12, 12)
+        strip[3, 3:8] .= true
+        @test river_bed_head(strip, narrow_water(strip, 2), 3, 3) == (3, 3)
+
+        mktempdir() do tmp
+            bottom_height = [water[i, j] ? -20.0 : 0.0 for i in 1:12, j in 1:12]
+            (; grid) = immersed_test_grid(
+                joinpath(tmp, "bathymetry.nc"); size = (12, 12, 2), bottom_height,
             )
+            longitudes = Array(Oceananigans.Grids.λnodes(grid, Center()))
+            latitudes = Array(Oceananigans.Grids.φnodes(grid, Center()))
+            areas = FjordSim.Forcing.column_areas(grid)
+
+            # The river enters at the head and its columns grow down the bed.
+            outlet = FjordSim.Forcing.RiverLocation(1, "channel", longitudes[6], latitudes[6])
+            velocity = 1.0e-3
+            peak = velocity * 2.5 * maximum(areas)
+            mouths = @test_logs (:info, r"up the river bed") river_mouths(
+                grid, [outlet], 10, [peak], velocity,
+            )
+            mouth = only(mouths)
+            @test (mouth.i, mouth.j) == (6, 11)
+            @test mouth.columns == [(6, 11), (6, 10), (6, 9)]
         end
     end
 
     @testset "add rivers round-trip" begin
+        column_areas = FjordSim.Forcing.column_areas
+
         mktempdir() do tmp
             (; grid) = land_column_test_grid(joinpath(tmp, "bathymetry.nc"))
-
             longitudes = Array(Oceananigans.Grids.λnodes(grid, Center()))
             latitudes = Array(Oceananigans.Grids.φnodes(grid, Center()))
+            cell_areas = column_areas(grid)
 
-            # One outlet on the land column, which relocates to the coastal cell (1, 2). "N" is a
-            # variable this forcing file does not carry, so it must be skipped, not fail.
+            # The axis is daily from the window's first instant, extended past its last.
+            start = DateTime(2020, 1, 1)
+            coverage = (start, start + Day(1) + Hour(6))
+            times = FjordSim.Forcing.river_forcing_times(coverage)
+            @test times == [start, start + Day(1), start + Day(2)]
+
+            # One outlet on the land column, which relocates to the coastal cell (1, 2), with a peak
+            # discharge needing 1.5 columns at the speed asked for — so it takes two. "N" names no
+            # tracer of any model here, and is written all the same: the file carries what the
+            # dataset offers, and the run picks what it needs.
+            discharge = [10.0 20.0 30.0]
             rivers = StubRivers(
                 tmp,
-                "forcing_rivers.nc",
-                3600.0,
-                10,
+                "rivers.nc",
                 [FjordSim.Forcing.RiverLocation(7, "test river", longitudes[2], latitudes[2])],
+                discharge,
                 Dict(
-                    "T" => Float32[3.0 4.0],
-                    "S" => Float32[0.0 0.0],
-                    "N" => Float32[9.0 9.0],
-                ),
+                    "T" => Float32[3 4 5],
+                    "S" => Float32[0 0 0],
+                    "N" => Float32[9 9 9],
+                );
+                maximum_inflow_velocity = 30.0 / (1.5 * cell_areas[1, 2]),
             )
             forcing_config = test_forcing_config(data_root = tmp, rivers = rivers)
             @test forcing_config.rivers isa AbstractRiverConfig
             @test all(isconcretetype, fieldtypes(typeof(forcing_config)))
 
-            # The boundary lambda is nonzero, so the assertions below can tell a river cell's own
-            # lambda from the band's.
-            write_prepared_forcing(forcing_path(forcing_config); size = (5, 4, 2), lambda = 2.0f-5)
-
-            result = add_rivers(grid, forcing_config)
-            @test result.output_file == joinpath(tmp, "forcing_rivers.nc")
-            @test result.variables == ["S", "T"]  # "N" is not in the file, so it is skipped
-            @test length(result.cells) == 1
-            @test (result.cells[1].i, result.cells[1].j) == (1, 2)
-
-            NCDataset(result.output_file) do written
-                # The river cell carries the river values and the river lambda at the surface, for
-                # every time step.
-                @test written["T"][1, 2, 2, :] == Float32[3.0, 4.0]
-                @test written["S"][1, 2, 2, :] == Float32[0.0, 0.0]
-                @test all(written["T_lambda"][1, 2, 2, :] .≈ Float32(1 / 3600))
-                @test all(written["S_lambda"][1, 2, 2, :] .≈ Float32(1 / 3600))
-
-                # ...and nothing else moves: not the level below, not a neighbouring cell, not the
-                # variables the river dataset did not name.
-                @test written["T"][1, 2, 1, :] == Float32[1.0, 1.0]
-                @test all(written["T_lambda"][1, 2, 1, :] .== 2.0f-5)
-                @test written["T"][1, 3, 2, :] == Float32[1.0, 1.0]
-                @test all(written["T_lambda"][1, 3, 2, :] .== 2.0f-5)
-                @test all(written["u"][:, :, :, :] .== 1.0f0)
-                @test !haskey(written, "N")
-            end
-
-            # The prepared forcing itself is left alone, so the step can be re-run.
-            NCDataset(forcing_path(forcing_config)) do original
-                @test all(original["T"][:, :, :, :] .== 1.0f0)
-                @test all(original["T_lambda"][:, :, :, :] .== 2.0f-5)
-            end
-
-            # The same river with a plume deep enough to reach the bottom writes *both* levels.
-            # The grid's faces are [-20, -10, 0], so 15 m covers the whole two-cell column while
-            # the surface-only run above covered one — and that is the whole difference between
-            # relaxing a river bed and relaxing the top of an estuary it does not have.
-            plume_rivers = StubRivers(
-                tmp,
-                "forcing_rivers_plume.nc",
-                3600.0,
-                10,
-                [FjordSim.Forcing.RiverLocation(7, "test river", longitudes[2], latitudes[2])],
-                Dict("T" => Float32[3.0 4.0], "S" => Float32[0.0 0.0]),
-                false;
-                plume_depth = 15.0,
-            )
-            plume_config = test_forcing_config(data_root = tmp, rivers = plume_rivers)
-            plume_result = add_rivers(grid, plume_config)
-            @test plume_result.cells[1].levels == 1:2
-
-            NCDataset(plume_result.output_file) do written
-                # Both levels of the river column now carry the river values and lambda...
-                for level = 1:2
-                    @test written["T"][1, 2, level, :] == Float32[3.0, 4.0]
-                    @test written["S"][1, 2, level, :] == Float32[0.0, 0.0]
-                    @test all(written["T_lambda"][1, 2, level, :] .≈ Float32(1 / 3600))
-                end
-
-                # ...while a neighbouring column is untouched at every level, so a plume widens the
-                # write vertically and not horizontally.
-                for level = 1:2
-                    @test written["T"][1, 3, level, :] == Float32[1.0, 1.0]
-                    @test all(written["T_lambda"][1, 3, level, :] .== 2.0f-5)
-                end
-            end
-        end
-    end
-
-    @testset "standalone rivers" begin
-        mktempdir() do tmp
-            (; grid) = land_column_test_grid(joinpath(tmp, "bathymetry.nc"))
-
-            longitudes = Array(Oceananigans.Grids.λnodes(grid, Center()))
-            latitudes = Array(Oceananigans.Grids.φnodes(grid, Center()))
-            location = FjordSim.Forcing.RiverLocation(7, "test river", longitudes[2], latitudes[2])
-
-            # Two days plus the step past the window's end: a daily axis anchored at `start_date`
-            # covering `start_date + 1day`, which is what `river_forcing_times` builds.
-            coverage = (DateTime(2020, 1, 1), DateTime(2020, 1, 2))
-            dates = [DateTime(2020, 1, 1), DateTime(2020, 1, 2)]
-            rivers(; standalone) = StubRivers(
-                tmp,
-                "forcing_rivers.nc",
-                3600.0,
-                10,
-                [location],
-                Dict("T" => Float32[3.0 4.0], "S" => Float32[0.0 0.0]),
-                standalone,
-            )
-            forcing_config = test_forcing_config(data_root = tmp, rivers = rivers(standalone = true))
-            @test all(isconcretetype, fieldtypes(typeof(forcing_config)))
-
-            # No prepared forcing exists, and none is needed: the whole point of `standalone`.
+            # No prepared forcing exists, and none is needed: the river file stands alone.
             @test !isfile(forcing_path(forcing_config))
             result = add_rivers(grid, forcing_config; coverage)
-            @test result.output_file == joinpath(tmp, "forcing_rivers.nc")
-            @test result.times == dates
-            @test result.variables == ["S", "T"]
             @test !isfile(forcing_path(forcing_config))
+            @test result.output_file == joinpath(tmp, "rivers.nc")
+            @test result.variables == ["N", "S", "T"]
+            @test result.times == times
 
-            NCDataset(result.output_file) do written
-                # The layout is the prepared-forcing contract, so `forcing_from_file`'s dimension
-                # check against the grid holds — that is what makes the file readable at all.
-                for (name, expected) in
-                    ("Nx" => 5, "Ny" => 4, "Nz" => 2, "Nx_faces" => 6, "Ny_faces" => 5, "time" => 2)
-                    @test written.dim[name] == expected
+            mouth = only(result.mouths)
+            @test (mouth.i, mouth.j) == (1, 2)
+            @test first(mouth.columns) == (1, 2)
+            @test length(mouth.columns) == 2
+            @test all(i == 1 for (i, _) in mouth.columns)   # column 1 is cut off by the land
+
+            NCDataset(result.output_file) do ds
+                @test DateTime.(ds["time"][:]) == times
+                # The grid check the reader makes against a prepared forcing file holds unchanged.
+                @test (ds.dim["Nx"], ds.dim["Ny"], ds.dim["Nz"]) == (5, 4, 2)
+
+                owner = ds["river"][:, :]
+                @test sort(Tuple.(findall(>(0), owner))) == sort(mouth.columns)
+                @test ds["river_id"][:] == [7]
+                @test ds["river_name"][:] == ["test river"]
+                @test (ds["river_i"][1], ds["river_j"][1]) == (1, 2)
+                @test ds["discharge"][:, :] == discharge
+
+                # The inflow is the discharge over the river's own area, so the volume it adds is
+                # exactly the discharge, record by record, and nothing enters anywhere else.
+                inflow = ds["inflow"][:, :, :]
+                for index in eachindex(times)
+                    @test sum(inflow[:, :, index] .* cell_areas) ≈ discharge[index] rtol = 1e-6
+                    @test all(iszero, inflow[:, :, index][owner .== 0])
                 end
-                @test DateTime.(written["time"][:]) == dates
-                @test written.attrib["rivers_only"] == "true"
 
-                # The river cell carries its values and lambda at the surface, for every step...
-                @test written["T"][1, 2, 2, :] == Float32[3.0, 4.0]
-                @test all(written["T_lambda"][1, 2, 2, :] .≈ Float32(1 / 3600))
-
-                # ...and every other cell is empty rather than zero-valued, which the reader turns
-                # into the same land sentinel a dry cell gets: no forcing anywhere but the river.
-                @test all(ismissing, written["T"][1, 3, 2, :])
-                @test all(iszero, written["T_lambda"][1, 3, 2, :])
-
-                # Nothing but the surface level is written at all, and only the variables the river
-                # dataset named exist.
-                @test all(ismissing, written["T"][1, 2, 1, :])
-                @test !haskey(written, "u")
+                # The values sit on the river's columns, and nowhere else — which the run reads as
+                # "nothing enters here".
+                T = coalesce.(ds["T"][:, :, :], NaN32)
+                for (i, j) in mouth.columns
+                    @test T[i, j, :] == Float32[3, 4, 5]
+                end
+                @test all(isnan, T[:, :, 1][owner .== 0])
+                @test all(==(9.0f0), coalesce.(ds["N"][1, 2, :], NaN32))
             end
 
-            # The axis reaches past the window, so `validate_time_coverage` accepts a run that ends
-            # inside the last day rather than exactly on a record.
-            @test first(result.times) <= first(coverage)
-            @test last(result.times) >= last(coverage)
-
-            # A standalone file has no ocean state in it, so starting a run from one is refused
-            # rather than silently beginning at T = S = 0 everywhere.
-            @test_throws ErrorException FjordSim.Simulations.forcing_state(
-                result.output_file, grid, first(dates), (:T, :S),
+            # The output must never be the prepared forcing it sits beside.
+            clash = StubRivers(
+                tmp, basename(forcing_path(forcing_config)), rivers.locations, discharge, rivers.series,
+            )
+            @test_throws ErrorException add_rivers(
+                grid, test_forcing_config(data_root = tmp, rivers = clash); coverage,
             )
 
-            # Without a run window there is no axis to build, and no prepared file to fall back on.
+            # The axis comes from the run window, so a setup with no simulation config has none.
             @test_throws ErrorException add_rivers(grid, forcing_config)
 
-            # ...while a non-standalone config still demands the prepared forcing, naming the step
-            # that writes it — a forgotten `prepare_forcing` must not silently become a river-only run.
-            plain = test_forcing_config(data_root = tmp, rivers = rivers(standalone = false))
-            @test_throws ErrorException add_rivers(grid, plain; coverage)
-
-            # A standalone file prefills exactly the levels its rivers reach, rather than only the
-            # surface, so `write_rivers` never patches a chunk that was never written.
-            deep = StubRivers(
-                tmp,
-                "forcing_rivers_plume.nc",
-                3600.0,
-                10,
-                [location],
-                Dict("T" => Float32[3.0 4.0]),
-                true;
-                plume_depth = 15.0,
+            # A discharge of the wrong shape, or one that would take water out, is refused rather
+            # than written; so is an inflow speed that could never be met.
+            short = StubRivers(tmp, "short.nc", rivers.locations, [10.0 20.0], rivers.series)
+            @test_throws ErrorException add_rivers(
+                grid, test_forcing_config(data_root = tmp, rivers = short); coverage,
             )
-            deep_result = add_rivers(
-                grid, test_forcing_config(data_root = tmp, rivers = deep); coverage,
+            negative = StubRivers(tmp, "negative.nc", rivers.locations, [10.0 -1.0 0.0], rivers.series)
+            @test_throws ErrorException add_rivers(
+                grid, test_forcing_config(data_root = tmp, rivers = negative); coverage,
             )
-            @test deep_result.cells[1].levels == 1:2
+            still = StubRivers(
+                tmp, "still.nc", rivers.locations, discharge, rivers.series; maximum_inflow_velocity = 0.0,
+            )
+            @test_throws ArgumentError add_rivers(
+                grid, test_forcing_config(data_root = tmp, rivers = still); coverage,
+            )
+        end
+    end
 
-            NCDataset(deep_result.output_file) do written
-                for level = 1:2
-                    @test written["T"][1, 2, level, :] == Float32[3.0, 4.0]
-                    @test all(written["T_lambda"][1, 2, level, :] .≈ Float32(1 / 3600))
-                    # A non-river cell of a prefilled level is still empty, so the prefill adds
-                    # levels to patch without adding forcing anywhere.
-                    @test all(ismissing, written["T"][1, 3, level, :])
-                    @test all(iszero, written["T_lambda"][1, 3, level, :])
-                end
+    @testset "river forcing terms" begin
+        river_forcing = FjordSim.Forcing.river_forcing
+        combine_forcing = FjordSim.Forcing.combine_forcing
+        read_river_columns = FjordSim.Forcing.read_river_columns
+
+        # Two forcing sets as one: a field forced by both gets the pair, which Oceananigans adds up.
+        @test combine_forcing((T = 1, u = 2), (T = 3, η = 4)) == (T = (1, 3), u = 2, η = 4)
+        @test combine_forcing((T = 1,), (;)) == (T = 1,)
+
+        # A setup with no rivers adds no term, and has no columns.
+        @test river_forcing(nothing, nothing, nothing, (:T, :S), nothing) == (;)
+        @test isnothing(read_river_columns(nothing))
+        @test isnothing(FjordSim.Forcing.river_date_range(nothing))
+
+        mktempdir() do tmp
+            (; grid) = land_column_test_grid(joinpath(tmp, "bathymetry.nc"))
+            longitudes = Array(Oceananigans.Grids.λnodes(grid, Center()))
+            latitudes = Array(Oceananigans.Grids.φnodes(grid, Center()))
+            start = DateTime(2020, 1, 1)
+            coverage = (start, start + Day(1))
+            location = FjordSim.Forcing.RiverLocation(7, "test river", longitudes[2], latitudes[2])
+
+            # Temperature changes over the day and the second river carries none at all.
+            rivers = StubRivers(
+                tmp, "rivers.nc", [location], [10.0 10.0],
+                Dict("T" => Float32[3 5], "S" => Float32[0 0]); maximum_inflow_velocity = Inf,
+            )
+            mouth = only(add_rivers(grid, test_forcing_config(data_root = tmp, rivers = rivers); coverage).mouths)
+            @test FjordSim.Forcing.river_date_range(rivers) == (start, start + Day(1))
+            @test read_river_columns(rivers) == (; target_i = [1], target_j = [2])
+
+            # Every tracer the model carries, whether or not the file has it: `N` is in neither
+            # here, `e` is carried but no river has any.
+            forcing = @test_logs (:info, r"names no e") match_mode = :any river_forcing(
+                rivers, grid, river_forcing_path(rivers), (:T, :S, :e), start,
+            )
+            @test keys(forcing) == (:η, :T, :S, :e)
+            @test forcing.η isa FjordSim.Forcing.RiverInflow
+            @test forcing.S isa FjordSim.Forcing.RiverTracerSource
+
+            clock = Oceananigans.TimeSteppers.Clock(time = 0.0)
+            Nz = size(grid, 3)
+            w = 10.0 / mouth.area
+
+            # The free surface rises at the inflow speed in the river column, and nowhere else. It
+            # reads no field at all, which is what lets the split-explicit substeps call it.
+            @test forcing.η(1, 2, Nz + 1, grid, clock, nothing) ≈ w rtol = 1e-6
+            @test forcing.η(4, 2, Nz + 1, grid, clock, nothing) == 0
+
+            # In the top cell, the inflow replaces what it carried in — the cell's own value — with
+            # the river's: w (c_r − c) / Δz.
+            T = CenterField(grid)
+            S = CenterField(grid)
+            set!(T, 10)
+            set!(S, 35)
+            fields = (; T, S)
+            Δz = 10.0
+            @test forcing.S(1, 2, Nz, grid, clock, fields) ≈ w * (0 - 35) / Δz rtol = 1e-6
+            @test forcing.T(1, 2, Nz, grid, clock, fields) ≈ w * (3 - 10) / Δz rtol = 1e-6
+            # Below the top cell, and outside the river's columns, it is zero.
+            @test forcing.S(1, 2, Nz - 1, grid, clock, fields) == 0
+            @test forcing.S(4, 2, Nz, grid, clock, fields) == 0
+
+            # Halfway through the day the river value is halfway between its two records.
+            noon = Oceananigans.TimeSteppers.Clock(time = 12 * 3600.0)
+            @test forcing.T(1, 2, Nz, grid, noon, fields) ≈ w * (4 - 10) / Δz rtol = 1e-6
+
+            # A tracer the model carries and the file does not name enters at zero: `e` here.
+            e = CenterField(grid)
+            set!(e, 2)
+            @test forcing.e(1, 2, Nz, grid, clock, (; T, S, e)) ≈ w * (0 - 2) / Δz rtol = 1e-6
+            @test forcing.e(4, 2, Nz, grid, clock, (; T, S, e)) == 0
+
+            # A river whose value is `NaN` would carry the water it enters, which is unstable, so
+            # the file is refused rather than written.
+            ambient = StubRivers(
+                tmp, "ambient.nc", [location], [10.0 10.0],
+                Dict("T" => Float32[NaN NaN], "S" => Float32[0 0]); maximum_inflow_velocity = Inf,
+            )
+            @test_throws "non-finite T" add_rivers(
+                grid, test_forcing_config(data_root = tmp, rivers = ambient); coverage,
+            )
+
+            # A river file written before rivers were a volume source carries no inflow, and is
+            # refused with the step that rewrites it rather than read as no rivers at all.
+            stale = StubRivers(tmp, "stale.nc", [location], [10.0 10.0], Dict{String,Matrix{Float32}}())
+            NCDataset(river_forcing_path(stale), "c") do ds
+                FjordSim.Forcing.define_forcing_dimensions!(ds, grid, [start, start + Day(1)])
             end
+            @test_throws "add_rivers" river_forcing(stale, grid, river_forcing_path(stale), (:T,), start)
         end
     end
 
-    @testset "river plume levels" begin
-        plume_levels = FjordSim.Forcing.plume_levels
-        column_wet_levels = FjordSim.Forcing.column_wet_levels
-        river_level_range = FjordSim.Forcing.river_level_range
-
-        # `oslofjorden`'s real 24 faces, so the table in the plume docstring is checked against the
-        # grid it was measured on rather than a synthetic one.
-        faces = [
-            -400.0, -366.5, -333.0, -299.5, -266.0, -232.5, -199.0, -165.5,
-            -132.0, -105.0, -83.0, -66.0, -52.0, -41.0, -32.0, -25.0,
-            -19.0, -14.5, -10.8, -7.9, -5.5, -3.7, -2.2, -1.0, 0.0,
-        ]
-        Nz = length(faces) - 1
-        @test Nz == 24
-
-        # Zero is the default and means the surface cell alone — exactly what the pipeline wrote
-        # before plumes existed, which is what keeps every existing river source unchanged.
-        @test plume_levels(faces, Nz, 0.0) == 24:24
-
-        # A cell joins the plume when its *top* face is within the depth, so 5 m reaches the cell
-        # whose top is at -3.7 m and stops at the one whose top is at -5.5 m: four cells, 5.5 m.
-        @test plume_levels(faces, Nz, 5.0) == 21:24
-        @test -faces[21] == 5.5
-        @test plume_levels(faces, Nz, 10.0) == 19:24
-        @test -faces[19] == 10.8
-
-        # `Inf` is the whole wet column and never reaches into rock: a column with three wet cells
-        # gets three, not all 24.
-        @test plume_levels(faces, Nz, Inf) == 1:24
-        @test plume_levels(faces, 3, Inf) == 22:24
-        # ...and the clip binds a finite depth too, so a deep plume in a shallow column is the column.
-        @test plume_levels(faces, 2, 10.0) == 23:24
-
-        # The surface cell is always in the range, whatever the depth, so a river is never written
-        # nowhere — including in a column with a single wet cell.
-        for depth in (0.0, 0.5, 1.0, 5.0, Inf)
-            @test last(plume_levels(faces, Nz, depth)) == Nz
-            @test plume_levels(faces, 1, depth) == 24:24
-        end
-
+    @testset "river budget" begin
+        # The point of rivers as a volume source: the free surface takes up exactly the volume the
+        # rivers add, and the salt in the domain changes only by what the river water carries. A
+        # closed basin, so nothing leaves through a boundary.
         mktempdir() do tmp
-            (; grid) = land_column_test_grid(joinpath(tmp, "bathymetry.nc"))
+            Nx, Ny, Nz = 8, 8, 4
+            bottom_height = fill(-40.0, (Nx, Ny))
+            bottom_height[1, :] .= 0.0      # a coast on the west, for the mouth to snap to
+            (; grid) = immersed_test_grid(
+                joinpath(tmp, "bathymetry.nc"); size = (Nx, Ny, Nz), halo = (7, 7, 7), bottom_height,
+            )
+            longitudes = Array(Oceananigans.Grids.λnodes(grid, Center()))
+            latitudes = Array(Oceananigans.Grids.φnodes(grid, Center()))
+            start = DateTime(2020, 1, 1)
+            discharge = 1000.0
+            S₀ = 35.0
+            T₀ = 10.0
+            Δt = 60.0
+            steps = 200
+            elapsed = steps * Δt
 
-            # `column_wet_levels` is `coastal_water_mask`'s own body, so the two must agree about
-            # what is wet — that is what keeps "water" meaning the same thing here as it does when
-            # `prepare_forcing` writes the file.
-            surface, levels = column_wet_levels(grid)
-            @test size(surface) == (5, 4)
-            @test surface == FjordSim.Forcing.coastal_water_mask(grid, 0)
-            @test all(levels[2, :] .== 0)   # the land column
-            @test all(levels[1, :] .== 2)   # a wet column, both levels
+            wet(i, j, k) = !Oceananigans.Grids.inactive_node(i, j, k, grid, Center(), Center(), Center())
+            volumes = [
+                FjordSim.Forcing.volume(i, j, k, grid, Center(), Center(), Center()) * wet(i, j, k)
+                for i in 1:Nx, j in 1:Ny, k in 1:Nz
+            ]
+            areas = FjordSim.Forcing.column_areas(grid) .* [wet(i, j, Nz) for i in 1:Nx, j in 1:Ny]
+            water = volumes .> 0
 
-            # A river's range is bounded by the water actually in its column.
-            @test plume_levels(Array(Oceananigans.Grids.znodes(grid, Face())), levels[1, 1], Inf) ==
-                  1:2
-        end
+            function run_river(name, river_values)
+                rivers = StubRivers(
+                    tmp, name,
+                    [FjordSim.Forcing.RiverLocation(1, "river", longitudes[2], latitudes[4])],
+                    fill(discharge, 1, 2),
+                    Dict(key => fill(Float32(value), 1, 2) for (key, value) in river_values),
+                )
+                add_rivers(
+                    grid, test_forcing_config(data_root = tmp, rivers = rivers);
+                    coverage = (start, start + Day(1)),
+                )
+                model = HydrostaticFreeSurfaceModel(
+                    grid;
+                    tracers = (:T, :S),
+                    buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState()),
+                    free_surface = SplitExplicitFreeSurface(grid; substeps = 30),
+                    tracer_advection = WENO(),
+                    momentum_advection = WENOVectorInvariant(),
+                    forcing = FjordSim.Forcing.river_forcing(
+                        rivers, grid, river_forcing_path(rivers), (:T, :S), start,
+                    ),
+                )
+                set!(model; T = T₀, S = S₀)
+                for _ in 1:steps
+                    time_step!(model, Δt)
+                end
+                η = Array(interior(model.free_surface.displacement))[:, :, 1]
+                return Array(interior(model.tracers.S)), Array(interior(model.tracers.T)), η
+            end
 
-        # The union of several rivers' ranges is contiguous, because every range ends at the
-        # surface — which is what lets `write_rivers` sweep it in one pass.
-        location(id) = FjordSim.Forcing.RiverLocation(id, "r$id", 10.0, 59.0)
-        cells = [
-            FjordSim.Forcing.RiverCell(location(1), 1, 1, 0.0, 24:24),
-            FjordSim.Forcing.RiverCell(location(2), 2, 2, 0.0, 21:24),
-        ]
-        @test river_level_range(cells) == 21:24
-        @test river_level_range(cells[1:1]) == 24:24
-    end
+            # A river carrying exactly the water it enters changes nothing but the volume: S and T
+            # stay uniform to round-off, and the free surface holds the discharge.
+            S, T, η = run_river("ambient.nc", ("S" => S₀, "T" => T₀))
+            @test sum(η .* areas) ≈ discharge * elapsed rtol = 1e-6
+            @test all(≈(S₀; rtol = 1e-12), S[water])
+            @test all(≈(T₀; rtol = 1e-12), T[water])
 
-    @testset "river lambdas" begin
-        river_lambdas = FjordSim.Forcing.river_lambdas
-
-        mktempdir() do tmp
-            (; grid) = land_column_test_grid(joinpath(tmp, "bathymetry.nc"))
-            location = FjordSim.Forcing.RiverLocation(1, "r", 10.0, 59.0)
-            cells = [FjordSim.Forcing.RiverCell(location, 1, 2, 0.0, 1:2)]
-
-            # The supertype fallback is the single value the pipeline wrote before the hook existed,
-            # so a river config that ignores it is unaffected by the hook's arrival.
-            rivers = StubRivers(tmp, "unused.nc", 3600.0, 10, [location], Dict{String,Matrix{Float32}}())
-            @test river_lambdas(rivers, cells, grid) == [Float32(1 / 3600)]
-            @test eltype(river_lambdas(rivers, cells, grid)) === Float32
-
-            # It is one entry per cell, in cells order — `write_rivers` indexes it positionally.
-            two = [cells[1], FjordSim.Forcing.RiverCell(location, 3, 2, 0.0, 2:2)]
-            @test length(river_lambdas(rivers, two, grid)) == 2
+            # A fresh river at the basin's temperature: the salt in the water column falls by the
+            # salt the inflow displaced, while the salt content of a linear free surface — the
+            # fixed cells plus the layer η above the top one — is unchanged, because fresh water
+            # brings none. T is untouched.
+            S, T, η = run_river("fresh.nc", ("S" => 0.0, "T" => T₀))
+            @test sum(η .* areas) ≈ discharge * elapsed rtol = 1e-6
+            content = sum(S .* volumes) + sum(S[:, :, Nz] .* η .* areas)
+            @test content ≈ S₀ * sum(volumes) rtol = 1e-6
+            @test sum(S .* volumes) - S₀ * sum(volumes) ≈ -S₀ * discharge * elapsed rtol = 1e-2
+            @test minimum(S[water]) < S₀
+            @test all(≈(T₀; rtol = 1e-12), T[water])
         end
     end
 end
@@ -4478,13 +4589,17 @@ end
         @test open_edges(test_boundaries_config(open_edges = :west)) == [:west]
         @test isempty(open_edges(nothing))
 
-        # A setup that configures rivers simulates the rivers-augmented copy, never the pre-rivers
-        # file. Both registered setups do; the no-rivers branch is covered by `no_rivers` below.
-        oslo = oslofjorden()
-        @test simulation_forcing_path(oslo) == river_forcing_path(oslo.forcing_config.rivers)
-        drammen = drammensfjorden()
-        @test simulation_forcing_path(drammen) == river_forcing_path(drammen.forcing_config.rivers)
-        @test simulation_forcing_path(drammen) != forcing_path(drammen.forcing_config)
+        # The rivers have a file of their own, so whatever a setup names, the simulation reads the
+        # forcing `prepare_forcing` wrote — never a copy carrying rivers — and the river file is a
+        # different one.
+        for name in setup_names()
+            config = fjord_config(name)
+            isnothing(config.forcing_config) && continue
+            @test simulation_forcing_path(config) == forcing_path(config.forcing_config)
+            rivers = config.forcing_config.rivers
+            isnothing(rivers) && continue
+            @test river_forcing_path(rivers) != forcing_path(config.forcing_config)
+        end
 
         # Every prerequisite is reported as the command that produces it, and every check runs before
         # anything is read or allocated, so the temporary root stays empty apart from the stub.
@@ -4501,20 +4616,26 @@ end
             # construction-time choice — hence two configs rather than one mutated.
             with_rivers = fjord(test_forcing_config(
                 data_root = tmp,
-                rivers = OF800RiversConfig(data_root = tmp),
+                rivers = StubRivers(
+                    tmp, "rivers.nc", FjordSim.Forcing.RiverLocation[], zeros(0, 0),
+                    Dict{String,Matrix{Float32}}(),
+                ),
             ))
             without_rivers = fjord(test_forcing_config(data_root = tmp))
 
             @test_throws "prepare_bathymetry" build_simulation(with_rivers)
 
             touch(bathymetry_path(bathymetry_config))
-            # A config naming rivers is told to run add_rivers, since that is what writes the file
-            # `simulation_forcing_path` picked; one naming none is told to run prepare_forcing.
-            @test_throws "add_rivers" build_simulation(with_rivers)
+            # Either way the prepared forcing comes next, since the rivers are not in it...
             @test isnothing(without_rivers.forcing_config.rivers)
             @test simulation_forcing_path(without_rivers) ==
                   forcing_path(without_rivers.forcing_config)
             @test_throws "prepare_forcing" build_simulation(without_rivers)
+            @test_throws "prepare_forcing" build_simulation(with_rivers)
+
+            # ...and a config naming rivers is then told to run add_rivers, which writes their file.
+            touch(forcing_path(with_rivers.forcing_config))
+            @test_throws "add_rivers" build_simulation(with_rivers)
         end
     end
 
@@ -5208,6 +5329,66 @@ end
             free_surface = ocean_model.free_surface
             @test all(isfinite, interior(free_surface.displacement))
             @test all(isfinite, interior(free_surface.barotropic_velocities.V))
+        end
+    end
+
+    @testset "run! with rivers" begin
+        # The rivers through the whole build: `add_rivers` against the simulation grid, then
+        # `build_simulation` reading the river file next to the forcing, combining the two sets of
+        # terms, and a run that takes the river's water into the free surface.
+        mktempdir() do tmp
+            Nx, Ny, Nz = 16, 16, 8
+            bottom_height = fill(-80.0, (Nx, Ny))
+            bottom_height[1:2, :] .= 0.0      # a coast on the west, for the mouth to snap to
+            bathymetry_config = test_bathymetry_config(data_root = tmp)
+            (; grid_config, grid) = immersed_test_grid(
+                bathymetry_path(bathymetry_config);
+                size = (Nx, Ny, Nz),
+                halo = (7, 7, 7),
+                bottom_height,
+            )
+            longitudes = Array(Oceananigans.Grids.λnodes(grid, Center()))
+            latitudes = Array(Oceananigans.Grids.φnodes(grid, Center()))
+
+            simulation_config = test_simulation_config(results_root = tmp)
+            coverage = coverage_window(simulation_config)
+            records = length(FjordSim.Forcing.river_forcing_times(coverage))
+            rivers = StubRivers(
+                tmp, "rivers.nc",
+                [FjordSim.Forcing.RiverLocation(1, "river", longitudes[2], latitudes[8])],
+                fill(500.0, 1, records),
+                Dict("T" => fill(4.0f0, 1, records), "S" => zeros(Float32, 1, records)),
+            )
+            forcing_config = test_forcing_config(data_root = tmp, rivers = rivers)
+            boundaries_config = test_boundaries_config(data_root = tmp)
+            write_prepared_forcing(forcing_path(forcing_config); size = (Nx, Ny, Nz))
+            write_prepared_boundaries(
+                boundary_data_path(boundaries_config);
+                size = (Nx, Ny, Nz),
+                dates = [DateTime(2020, 1, 1, 12), DateTime(2020, 1, 2, 12)],
+            )
+            add_rivers(grid, forcing_config; coverage)
+
+            config = FjordConfig(;
+                grid_config,
+                bathymetry_config,
+                forcing_config,
+                boundary_config = boundaries_config,
+                simulation_config,
+            )
+            simulation = build_simulation(config)
+            ocean_model = simulation.model.ocean.model
+
+            # The free surface is forced by the rivers alone; T and S by the prepared forcing and
+            # the rivers together.
+            @test ocean_model.forcing.η isa FjordSim.Forcing.RiverInflow
+            @test ocean_model.forcing.S isa Oceananigans.Forcings.MultipleForcings
+            @test ocean_model.forcing.T isa Oceananigans.Forcings.MultipleForcings
+
+            run!(simulation)
+            @test all(isfinite, interior(ocean_model.tracers.T))
+            @test all(isfinite, interior(ocean_model.tracers.S))
+            @test all(isfinite, interior(ocean_model.free_surface.displacement))
         end
     end
 end

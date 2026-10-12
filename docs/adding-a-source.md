@@ -5,8 +5,8 @@
 
 Every pipeline is a generic function on the config supertype plus a small set of hooks. Add a
 source by subtyping and overloading the hooks — never by editing the generic function. The
-adapter files (`src/Bathymetry/geonorge.jl`, `src/Forcing/norkyst.jl`, `src/Forcing/of800_rivers.jl`,
-`src/Forcing/nve_rivers.jl`) are the templates.
+adapter files (`src/Bathymetry/geonorge.jl`, `src/Forcing/norkyst.jl`, `src/Forcing/nve_rivers.jl`)
+are the templates.
 
 Grid — `AbstractGridConfig`:
 
@@ -48,29 +48,25 @@ Rivers — `AbstractRiverConfig`, consumed by `add_rivers`:
 | Hook | Required | Default |
 |---|---|---|
 | `river_locations(config)` → `Vector{RiverLocation}` | yes | none |
-| `river_series(config, times)` → `Dict` FjordSim name => `(river, time)` matrix | yes | none |
+| `river_discharge(config, times)` → `(river, time)` matrix in m³/s, finite and non-negative | yes | none |
+| `river_series(config, times)` → `Dict` FjordSim tracer name => `(river, time)` matrix of what the water carries; finite for every river the grid carries (no "ambient" value — unstable), and a tracer it omits enters at zero | yes | none |
 | `download_rivers(target_grid, config)` | only if it downloads | none |
 | `river_search_radius(config)` → cells to search for a coastal cell | no | `config.search_radius` |
-| `river_minimum_levels(config)` → wet levels a column must have to receive an outlet | no | `0`, accepting any water cell. Unlike `river_search_radius` the fallback reads no field, so a river config written before the hook existed keeps working; `OF800RiversConfig` overloads it |
-| `river_plume_depth(config, location)` → metres one river's relaxation reaches below the surface | no | `0.0`, the surface level alone. `Inf` asks for the whole wet column. Reads no field, for the same reason as the row above; `NVERiversConfig` overloads it |
-| `river_lambdas(config, cells, target_grid)` → `Vector{Float32}`, the coefficient at each cell | no | `1 / config.relaxation_timescale` everywhere. Takes the grid because a coefficient derived from discharge needs the plume volume; `NVERiversConfig` overloads it |
+| `river_maximum_inflow_velocity(config)` → m/s, the fastest a river's water may cross the surface of its columns | no | `config.maximum_inflow_velocity` |
 
-The last two are the extension points for a source whose rivers are *not* interchangeable — a plume
-depth per river and a coefficient scaled by river size. Both fallbacks reproduce what the pipeline did
-before they existed, so a source that ignores them is unaffected, and `of800_rivers.jl` does ignore
-both. See "`river_plume_depth` and `river_lambdas`" in `docs/architecture.md` (Forcing section) for
-why a depth rather than a level count, and why the λ cap is a stability requirement rather than a
-preference.
-
-Its `standalone` field decides whether `add_rivers` patches a copy of the prepared forcing or writes a
-river-only file of its own; see `docs/architecture.md` (Forcing section). A `standalone` config needs
-the setup to name a `simulation_config`, since the file's time axis comes from the run window.
+A river is a volume of water: `add_rivers` snaps each mouth to a coastal cell, gives it as many
+connected surface columns as its peak discharge needs to enter no faster than
+`maximum_inflow_velocity`, and writes the result — inflow speed and river values per column, on a
+daily axis over the run window — to a river file of its own. The run reads it as a free-surface source
+and a top-cell tracer source; see "Rivers as a volume source" in `docs/architecture.md` (Forcing
+section) for why that pair, and why the columns are spread. The speed bound is a vertical Courant
+number on the top cell, so it has no default: it belongs to the setup's grid and time step.
 
 A river config is not a `FjordConfig` field — it goes in the forcing config's `rivers` field,
-`nothing` for a setup with no rivers, because rivers are written into the forcing file itself. A
-variable `river_series` returns that the forcing file does not carry is skipped with a warning, so one
-river dataset can serve setups that prepare different variables — vacuously so for a `standalone`
-config, whose file carries exactly what `river_series` returned.
+`nothing` for a setup with no rivers. The file it writes stands beside the prepared forcing rather than
+inside it, so `add_rivers` needs only the bathymetry and the run window. Every `river_series` variable
+is written; the run uses those naming a model tracer and ignores the rest, so one river dataset can
+serve models with different tracers.
 
 Open-boundary data — `AbstractBoundaryDataConfig`, consumed by `prepare_boundaries`:
 

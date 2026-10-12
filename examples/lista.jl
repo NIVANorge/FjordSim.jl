@@ -130,21 +130,20 @@ FjordConfig(
         years            = years,
         rivers           = NVERiversConfig(
             data_root   = data_root,
-            output_file = "forcing_rivers_nve.nc",
-            plot_file   = "forcing_rivers_nve.png",
+            output_file = "rivers_nve.nc",
+            plot_file   = "rivers_nve.png",
             years       = years,
             # Mouths are discovered from NVE's ELVIS network and REGINE catchments. At 0.5 m³/s
             # that finds 20 of them, carrying 310.8 of the 315.0 m³/s that the 35 mouths above
             # 0.15 m³/s carry. Sira (130.5), Kvina (89.5) and Lygna (39.6) dominate.
             minimum_discharge = 0.5,
-            # A 5 m surface plume: four cells, to -5.5 m, on this grid.
-            default_plume_depth = 5.0,
-            minimum_levels = 0,
-            # A floor on 1/λ. λΔt stays at or below 0.3 even at the 3-minute `max_time_step`.
-            minimum_relaxation_timescale = 600.0,
+            # The vertical Courant bound on the 1 m top cell, as on `oslofjorden`: 1 mm/s is
+            # w·Δt/Δz = 0.18 at the 3-minute `max_time_step`. On 490 m cells most rivers need one
+            # column; the log of `add_rivers` states how many each got.
+            maximum_inflow_velocity = 1.0e-3,
             # Overrides, keyed by each mouth's terminal ELVIS `vassdragsnr` (from the discovery).
-            # Only the *mean* of a discharge series is used (λ = Q̄/V), so a gauge's job here is
-            # Q̄. Every series named here was checked for daily values over the run window.
+            # A gauge's daily series is the river's inflow, so its floods reach the fjord. Every
+            # series named here was checked for daily values over the run window.
             outlets = [
                 # Røynestad (25.85.0), 1139 km². Kvina is regulated by Sira-Kvina, which diverts
                 # its upper catchment to Sira: the gauge's 2024-2025 mean is 20.7 m³/s against

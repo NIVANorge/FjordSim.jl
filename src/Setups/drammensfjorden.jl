@@ -88,40 +88,37 @@ function drammensfjorden()
             architecture     = :auto,
             parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
             years            = [2020],
-            # Overloads river_locations, river_series and download_rivers (all required), plus
-            # river_minimum_levels, river_plume_depth and river_lambdas (all optional). Its own
-            # `data_root`: the ELVIS and REGINE caches record the domain they were fetched for
-            # under a fixed name, so sharing Oslofjord's `nve` directory would overwrite them.
+            # Overloads river_locations, river_series, river_discharge and download_rivers (all
+            # required). Its own `data_root`: the ELVIS and REGINE caches record the domain they
+            # were fetched for under a fixed name, so sharing Oslofjord's `nve` directory would
+            # overwrite them.
             rivers           = NVERiversConfig(
                 data_root         = data_root,
-                output_file       = "forcing_rivers_nve.nc",
-                plot_file         = "forcing_rivers_nve.png",
+                output_file       = "rivers_nve.nc",
+                plot_file         = "rivers_nve.png",
                 years             = [2020],
                 # Discovery at Oslofjord's threshold: every mouth NVE has in this domain carrying
-                # 0.5 m³/s or more, sized by its own REGINE catchment. It replaced an
-                # `OF800RiversConfig` that landed one river in the domain, 602 m from the nearest
-                # water. No river coordinate appears in this file.
+                # 0.5 m³/s or more, sized by its own REGINE catchment. It replaced the OF800
+                # dataset's outlet table, which landed one river in the domain, 602 m from the
+                # nearest water. No river coordinate appears in this file.
                 minimum_discharge = 0.5,
-                # 5 m of surface plume, which is 4 cells on the vertical grid above.
-                default_plume_depth = 5.0,
-                minimum_levels    = 0,
-                # A stability bound: at 99 m cells Drammenselva's peak discharge reaches λ·Δt > 1,
-                # which `ForcingFromFile` reads as an x-flux.
-                minimum_relaxation_timescale = 600.0,
+                # The vertical Courant bound on the 1 m top cell, as on `oslofjorden`: 1 mm/s is
+                # w·Δt/Δz = 0.18 at the 3-minute `max_time_step` below. On 99 m cells that spreads
+                # Drammenselva's flood over many more columns than Oslofjord's grid needs; the log
+                # of `add_rivers` states how many.
+                maximum_inflow_velocity = 1.0e-3,
                 # Overrides keyed by the mouth's terminal ELVIS `vassdragsnr`, both attaching an
                 # observed gauge to a mouth discovery finds anyway. They need `NVE_API_KEY` (free
                 # at https://hydapi.nve.no/Users); the map services do not.
                 outlets = [
                     # Mjøndalen bru carries discharge and temperature on one id, ~5 km above the
-                    # fjord. `Inf` asks for the whole wet column, since the cell is river bed
-                    # rather than estuary.
+                    # fjord.
                     NVERiver(
                         vassdragsnr = "012.A2", name = "Drammenselva",
                         discharge_station = "12.534.0", temperature_station = "12.534.0",
-                        plume_depth = Inf,
                     ),
                     # Lierelva at Oppsal, 223 km² of a 310 km² catchment. No temperature series,
-                    # so it runs freshwater-only.
+                    # so its water enters at the temperature of the fjord it enters.
                     NVERiver(vassdragsnr = "011.A0", discharge_station = "11.6.0"),
                 ],
             ),

@@ -147,17 +147,18 @@ six comments:
   is 7 cells or larger with a minimum width of 2 to 4 cells and bounding boxes like 4×8 and 5×4.
   Those are compact skerries, not the one-cell ridges the stage exists to remove, and raising the
   threshold would delete real topography.
-- **`NVERiversConfig` in place of `OF800RiversConfig`, with `minimum_levels = 0`** — the shallow-outlet
-  runaway that killed the run at day 11.5 is now handled by filling the column rather than by
-  relocating the outlet, so the two mechanisms are not stacked. `river_lambdas` scales λ by each
-  river's own mean discharge, where OF800 gave all nineteen outlets the same λ, and Glomma and
-  Drammenselva take `plume_depth = Inf` because their cells are river bed.
+- **`NVERiversConfig`, rivers as a volume source** — each river adds its daily discharge through
+  the surface of the columns around its mouth, spread until it enters no faster than
+  `maximum_inflow_velocity = 1e-3` m/s (a vertical Courant number of 0.18 through the 1 m top cell at
+  the 3-minute `max_time_step`). It replaced OF800's outlet table and a relaxation towards river
+  values that added no water; see "Rivers as a volume source" in `docs/architecture.md`.
 - **`minimum_discharge = 0.5`, and no stated coordinate anywhere** — the nine outlets this setup
   first carried were OF800's, and several were kilometres from their rivers; see "Outlet discovery"
   in `docs/architecture.md` (Forcing section) for the measurements. Discovery gives 21 mouths,
   including both of Glomma's, sized from their own REGINE catchments. Eight overrides add the gauges
-  that survive inspection; the other thirteen mouths are freshwater-only, which is what
-  `river_lambdas`' catchment-normal rule is for. Only four of the 21 carry water temperature —
+  that survive inspection; the other thirteen enter at their catchment normal, which is what
+  `river_discharge`'s catchment-normal rule is for. Only four of the 21 carry water temperature — the
+  rest enter at the temperature of the fjord water they join —
   Akerselva's gauge reads 21.2 °C mean, Lysakerelva's 19.6 °C mean and 37.2 °C peak, and
   Gjersjøelva's 2020 series is empty.
 - **Glomma is two rivers here**, `002.A21` (Østerelva) and `002.2A` (Vesterelva), both on

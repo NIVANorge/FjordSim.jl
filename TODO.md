@@ -60,6 +60,27 @@ that:
 Tasks:
 - [ ] Run a short sensitivity test, 60–90 days from the same start, with a lower `minimum_tke`.
       Measure the 50 m salinity trend at D-2 and Ep1.
+      - 13 Oct, after the volume-source rivers and the new bathymetry: `minimum_tke = 7e-7` for 27
+        days (`oslofjorden_validation_tke7e-7_30d`, cut short when GCE deleted the VM), against the
+        first 27 days of the full 7e-6 run. Over the first 26 days, the 50 m trend per 30 days is
+        D-2 +0.39 against +0.28 (the old run's −0.31), and Ep1 0.00 against −0.14 (old −0.55). The
+        new rivers stopped the 50 m freshening at both settings, and the floor differs by about 0.1,
+        too little to tell apart in 26 days.
+      - The only casts inside that window are Ep1 and Dk1 on 9 April (day 8). Both settings are too
+        salty in the top 5 m and too weakly stratified, and 7e-7 is closer. Salinity at 25 m minus
+        1 m is 11.0 observed at Ep1, against 9.3 at 7e-7, 7.3 at 7e-6 and 6.8 in the old run. Dk1
+        has 9.4 against 7.4, 6.2 and 5.8. At 1 m Ep1 is 20.1 observed, against 22.9 and 24.7. Below
+        20 m all runs are about 0.3–1.0 too salty and about 2 °C too cold (Ep1 6.0–6.6 °C against
+        8.2–8.5). The floor does not change that, so it is the starting state.
+      - NorKyst's surface-to-25 m difference of about 7 at Ep1 is weaker than that cast, so it is
+        not a reliable target for stratification in the inner fjord. Judge against the casts.
+      - With 7e-7 the thin surface layer in shallow bays reached 22–23 °C by day 27, against about
+        16–18 °C at 7e-6. No observations cover those bays.
+      - Next: `examples/oslofjorden_validation.jl` now sets 7e-7 itself, and the full validation is
+        to be rerun with it. The 7e-6 run it replaces is archived as
+        `oslofjorden_validation_2026-10-13` (27 days). Check it against the casts on 8 May (day 37,
+        inner fjord) and on 16 June and 5 July (days 76 and 95, the first at D-2 and D-3), and then
+        against the rest of the casts.
 - [ ] Measure numerical mixing from WENO plus `PartialCellBottom` z-levels on steep slopes, for
       example from the tracer variance budget, and compare it with CATKE's κ.
 - [ ] Revisit `HorizontalScalarBiharmonicDiffusivity`'s κ. NorKyst uses a 10 m² s⁻¹ harmonic κ on

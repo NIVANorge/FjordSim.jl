@@ -4,10 +4,11 @@
 #
 # It exists to answer one question — how does FjordSim, as it actually stands, score against the same
 # observations MET Norway scored their ROMS model FjordOs CL against? — so **nothing about the physics
-# is changed or retuned here**. The references are Røed et al., *A high-resolution, curvilinear ROMS
-# model for the Oslofjord*, METreport 4/2016, which documents FjordOs CL and its 1 April 2014 -
-# 31 December 2015 hindcast, and Hjelmervik et al., *Evaluation of the FjordOs-model*, METreport
-# 11/2017, which evaluates it against water level, currents, CTD profiles and fixed-point temperature.
+# is changed or retuned here** beyond the two departures under "What is different". The references
+# are Røed et al., *A high-resolution, curvilinear ROMS model for the Oslofjord*, METreport 4/2016,
+# which documents FjordOs CL and its 1 April 2014 - 31 December 2015 hindcast, and Hjelmervik
+# et al., *Evaluation of the FjordOs-model*, METreport 11/2017, which evaluates it against water
+# level, currents, CTD profiles and fixed-point temperature.
 #
 # Nothing in `src/` is specific to this file. What it uses from the package is general: the
 # Norkyst-v3 hindcast configs, the station writers, and `validate_simulation` with its Kartverket
@@ -28,8 +29,8 @@
 #
 # # What is reused from `oslofjorden()`, and why it is reused rather than copied
 #
-# The float type, the closure (every coefficient, the `BoundarySponge`, the CATKE `minimum_tke`
-# floor), the advection schemes (salinity's excepted, below), the boundary conditions and their two Marchesiello timescales, the
+# The float type, the closure (every coefficient and the `BoundarySponge`, the CATKE `minimum_tke`
+# floor excepted, below), the advection schemes (salinity's excepted, below), the boundary conditions and their two Marchesiello timescales, the
 # time stepping, the initial-condition rule, every bathymetry smoothing knob and the whole river
 # configuration are taken from the config `oslofjorden()` returns, not restated. A validation of a model that has drifted from
 # the model being validated is worth nothing, and a copy is exactly what drifts. So a change to any of
@@ -66,6 +67,10 @@
 # **Salinity advection.** Bounds-preserving WENO for S alone, because Numedalslågen is the river
 # that enters among two-level columns, and plain WENO drove salinity beside its mouth below
 # TEOS10's -32 psu floor at day 1.5. The measurement is at the statement, beside `model` below.
+#
+# **The vertical-mixing floor.** CATKE's `minimum_tke` at 7e-7 rather than `oslofjorden()`'s 7e-6,
+# because the 9 April 2014 NIVA casts are more stratified than the run was at 7e-6. The measurement
+# is beside `closure` below.
 #
 # **The writers.** A 640-day run cannot afford `oslofjorden()`'s three-hourly full-domain snapshots —
 # at 4.4 M cells a record is 89 MB, so that is roughly 450 GB — and a validation does not need them:
@@ -130,7 +135,7 @@
 # scope: FjordSim has no particle tracking.
 
 using FjordSim
-using Oceananigans: WENO
+using Oceananigans: WENO, CATKEVerticalDiffusivity
 using Oceananigans.Units
 using Dates: DateTime
 
@@ -289,9 +294,30 @@ simulation = base.simulation_config
 # Not changed in `oslofjorden()` itself, because a NamedTuple there would leave the NPZD example's
 # tracers on `Centered()`.
 scheme = simulation.model.tracer_advection
+
+# The other departure: CATKE's `minimum_tke` at 7e-7, a tenfold cut in the background diffusivity
+# that sets κ below about 6 m (see `oslofjorden()`), with the rest of the closure as it is there.
+# `oslofjorden()` keeps 7e-6 to fit basin-mean diffusivities from density budgets. Against the
+# NIVA casts of 9 April 2014 (day 8), the run with 7e-6 — rivers already a volume source — was too
+# salty in the top 5 m and too weakly stratified. Salinity at 25 m minus 1 m was 7.3 at Ep1 and
+# 6.2 at Dk1, against 11.0 and 9.4 observed. A 7e-7 run over the same days gave 9.3 and 7.4, with
+# the 1 m salinity at Ep1 22.9 against 24.7 at 7e-6 and 20.1 observed. Over 26 days the two differed
+# by about 0.1 in the 50 m salinity trend at D-2 and Ep1. See TODO.md › "Vertical mixing is too
+# strong".
+sponge = simulation.model.closure
+closure = BoundarySponge(
+    base        = (
+        CATKEVerticalDiffusivity(base.grid_config.float_type; minimum_tke = 7e-7),
+        sponge.base[2:end]...,
+    ),
+    width_cells = sponge.width_cells,
+    viscosity   = sponge.viscosity,
+    diffusivity = sponge.diffusivity,
+)
+
 model = CoupledHydrostaticSimulation(
     buoyancy           = simulation.model.buoyancy,
-    closure            = simulation.model.closure,
+    closure            = closure,
     tracer_advection   = (T = scheme, S = WENO(base.grid_config.float_type; bounds = (0, 40)), e = scheme),
     momentum_advection = simulation.model.momentum_advection,
     tracers            = simulation.model.tracers,

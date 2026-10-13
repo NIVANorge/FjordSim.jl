@@ -155,20 +155,6 @@ Viker. FjordSim inherits this error. The M2 current at Km1 is 5.6 cm/s, against 
       reference gauge (as FjordOs did) or force from a tidal atlas. This should be a boundary-config
       hook, not an edit to the generic pipeline.
 
-## Station output
-
-- [ ] In `StationWriter`, interpolate u and v to cell centres. Today u is sampled on the west face
-      and v on the south face, so a closed coastal face gives zero; Slagen's v is 0 at every level.
-- [ ] The `model_depth` attribute is the depth of a level face, not the water depth `h`. Either write
-      `h` as well or rename the attribute.
-- [ ] In `examples/oslofjorden_validation.jl`, move these stations to AquaMonitor's positions:
-      - Dk1 → 10.569384 E, 59.814999 N (now about 10 km off)
-      - Ep1 → 10.723783 E, 59.786301 N (2.8 km off)
-      - OF-1 → 10.6652 E, 59.0360 N (5 km off)
-
-      Also check `INNER_OSLOFJORD_STATIONS` (marked APPROXIMATE) against
-      `observations/niva_ctd/stations.csv`.
-
 ## Validation
 
 - [ ] `validate_simulation` reads only the newest run stamp (`station_files` takes

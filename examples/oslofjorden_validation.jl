@@ -180,13 +180,15 @@ const OSLOFJORD_MOORINGS = [
 
 # The ten NIVA CTD stations of the Ytre Oslofjord monitoring programme, from METreport 11/2017
 # Table 2. Exact, to four decimals. OF-1, OF-5 and D-3 are the three the report draws Hovmøller
-# diagrams for; OF-1, LA-1 and D-2 the three it overlays profiles at.
+# diagrams for; OF-1, LA-1 and D-2 the three it overlays profiles at. OF-1 alone is AquaMonitor's
+# position instead (`observations/niva_ctd/stations.csv`): the table's was 5 km east of where the
+# casts the validation scores against were taken. The other nine agree with AquaMonitor to 200 m.
 const OSLOFJORD_CTD_STATIONS = [
     Station(name = "D-2",  longitude = 10.4210, latitude = 59.6280),  # Inner Drammensfjord
     Station(name = "D-3",  longitude = 10.3140, latitude = 59.7060),  # Solumstrand
     Station(name = "LA-1", longitude = 10.0520, latitude = 59.0190),  # Larviksfjord
     Station(name = "MO-2", longitude = 10.6780, latitude = 59.4840),  # Kippenes
-    Station(name = "OF-1", longitude = 10.7540, latitude = 59.0410),  # Torbjørnskjær
+    Station(name = "OF-1", longitude = 10.6652, latitude = 59.0360),  # Torbjørnskjær
     Station(name = "OF-5", longitude = 10.4580, latitude = 59.4870),  # Breiangen
     Station(name = "S-9",  longitude = 11.1620, latitude = 59.1140),  # Haslau, Singlefjord
     Station(name = "SF-1", longitude = 10.2460, latitude = 59.0770),  # Sandefjord
@@ -195,13 +197,13 @@ const OSLOFJORD_CTD_STATIONS = [
 ]
 
 # The two deep basins of the Inner Oslofjord, monitored for hydrography and oxygen by NIVA on behalf
-# of Fagrådet since 1973. Not in either METreport, so these are APPROXIMATE and are to be replaced
-# from the programme's own station register. They are here because deep-water renewal in these two
-# basins is what `docs/setups.md` names as "what this domain is judged on", and neither report
-# covers it — this is the part of the validation that goes beyond reproducing FjordOs.
+# of Fagrådet since 1973. Not in either METreport; the positions are the programme's own, from
+# AquaMonitor (`observations/niva_ctd/stations.csv`). Exact. They are here because deep-water
+# renewal in these two basins is what `docs/setups.md` names as "what this domain is judged on", and
+# neither report covers it — this is the part of the validation that goes beyond reproducing FjordOs.
 const INNER_OSLOFJORD_STATIONS = [
-    Station(name = "Dk1", longitude = 10.5717, latitude = 59.7217),  # Vestfjorden,  ~105 m
-    Station(name = "Ep1", longitude = 10.7217, latitude = 59.8117),  # Bunnefjorden, ~155 m
+    Station(name = "Dk1", longitude = 10.569384, latitude = 59.814999),  # Steilene,     cast to 99 m
+    Station(name = "Ep1", longitude = 10.723783, latitude = 59.786301),  # Bunnefjorden, cast to 149 m
 ]
 
 # Fixed-point temperature sites, METreport 11/2017 §3.4 and Figs. 3-4. All APPROXIMATE: the Scanmar

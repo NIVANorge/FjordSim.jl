@@ -8,7 +8,8 @@ using ArchGDAL
 using NCDatasets
 using Oceananigans
 using Oceananigans.BoundaryConditions: FluxBoundaryCondition
-using Oceananigans.Fields: AbstractField
+using Oceananigans.Fields: AbstractField, location
+using Oceananigans.ImmersedBoundaries: mask_immersed_field!
 using NumericalEarth
 
 # Shared stub configs, fixture factories and the run-tag helper. Included at top level because a
@@ -5945,6 +5946,7 @@ end
     @testset "station_cells" begin
         bottom_height = fill(-20.0, 4, 4)
         bottom_height[1, 1] = 1.0                          # one land column in the corner
+        bottom_height[4, 4] = -15.0                        # a partial bottom cell, 10 m levels
         fixture = immersed_test_grid(
             joinpath(mktempdir(), "bathymetry.nc"); size = (4, 4, 2), bottom_height,
         )
@@ -5953,17 +5955,60 @@ end
             output_file = "stations_moorings.nc",
             variables = (:T,),
             stations = [Station(name = "land", longitude = 10.125, latitude = 59.125),
-                        Station(name = "outside", longitude = 12.0, latitude = 59.5)],
+                        Station(name = "outside", longitude = 12.0, latitude = 59.5),
+                        Station(name = "partial", longitude = 10.875, latitude = 59.875)],
             interval = 3600.0,
             overwrite_existing = true,
         )
         placed = @test_logs (:warn,) match_mode = :any FjordSim.Simulations.station_cells(
             writer, fixture.grid,
         )
-        @test length(placed) == 1                          # the station outside the box is dropped
-        @test (placed[1].i, placed[1].j) != (1, 1)         # snapped off the land column
-        @test placed[1].offset ≈ 1
-        @test placed[1].depth ≈ 20
+        @test length(placed) == 2                          # the station outside the box is dropped
+        land, partial = placed
+        @test (land.i, land.j) != (1, 1)                   # snapped off the land column
+        @test land.offset ≈ 1
+        @test land.water_depth ≈ 20
+        @test land.level_depth ≈ 20
+        # Over a partial cell the water depth is `-h`, while the deepest wet level's bottom face is
+        # still the full-cell one.
+        @test (partial.i, partial.j) == (4, 4)
+        @test partial.water_depth ≈ 15
+        @test partial.level_depth ≈ 20
+    end
+
+    @testset "station outputs are horizontally centred" begin
+        bottom_height = fill(-20.0, 4, 4)
+        bottom_height[2, :] .= 1.0                         # a land column west of i = 3
+        (; grid) = immersed_test_grid(
+            joinpath(mktempdir(), "bathymetry.nc"); size = (4, 4, 2), bottom_height,
+        )
+        centred = FjordSim.Simulations.centred_horizontally
+
+        u = XFaceField(grid)
+        v = YFaceField(grid)
+        w = ZFaceField(grid)
+        T = CenterField(grid)
+        η = Field{Center, Center, Nothing}(grid)
+        set!(u, (λ, φ, z) -> λ)
+        set!(v, (λ, φ, z) -> φ)
+        mask_immersed_field!(u)
+
+        @test location(centred(u)) == (Center, Center, Center)
+        @test location(centred(v)) == (Center, Center, Center)
+        @test location(centred(w)) == (Center, Center, Face)
+        @test centred(T) === T
+        @test centred(η) === η
+
+        # The column the writer slices out, as `NetCDFWriter` builds it from `indices`.
+        column(field, i, j) = interior(compute!(Field(centred(field); indices = (i, j, :))), 1, 1, :)
+        λu = λnodes(grid, Face())
+        φv = φnodes(grid, Face())
+        @test all(column(u, 4, 2) .≈ (λu[4] + λu[5]) / 2)
+        @test all(column(v, 4, 2) .≈ (φv[2] + φv[3]) / 2)
+        # Beside the coast the closed west face holds zero, which used to be the whole sample; the
+        # centre value keeps the open east face's half.
+        @test all(interior(u, 3, 2, :) .== 0)
+        @test all(column(u, 3, 2) .≈ λu[4] / 2)
     end
 
     @testset "haversine_distance" begin

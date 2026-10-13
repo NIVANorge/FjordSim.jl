@@ -235,9 +235,11 @@ mentioned here because a validation needs them and they are the only writers tha
 whole domain.
 
 Each takes a `stations::Vector{Station}` of lon/lat positions and writes `indices = (i, j, :)` — one
-whole water column per station, one file each. Snapping to the grid happens at attach time, where
-the grid exists, and `report_station_cells` logs the grid indices, the model depth and the offset in
-cells and metres for every station. That offset is the number a reader of the validation needs and
+whole water column per station, one file each. Horizontally staggered fields such as `u` and `v`
+are interpolated to the cell centre first (`station_outputs`), since the column's own west or south
+face may be a closed coastal one that holds zero. Snapping to the grid happens at attach time, where
+the grid exists, and `report_station_cells` logs the grid indices, the model's water depth and the
+offset in cells and metres for every station. That offset is the number a reader of the validation needs and
 nothing else records: at a couple of hundred metres per cell a station in a narrow sound can be
 placed a kilometre from its instrument, and a disagreement that large is a property of the
 comparison rather than of the model.

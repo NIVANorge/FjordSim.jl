@@ -32,6 +32,8 @@ using Oceananigans.Architectures: on_architecture
 using Oceananigans.Utils: prettytime
 using Oceananigans.TimeSteppers: Clock, reset!, update_state!
 using Oceananigans.Grids: x_domain, y_domain, node, λnodes, φnodes, znodes, Center, Face
+using Oceananigans.Fields: location
+using Oceananigans.AbstractOperations: @at
 using NumericalEarth
 using Dates: DateTime, Second
 using Printf: @sprintf
@@ -1635,15 +1637,26 @@ end
 
 # One station snapped to the grid: where it asked to be, where it landed, how far that moved it
 # and how deep the model is there. Concretely typed, like every other record in this module.
-const PlacedStation =
-    @NamedTuple{station::Station, i::Int, j::Int, offset::Float64, depth::Float64}
+const PlacedStation = @NamedTuple{
+    station::Station,
+    i::Int,
+    j::Int,
+    offset::Float64,
+    water_depth::Float64,
+    level_depth::Float64,
+}
 
 """
     station_cells(writer, grid)
 
 Snap each of `writer.stations` to a wet surface cell of `grid`, as a vector of
-`(station, i, j, offset_cells, depth)`. Stations with no water within `writer.search_radius` cells
-are dropped with a warning.
+`(station, i, j, offset, water_depth, level_depth)`. Stations with no water within
+`writer.search_radius` cells are dropped with a warning.
+
+The two depths differ under `PartialCellBottom`: `water_depth` is the model's own `-h` at the
+column, while `level_depth` is the bottom face of its deepest wet level — the full-cell depth that
+level would have, which is deeper than `h` whenever that cell is a partial one. The first is what
+to compare with a sounding; the second says which levels of the written profile are water.
 
 `column_wet_levels` is what decides what "wet" means, which is the same `water_mask` that
 `prepare_forcing` writes the forcing file against and that `river_cells` places river mouths with —
@@ -1656,7 +1669,9 @@ helpers stay separate for that reason rather than by accident.
 """
 function station_cells(writer, grid)
     # `column_wet_levels` loops over cells on the host, which on a GPU grid is scalar indexing.
-    surface, levels = column_wet_levels(on_architecture(CPU(), grid))
+    cpu_grid = on_architecture(CPU(), grid)
+    surface, levels = column_wet_levels(cpu_grid)
+    bottom_height = cpu_grid.immersed_boundary.bottom_height
     longitudes = Array(λnodes(grid, Center()))
     latitudes = Array(φnodes(grid, Center()))
     depths = Array(znodes(grid, Face()))
@@ -1693,7 +1708,8 @@ function station_cells(writer, grid)
                 i = nearest[1],
                 j = nearest[2],
                 offset = nearest[3],
-                depth = -depths[length(depths) - wet],
+                water_depth = -bottom_height[nearest[1], nearest[2], 1],
+                level_depth = -depths[length(depths) - wet],
             ),
         )
     end
@@ -1701,6 +1717,25 @@ function station_cells(writer, grid)
     isempty(placed) && @warn "Station writer :$(writer.name) placed none of its stations."
     return placed
 end
+
+"""
+    station_outputs(writer, ocean_model)
+
+`snapshot_outputs`, with every field that is staggered in the horizontal interpolated to the cell
+centre — so `u` and `v` come out at the station's tracer point, beside `T` and `S`.
+
+A station writes one column, `indices = (i, j, :)`, and on a C grid that column of `u` is the west
+face of the cell and of `v` the south face. Next to the coast one of those faces is often closed,
+and a closed face holds zero: Slagen's `v` was zero at every level. The centre value is the mean of
+the two opposite faces, so a closed one halves the velocity rather than hiding it. The vertical
+location is left alone; `w` stays on its faces, as the profile depths say.
+"""
+station_outputs(writer, ocean_model) =
+    map(centred_horizontally, snapshot_outputs(writer, ocean_model))
+
+centred_horizontally(field) = centred_horizontally(field, location(field)...)
+centred_horizontally(field, ::Type{Center}, ::Type{Center}, LZ) = field
+centred_horizontally(field, LX, LY, LZ) = @at (Center, Center, LZ()) field
 
 """
     nearest_water_cell(mask, i, j, radius)
@@ -1770,7 +1805,8 @@ function report_station_cells(writer, placed, grid)
         metres = haversine_distance(site.station.longitude, site.station.latitude, longitude, latitude)
         @info @sprintf(
             "  %-16s (%3d, %3d)  %7.4fN %7.4fE  depth %6.1f m  moved %4.1f cells, %5.0f m",
-            site.station.name, site.i, site.j, latitude, longitude, site.depth, site.offset, metres
+            site.station.name, site.i, site.j, latitude, longitude, site.water_depth, site.offset,
+            metres
         )
     end
 
@@ -1818,7 +1854,7 @@ function attach_writer!(simulation, writer::StationWriter, config::AbstractSimul
 
         ocean_sim.output_writers[key] = NetCDFWriter(
             ocean_sim.model,
-            snapshot_outputs(writer, ocean_sim.model);
+            station_outputs(writer, ocean_sim.model);
             filename = filepath,
             schedule = TimeInterval(writer.interval),
             indices = (site.i, site.j, :),
@@ -1857,7 +1893,7 @@ function attach_writer!(
 
         ocean_sim.output_writers[key] = JLD2Writer(
             ocean_sim.model,
-            snapshot_outputs(writer, ocean_sim.model);
+            station_outputs(writer, ocean_sim.model);
             filename = filepath,
             schedule = TimeInterval(writer.interval),
             indices = (site.i, site.j, :),
@@ -1873,7 +1909,8 @@ end
     station_attributes(config, site, grid)
 
 The global attributes a station NetCDF carries: the run's `start_date`, and where the station asked
-to be against where it ended up.
+to be against where it ended up — including both of `station_cells`' depths, `model_water_depth`
+and `model_level_depth`.
 """
 function station_attributes(config::AbstractSimulationConfig, site, grid)
     longitude = Array(λnodes(grid, Center()))[site.i]
@@ -1886,7 +1923,8 @@ function station_attributes(config::AbstractSimulationConfig, site, grid)
         "station_latitude" => site.station.latitude,
         "model_longitude" => longitude,
         "model_latitude" => latitude,
-        "model_depth" => site.depth,
+        "model_water_depth" => site.water_depth,
+        "model_level_depth" => site.level_depth,
         "snap_offset_cells" => site.offset,
         "snap_offset_metres" =>
             haversine_distance(site.station.longitude, site.station.latitude, longitude, latitude),

@@ -3442,6 +3442,52 @@ end
         end
     end
 
+    @testset "boundary paging looks one record ahead" begin
+        # The split-explicit free surface fills the barotropic halos at substep times up to two
+        # baroclinic steps past the clock, so a boundary series paged for the clock's interpolating
+        # pair alone is read one record past its window near every record.
+        mktempdir() do tmp
+            longitude, latitude = (10.0, 11.0), (59.0, 60.0)
+            dates = [DateTime(2020, 1, 1) + Hour(hour) for hour = 0:5]
+            (; grid) = immersed_test_grid(
+                joinpath(tmp, "bathymetry.nc");
+                size = (4, 3, 2),
+                longitude,
+                latitude,
+                z_faces = [-20.0, -10.0, 0.0],
+                bottom_height = fill(-20.0, 4, 3),
+            )
+
+            boundaries_config = test_boundaries_config(data_root = tmp, architecture = :cpu)
+            mkpath(boundary_data_directory(boundaries_config))
+            write_hourly_source_stub(
+                joinpath(
+                    boundary_data_directory(boundaries_config),
+                    FjordSim.Forcing.boundary_monthly_filename(boundaries_config, 2020, 1),
+                );
+                dates,
+                longitude = (longitude[1] - 0.2, longitude[2] + 0.2),
+                latitude = (latitude[1] - 0.2, latitude[2] + 0.2),
+            )
+            prepare_boundaries(grid, boundaries_config)
+
+            eta = FjordSim.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1)).south.eta
+            stored = NCDataset(ds -> Float64.(ds["south_eta"][1, :]), boundary_data_path(boundaries_config))
+
+            # Ten seconds before 02:00 the clock's pair is records 2 and 3; the window starts at the
+            # pair and holds record 4 as well.
+            clock_time = 2 * 3600 - 10.0
+            Oceananigans.OutputReaders.update_field_time_series!(eta, Oceananigans.Units.Time(clock_time))
+            @test collect(Oceananigans.OutputReaders.time_indices(eta)) == [2, 3, 4]
+
+            # A substep ten minutes on reads between records 3 and 4 — from memory, without paging.
+            substep_time = clock_time + 600
+            fraction = (substep_time - 2 * 3600) / 3600
+            expected = stored[3] + fraction * (stored[4] - stored[3])
+            @test eta[1, 1, 1, Oceananigans.Units.Time(substep_time)] ≈ expected
+        end
+    end
+
     @testset "open ocean round-trip" begin
         # A domain open on all four sides, through the real regrid-and-write path: one file with four
         # sides in it, which is what the layout was built for — variables named per side, all six

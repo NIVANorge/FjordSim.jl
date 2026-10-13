@@ -2,7 +2,9 @@ module Forcing
 
 using Oceananigans
 using Oceananigans.Units: Time
-using Oceananigans.OutputReaders: Cyclical, AbstractInMemoryBackend, FlavorOfFTS, time_indices
+using Oceananigans.Architectures: architecture
+using Oceananigans.OutputReaders: Cyclical, AbstractInMemoryBackend, FlavorOfFTS, time_indices,
+    cpu_interpolating_time_indices
 using Oceananigans.Operators: Ax, Ay, Az, volume
 using Oceananigans: fill_halo_regions!, nodes, interior
 using Oceananigans.Grids: active_cell, peripheral_node, x_domain, y_domain

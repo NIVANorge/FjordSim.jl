@@ -614,8 +614,9 @@ unprefixed_boundary_name(name, edge) = replace(String(name), string(edge, "_") =
 """
     BoundaryBackend
 
-`FieldTimeSeries` backend for the prepared boundary file: two time indices in memory, streamed from
-NetCDF, exactly like `NetCDFBackend`.
+`FieldTimeSeries` backend for the prepared boundary file: `BOUNDARY_RECORDS_IN_MEMORY` time indices
+in memory, streamed from NetCDF like `NetCDFBackend`, and paged one record ahead of the clock — see
+`update_field_time_series!` below.
 
 A separate type rather than a reuse of `NetCDFBackend` because the two read different ranks. A
 boundary variable is stored with its cross-edge dimension dropped, so `set!` has to reshape on the
@@ -634,6 +635,42 @@ Base.length(backend::BoundaryBackend) = backend.length
 Base.summary(backend::BoundaryBackend) = string("BoundaryBackend(", backend.start, ", ", backend.length, ")")
 
 const BoundaryFTS = FlavorOfFTS{<:Any,<:Any,<:Any,<:Any,<:BoundaryBackend}
+
+# The interpolating pair plus the record after it, or every record of a shorter file.
+const BOUNDARY_RECORDS_IN_MEMORY = 3
+
+"""
+    update_field_time_series!(fts::BoundaryFTS, time::Time)
+
+Page a boundary series so that its window holds the interpolating pair at `time` *and the record
+after it*, starting the window at the pair.
+
+Oceananigans pages a series to hold the pair at the model clock, but since 0.113 the split-explicit
+free surface fills the barotropic halos — where the Flather condition reads `eta`, `ubar` and `vbar`
+— at each substep's own time, `clock.time + (substep - 1) Δτ`, which runs up to about two baroclinic
+steps past the clock. A step that starts just before a record therefore reads the record after the
+pair, and `memory_index` sends that index past the end of a window that only holds the pair: an
+out-of-bounds read on the GPU, which turned the exterior sea level into a ±1 m checkerboard along
+the southern edge of the Oslofjord validation box one hour into every run. The look-ahead record
+covers the substeps as long as two baroclinic steps are shorter than one boundary record.
+
+Only the `Time` method looks ahead. The integer one, which `fts[n]` calls for every record in the
+window — `fill_halo_regions!` among others — must accept the window's last record as it is, or
+paging would recurse.
+"""
+function Oceananigans.OutputReaders.update_field_time_series!(fts::BoundaryFTS, time_index::Time)
+    indices = cpu_interpolating_time_indices(architecture(fts), fts.times, fts.time_indexing, time_index.time)
+    n₁ = indices.first_index
+    n₂ = indices.second_index
+    ahead = mod1(n₂ + 1, length(fts.times))
+    in_memory = time_indices(fts)
+    n₁ ∈ in_memory && n₂ ∈ in_memory && ahead ∈ in_memory && return nothing
+
+    fts.backend = new_backend(fts.backend, n₁, length(fts.backend))
+    set!(fts)
+
+    return nothing
+end
 
 """
     load_boundary_data(; path, variable_name, series_size, time_indices_in_memory, reference_date)
@@ -833,14 +870,14 @@ One edge's group: the reduced `FieldTimeSeries` the file carries for that side, 
 """
 function boundary_edge_series(config, grid, edge, filepath, reference_date)
     names = sort(collect(values(boundary_variable_names(config))))
-    present = NCDataset(filepath) do ds
-        [name for name in names if haskey(ds, boundary_variable_name(edge, name))]
+    present, record_count = NCDataset(filepath) do ds
+        [name for name in names if haskey(ds, boundary_variable_name(edge, name))], length(ds["time"])
     end
     isempty(present) &&
         error("Boundary file $filepath carries no :$edge variables. Re-run `prepare_boundaries`.")
 
-    backend = BoundaryBackend(2)
-    time_indices_in_memory = (1, length(backend))
+    backend = BoundaryBackend(min(BOUNDARY_RECORDS_IN_MEMORY, record_count))
+    time_indices_in_memory = 1:length(backend)
 
     series = map(present) do name
         LX, LY, LZ = boundary_location(Val(edge), name)

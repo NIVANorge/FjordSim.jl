@@ -99,6 +99,9 @@ for extra in $extra_fjords; do
 done
 
 if [[ "$RESUME" == "true" ]]; then
+    # The container writes as root, so a directory an earlier launch left on this disk — a VM
+    # restarted rather than recreated, as after host maintenance — refuses the stage-in otherwise.
+    [[ -d "$RESULTS/$FJORD" ]] && sudo chown -R "$(id -u):$(id -g)" "$RESULTS/$FJORD"
     stage_in "$BUCKET/results/$FJORD" "$RESULTS/$FJORD"
 elif [[ "$STEPS" == *run_simulation* ]]; then
     # A fresh run starts from an empty results directory. What an earlier run left on this disk was

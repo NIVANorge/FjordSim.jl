@@ -114,6 +114,16 @@ loss must come from the others.
       - Short GPU run first: `max_slope_factor = 0.5` has not been run since the stages that fixed
         the earlier instabilities went in.
       - `examples/lista.jl`'s `z_faces` gate needs re-measuring on the linear gridding.
+- [ ] Fill single-cell pits on open edges. The new validation bathymetry has five on the south edge:
+      wet edge cells whose east, west and inward neighbours are all below the seabed, so their only
+      side neighbour is the open boundary. On the 13 Oct full run, the two thinnest went to the
+      freezing point and were held there by the limiter: (255, 1, 17), a 3.6 m partial cell, at
+      day 25, and (277, 1, 16), 2.1 m, at day 27. Neither the boundary data nor the rivers caused
+      it; the boundary feeds 2.4–19 °C there. Unbounded WENO for T undershoots in such a small cell,
+      walled on three sides beside the edge. It is one cell at a time, inside the boundary sponge.
+      - Add a stage that raises such an open-edge column to the depth of its deepest neighbour, then
+        re-run the four prepares above. Bounded WENO for T would hide it without removing the pits.
+      - The other three pits are i = 76 and 84 at k = 11 (6 m of water) and i = 2 at k = 15 (8 m).
 
 ## Open-boundary tide
 

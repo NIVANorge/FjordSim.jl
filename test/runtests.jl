@@ -4966,6 +4966,11 @@ end
                 @test resume_loop(resuming(start_date = DateTime(2021, 5, 6, 7))) == 3
             end
 
+            # For the same reason a fresh run is refused where checkpoints already are: it would leave
+            # them beside its own, and a later `pickup` would resume the highest-numbered one, likely
+            # the earlier run's.
+            @test_throws r"already holds checkpoints" resume_loop(resuming(pickup = false))
+
             # `pickup` with no checkpointing writer is a config contradicting itself — nothing this
             # run writes could ever be resumed from — so it is rejected rather than left to fail
             # inside `run!`. Only expressible now that checkpointing is a writer, not a threshold.

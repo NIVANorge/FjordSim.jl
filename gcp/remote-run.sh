@@ -100,6 +100,13 @@ done
 
 if [[ "$RESUME" == "true" ]]; then
     stage_in "$BUCKET/results/$FJORD" "$RESULTS/$FJORD"
+elif [[ "$STEPS" == *run_simulation* ]]; then
+    # A fresh run starts from an empty results directory. What an earlier run left on this disk was
+    # synced when it finished, and `fjordsim-gcp run` has checked that the bucket holds no
+    # checkpoints, so it is a stale copy of a run since archived. Left here, `resume_loop` would
+    # refuse this run, and the sync would put the earlier run's files back into the bucket. Root
+    # owns it: the container wrote it.
+    sudo rm -rf "$RESULTS/$FJORD"
 fi
 
 config_arg="$CONFIG_REF"

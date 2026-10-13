@@ -220,6 +220,13 @@ share a fjord**. With a single shared VM that is easy to do by accident. `fjords
 start a run whose id is already marked running; give a different `--run-id` for a genuinely separate
 experiment, and a `results_root` to match.
 
+Nor may a fresh run follow an earlier one into the same directory: the results sync never deletes, so
+the earlier run's checkpoints would stay beside the new one's and a later `--resume` would pick up the
+highest-numbered of them, likely the earlier run's. A fresh `run_simulation` (no `--resume`) is
+therefore refused while `results/<fjord>/` in the bucket holds checkpoints — archive the earlier run
+first (`CLAUDE.md`, "One run per results directory") — and starts on the VM from an empty results
+directory, clearing what an earlier run left on its disk.
+
 ### Watching a run
 
 ```bash

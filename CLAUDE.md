@@ -83,6 +83,27 @@ registered setup name (`FjordSim.Setups.SETUPS`) or a path to an out-of-tree `.j
 whose last expression is a `FjordConfig`. Every other knob, including which device the forcing
 interpolation runs on, is a config field.
 
+### One run per results directory
+
+Checkpoints carry no run tag (`checkpoint_prefix`), so a results directory holds exactly one
+resumable run: `pickup` resumes the highest-numbered checkpoint it finds, whichever launch wrote it.
+The bucket's results sync never deletes, so a fresh run launched into a used directory mixes with the
+old one there — a `--resume` then loads the *old* run's latest state, and analyses that read every
+stamp in the directory splice the two together.
+
+- **A different experiment** (a changed parameter, a sensitivity test) gets its own config with its
+  own `results_root`, e.g. `fjord_results_root("oslofjorden_validation_tke7e-7_30d")`.
+- **A from-scratch rerun of the same config** first archives the previous run, so the undated name
+  is always the current one: rename `<name>` to `<name>_<YYYY-MM-DD>`, the UTC date of that run's
+  last output (add `-2` if taken), both in the bucket (`gs://BUCKET/results/<name>`) and locally
+  (`~/FjordSim_results/<name>`), *before* launching. In the bucket that is a copy, a check of names,
+  sizes and checksums, then deleting the originals. A `--resume` is not a fresh run and archives
+  nothing.
+
+The rule is enforced in two places: `resume_loop` refuses a fresh run (`pickup = false`) where
+`results_root` already holds checkpoints, and `fjordsim-gcp run` refuses a fresh `run_simulation`
+while the bucket's `results/<name>/` does.
+
 ### Changing `start_date` or `stop_time`
 
 Both prepare steps pad their time axes to span the run window the simulation config names

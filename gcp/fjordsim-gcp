@@ -245,6 +245,17 @@ cmd_run() {
         die "run $run_id is already marked running. Use --run-id for a new run, or --resume to continue it."
     fi
 
+    # The same holds across time: the results sync never deletes, so a fresh run into a bucket
+    # directory holding an earlier run's checkpoints leaves them beside its own, and a later --resume
+    # picks up the highest-numbered one, whichever run wrote it. `resume_loop` refuses this too, but
+    # it only sees the VM's disk, which a fresh run starts empty.
+    if [[ "$resume" != "true" && "$steps" == *run_simulation* ]] &&
+        gcloud storage ls "$BUCKET/results/$fjord/checkpoint_*" >/dev/null 2>&1; then
+        die "$BUCKET/results/$fjord already holds an earlier run's checkpoints. Archive that run first" \
+            "(\"One run per results directory\" in CLAUDE.md), give this one its own results_root," \
+            "or pass --resume to continue it."
+    fi
+
     local nve_key=""
     if [[ "$steps" == *add_rivers* ]]; then
         [[ -n "${NVE_API_KEY:-}" ]] || die "add_rivers needs NVE_API_KEY in your environment. Free key: https://hydapi.nve.no/Users"

@@ -1428,8 +1428,8 @@ loop-1 one and would replay the whole spin-up. `resume_loop` reads the index bac
 
 The run tag is deliberately *not* in the name, even though `results_path` carries it: the tag is the
 launch instant, so a later launch could not name — and so could not resume — the checkpoints of the
-one before it. The cost is that checkpoints are shared per `results_root`, which is spelled out in
-`resume_loop`.
+one before it. The cost is that a `results_root` holds one run's checkpoints, which `resume_loop`
+enforces.
 """
 checkpoint_prefix(loop) = string("checkpoint_loop", lpad(loop, 2, '0'))
 
@@ -1465,12 +1465,26 @@ a float.
 
 Since checkpoints carry no run tag, this is whatever state `results_root` holds, whichever launch
 wrote it and whatever `start_date` it was written under — there is one resumable run per results
-directory, and a second launch overwrites the first's checkpoints. The snapshots are per launch, so a
-resumed run's file starts at the resume point and the records before it stay in the previous launch's
-file.
+directory. A fresh launch into a directory that already holds checkpoints overwrites only those that
+share an iteration number; the rest stay, and the highest-numbered one — likely the earlier run's —
+is what a later `pickup` would resume. So a fresh run (`pickup = false`) is rejected here when
+`results_root` already holds checkpoints: the earlier run has to be archived, or this one given its
+own `results_root`. The snapshots are per launch, so a resumed run's file starts at the resume point
+and the records before it stay in the previous launch's file.
 """
 function resume_loop(config::AbstractSimulationConfig)
-    config.pickup || return 1
+    if !config.pickup
+        isempty(checkpointed_loops(config)) || throw(
+            ArgumentError(
+                "$(config.results_root) already holds checkpoints from an earlier run, and a fresh " *
+                "run there would leave them beside its own, for a later `pickup` to resume the " *
+                "highest-numbered one whichever run wrote it. Archive the earlier run by renaming " *
+                "the directory to `<name>_<YYYY-MM-DD>`, give this run its own `results_root`, or " *
+                "set `pickup = true` to continue the earlier one.",
+            ),
+        )
+        return 1
+    end
 
     checkpoints(config) || throw(
         ArgumentError(

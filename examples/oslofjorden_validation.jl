@@ -282,7 +282,7 @@ atmosphere.years = years
 
 simulation = base.simulation_config
 
-# The one physics departure from `oslofjorden()`: salinity is advected by bounds-preserving WENO.
+# The first physics departure from `oslofjorden()`: salinity is advected by bounds-preserving WENO.
 # Plain WENO is not bounded, and this domain adds Numedalslågen at Larvik, a large river entering
 # among two-level columns (measured while rivers were still a relaxation to S = 0). The horizontal reconstruction across that front drove the
 # neighbouring surface cells to -29 psu over a 110 psu cell beneath by day 1.5, and past -32 a step

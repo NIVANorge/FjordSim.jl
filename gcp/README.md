@@ -20,6 +20,15 @@ SSH with sudo, and that is the whole interface. Everything here is built around 
   stop available without `compute.instances.stop`.
 - The VM's zone is **discovered, never configured**: the launcher tries `europe-west4-{a,b,c}` and
   takes whichever has L4 capacity.
+- Both jobs create the same machine — `g2-standard-8` (8 vCPU, 32 GB) with one NVIDIA L4, a 200 GB
+  `pd-balanced` Ubuntu 22.04 boot disk, and `fjordsim-sa` as its service account — and differ only
+  in provisioning model and run-duration cap (read from the job specs with
+  `gcloud run jobs describe`, 2026-10-14):
+
+  | Job | `up` flag | Provisioning | `--max-run-duration` |
+  |---|---|---|---|
+  | `fjordsim-launch-spot` | (default) | Spot | 24h |
+  | `fjordsim-launch-standard` | `--standard` | on-demand | 168h |
 
 Measured access for `shamil.iakubov@niva.no` in `nivatest-1` (`testIamPermissions`, 2026-09-16):
 
@@ -66,11 +75,12 @@ Object storage is not used as a filesystem. `add_rivers` copies a 360 MB file, `
 a directory, and the NetCDF writers append — all of which a FUSE mount does badly. Copy in, run,
 copy out.
 
-**Nothing on the VM is durable.** The launcher creates it as a Spot instance with
-`--instance-termination-action=DELETE` and `--max-run-duration=24h`, so a preemption or 24 hours of
-uptime deletes the instance *and its boot disk*. A guest `poweroff` is different — that only stops
-it, and the disk survives. This is why the remote run script syncs results to the bucket every ten
-minutes, and why `bootstrap` has to run again after a preemption but not after a `down`/`up`.
+**Nothing on the VM is durable.** Both launchers create it with
+`--instance-termination-action=DELETE` and a `--max-run-duration` (24h Spot, 168h standard), so a
+preemption or reaching that cap deletes the instance *and its boot disk*. A guest `poweroff` is
+different — that only stops it, and the disk survives. This is why the remote run script syncs
+results to the bucket every ten minutes, and why `bootstrap` has to run again after a preemption
+but not after a `down`/`up`.
 
 ## One-time setup
 
@@ -136,7 +146,8 @@ gcp/fjordsim-gcp down                                # stop billing; the disk su
 `up` is idempotent and does the right thing in every state: it creates the VM if it is gone, starts
 it if it is stopped, and exits cleanly if it is already running. It can also block for a long
 while — the job retries every zone for up to ten rounds with backoff capped at ten minutes when
-there is no L4 capacity.
+there is no L4 capacity. A *stopped* VM is the exception: it can only be started in the zone it
+already lives in, so a stockout there fails `up` even when another zone has L4s.
 
 `bootstrap` is idempotent too. On the plain Ubuntu image the launcher currently uses it installs the
 NVIDIA driver (~5 min, then a reboot it drives itself), Docker and the container toolkit; on a
@@ -201,7 +212,7 @@ gcp/fjordsim-gcp run --config ./oslofjorden_npzd.jl --steps run_simulation --gpu
 
 ### Resuming after a preemption
 
-The VM is Spot, so a long run will be interrupted. Recovery is `up`, `bootstrap`, then the same run
+A Spot VM (the default) will interrupt a long run. Recovery is `up`, `bootstrap`, then the same run
 id with `--resume`:
 
 ```bash
@@ -241,8 +252,8 @@ something to plot.
 ## Cost
 
 - **Nothing stops on its own.** A finished run leaves the VM up and billing; `down` is a manual step
-  and the only one available. `--max-run-duration=24h` on the instance is the backstop, and it
-  *deletes* rather than stops.
+  and the only one available. `--max-run-duration` on the instance (24h Spot, 168h standard) is the
+  backstop, and it *deletes* rather than stops.
 - Spot is roughly a 60-70% discount and is survivable here because of checkpoint resume.
 - Keep the bucket near the VM (`europe-west4`) — that traffic repeats all run long, so staging is free.
   The image is the exception; it is pulled cross-region once per bootstrap. Pulling results to your laptop is egress — a few
@@ -279,10 +290,10 @@ stands — but each one removes a sharp edge.
    actually in use rather than a guess. Workaround without admin: `docker save | gzip` the image to
    the bucket and `docker load` on the VM.
 
-4. **Give the standard launcher its own VM name** (e.g. `fjordsim-gpu-std`), or delete the current
-   Spot `fjordsim-gpu`. The two jobs share one instance name and each refuses to touch an instance
-   created with the other provisioning model, so while a Spot `fjordsim-gpu` exists —
-   and it cannot be deleted from this account — `fjordsim-launch-standard` can never succeed.
+4. **Give the standard launcher its own VM name** (e.g. `fjordsim-gpu-std`). The two jobs share one
+   instance name and each exits with an error on an instance created with the other provisioning
+   model, so while a Spot `fjordsim-gpu` exists — and it cannot be deleted from this account —
+   `up --standard` can never succeed, and the reverse holds for plain `up`.
 
 5. **A persistent data disk** attached with `auto-delete=no`, holding `/var/lib/docker` and
    `/mnt/stage`. Turns a preemption into a restart rather than a full re-bootstrap plus a 2.7 GB

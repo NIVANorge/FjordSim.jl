@@ -180,15 +180,16 @@ const OSLOFJORD_MOORINGS = [
 
 # The ten NIVA CTD stations of the Ytre Oslofjord monitoring programme, from METreport 11/2017
 # Table 2. Exact, to four decimals. OF-1, OF-5 and D-3 are the three the report draws Hovmøller
-# diagrams for; OF-1, LA-1 and D-2 the three it overlays profiles at. OF-1 alone is AquaMonitor's
-# position instead (`observations/niva_ctd/stations.csv`): the table's was 5 km east of where the
-# casts the validation scores against were taken. The other nine agree with AquaMonitor to 200 m.
+# diagrams for; OF-1, LA-1 and D-2 the three it overlays profiles at. The other nine agree with
+# AquaMonitor (`observations/niva_ctd/stations.csv`) to 200 m. OF-1 does not: AquaMonitor puts it
+# 5 km west, at 10.6652°E 59.036°N, but Kartverket's soundings there are 76 m within 500 m, and every
+# OF-1 cast reaches 440 m. The table's position has a 462 m sounding 228 m away, so it is kept.
 const OSLOFJORD_CTD_STATIONS = [
     Station(name = "D-2",  longitude = 10.4210, latitude = 59.6280),  # Inner Drammensfjord
     Station(name = "D-3",  longitude = 10.3140, latitude = 59.7060),  # Solumstrand
     Station(name = "LA-1", longitude = 10.0520, latitude = 59.0190),  # Larviksfjord
     Station(name = "MO-2", longitude = 10.6780, latitude = 59.4840),  # Kippenes
-    Station(name = "OF-1", longitude = 10.6652, latitude = 59.0360),  # Torbjørnskjær
+    Station(name = "OF-1", longitude = 10.7540, latitude = 59.0410),  # Torbjørnskjær
     Station(name = "OF-5", longitude = 10.4580, latitude = 59.4870),  # Breiangen
     Station(name = "S-9",  longitude = 11.1620, latitude = 59.1140),  # Haslau, Singlefjord
     Station(name = "SF-1", longitude = 10.2460, latitude = 59.0770),  # Sandefjord

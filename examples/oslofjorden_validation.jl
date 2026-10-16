@@ -31,7 +31,7 @@
 #
 # The float type, the closure (every coefficient and the `BoundarySponge`, the CATKE `minimum_tke`
 # floor excepted, below), the advection schemes (salinity's excepted, below), the boundary conditions and their two Marchesiello timescales, the
-# time stepping, the initial-condition rule, every bathymetry smoothing knob and the whole river
+# time stepping, every bathymetry smoothing knob and the whole river
 # configuration are taken from the config `oslofjorden()` returns, not restated. A validation of a model that has drifted from
 # the model being validated is worth nothing, and a copy is exactly what drifts. So a change to any of
 # them is made in `oslofjorden()` and arrives here by itself — but a bathymetry knob is a *data*
@@ -76,6 +76,10 @@
 # its M2 is 40 % too large and its S2 half the observed. The measurement is under "The boundary
 # tide" below. It is applied to the prepared file, so it takes effect only once `prepare_boundaries`
 # is re-run.
+#
+# **The initial state.** The previous full run's state of 1 April 2015 rather than Norkyst-v3's of
+# 31 March 2014, because Norkyst's deep inner basins are about 2 °C too cold and the sill basins keep
+# what they start with. The measurement is beside `initial_conditions` below.
 #
 # **The writers.** A 640-day run cannot afford `oslofjorden()`'s three-hourly full-domain snapshots —
 # at 4.4 M cells a record is 89 MB, so that is roughly 450 GB — and a validation does not need them:
@@ -683,16 +687,24 @@ FjordConfig(
         ),
         callbacks           = simulation.callbacks,
         time_stepping       = simulation.time_stepping,
-        # The Norkyst-v3 state at the start, which is the same "semi-hot start" from a coarser
-        # NorKyst that METreport 4/2016 §5 used — and, per METreport 11/2017 §5, one of the two
-        # things its authors blamed for FjordOs' stratification errors. Starting the same way is what
-        # makes the comparison a comparison.
+        # The previous full run's own state on 1 April 2015 (stamp 20261014T142318, archived as
+        # `oslofjorden_validation_2026-10-16`), a year of this model's spin-up, rather than the
+        # Norkyst-v3 state of 31 March 2014. Against the 9 April 2014 Inner Oslofjord casts it halves
+        # the temperature error below 30 m — RMSE 1.52 -> 0.77 °C at 30-60 m and 2.20 -> 1.18 °C
+        # below, Norkyst's deep inner water being about 2 °C too cold — and below 30 m is where the
+        # start matters, since the sill basins are not renewed and keep what they start with.
+        # Salinity below 60 m is a tie (1.17 against 1.14 g/kg), its bias turned from +0.7 to -1.0
+        # by that run's own freshening, which also makes 10-30 m worse (0.86 -> 1.98); the upper
+        # layer forgets its start within weeks. The outer fjord's first casts, ten weeks in, tie
+        # below 60 m.
         #
-        # From the record twelve hours before `start_date` rather than at it, because the hindcast
-        # forcing keeps one record a day at 12:00 and `FromForcing()` needs one exactly at midnight.
-        # Moving `start_date` to noon instead would shift the FjordOs window; half a day of state
-        # under five months of spin-up is the smaller departure.
-        initial_conditions  = FromForcing(DateTime(2014, 3, 31, 12)),
+        # So this run no longer starts the way FjordOs did, from the "semi-hot start" of a coarser
+        # NorKyst (METreport 4/2016 §5): the comparison with it is of two runs, not of one start.
+        #
+        # The file is that run's snapshot record cut out by `scripts/extract_initial_state.jl`, so a
+        # GCP run stages it like any prepared input; with no date, `FromResults` reads its only
+        # record. The free surface and the turbulence field start from their defaults.
+        initial_conditions  = FromResults(joinpath(data_root, "initial_state_20150401.nc")),
         # 1 April 2014 to the end of 31 December 2015, the FjordOs CL hindcast window exactly: 275
         # days of 2014 plus the whole of 2015, so the last day is included rather than ending at
         # midnight on it. The observation campaigns sit well inside it: the Statnett moorings are

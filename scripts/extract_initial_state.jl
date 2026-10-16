@@ -6,7 +6,7 @@
 # e.g. the 2015-04-01 state of the full Oslofjord validation run, as the start of a 2014 run:
 #
 #     julia --project scripts/extract_initial_state.jl \
-#         ~/FjordSim_results/oslofjorden_validation/snapshots_ocean_20261014T142318.nc \
+#         ~/FjordSim_results/oslofjorden_validation_2026-10-16/snapshots_ocean_20261014T142318.nc \
 #         2015-04-01 ~/FjordSim_data/oslofjorden_validation/initial_state_20150401.nc
 #
 # and in the config, `initial_conditions = FromResults(joinpath(fjord_data_root(

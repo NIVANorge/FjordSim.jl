@@ -4862,7 +4862,7 @@ end
 
             # A results file: time is seconds from the writing run's model zero, so a calendar date
             # needs the `start_date` attribute `build_simulation` records.
-            function write_results(filepath, attributes)
+            function write_results(filepath, attributes; times = [0.0, 3600.0, 7200.0])
                 NCDataset(filepath, "c"; attrib = attributes) do ds
                     defDim(ds, "λ_caa", Nx)
                     defDim(ds, "φ_aca", Ny)
@@ -4870,7 +4870,7 @@ end
                     defDim(ds, "λ_faa", Nx + 1)
                     defDim(ds, "φ_afa", Ny + 1)
                     defDim(ds, "time", 3)
-                    defVar(ds, "time", [0.0, 3600.0, 7200.0], ("time",))
+                    defVar(ds, "time", times, ("time",))
                     for (name, xdim, ydim, nx, ny) in (
                         ("T", "λ_caa", "φ_aca", Nx, Ny),
                         ("S", "λ_caa", "φ_aca", Nx, Ny),
@@ -4900,6 +4900,20 @@ end
             @test results_state(tagged, grid, DateTime(2020, 1, 1, 13), (:T, :S)).T[1, 1, 1] == 20
             @test results_state(tagged, grid, DateTime(2020, 1, 1, 12), (:T, :S)).T[1, 1, 1] == 10
             @test_throws ErrorException results_state(tagged, grid, DateTime(2020, 6, 1), (:T, :S))
+            # With no `interval` there is no schedule to be near, so a date between records is not one.
+            @test_throws ErrorException results_state(tagged, grid, DateTime(2020, 1, 1, 13, 0, 30), (:T, :S))
+
+            # An adaptive time step writes each record a little after its scheduled instant; the
+            # writer's `interval` lets the scheduled instant still name it, up to half an interval
+            # either side, and no further.
+            drifted = write_results(
+                joinpath(tmp, "snapshots_drifted.nc"),
+                ["start_date" => string(DateTime(2020, 1, 1, 12)), "interval" => 3600.0];
+                times = [0.0, 3634.6, 7221.0],
+            )
+            @test results_state(drifted, grid, DateTime(2020, 1, 1, 13), (:T, :S)).T[1, 1, 1] == 20
+            @test results_state(drifted, grid, DateTime(2020, 1, 1, 14), (:T, :S)).T[1, 1, 1] == 30
+            @test_throws ErrorException results_state(drifted, grid, DateTime(2020, 1, 1, 15), (:T, :S))
 
             # A state file from another grid is a clear error rather than a silent misread.
             wrong = joinpath(tmp, "wrong_grid.nc")

@@ -1448,7 +1448,12 @@ modules, in `include` order from `src/FjordSim.jl`:
     zeroed, which is exact rather than approximate because `prepare_forcing` writes `NaN` at precisely
     the cells `peripheral_node` calls dry on this same grid. Arrays are converted to `eltype(grid)`,
     because a `Union{Missing,Float32}` array cannot become a `CuArray` at all. And the date must be on
-    the axis exactly — a nearest-record fallback would silently start the run somewhere else.
+    the forcing axis exactly — a nearest-record fallback would silently start the run somewhere else.
+    A snapshot is the exception: its writer fires on the first step past each scheduled instant, so
+    under an adaptive time step no record sits exactly on the schedule (a 640-day Oslofjord run's
+    daily records drifted up to 35 s late). `FromResults` therefore takes the nearest record within
+    half the writer's `interval` attribute, which is unambiguous, and logs the instant it read; a
+    file with no `interval` still needs a match to 1 s.
 
     A snapshot's `time` is seconds from *its* run's model zero and carries no calendar, so
     `FromResults(path, date)` needs the instant that zero stood for. The snapshot writer records it as

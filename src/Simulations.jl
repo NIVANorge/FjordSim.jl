@@ -35,7 +35,7 @@ using Oceananigans.Grids: x_domain, y_domain, node, λnodes, φnodes, znodes, Ce
 using Oceananigans.Fields: location
 using Oceananigans.AbstractOperations: @at
 using NumericalEarth
-using Dates: DateTime, Second
+using Dates: DateTime, Millisecond, Second
 using Printf: @sprintf
 using NCDatasets
 
@@ -1050,7 +1050,9 @@ when `date` is `nothing`.
 A relative `path` resolves against `results_root`, like `output_file` does. Naming a `date` requires
 the file to carry the `$RESULTS_START_DATE_ATTRIBUTE` attribute `build_simulation` writes, since a
 snapshot's time axis is seconds from its own model zero; files written before that attribute existed
-can only be read by their last record.
+can only be read by their last record. The date takes the nearest record within half the snapshot
+interval, so any record is reachable by its scheduled instant although an adaptive time step writes
+it a little late — see `results_record_index`.
 """
 struct FromResults{D}
     path::String
@@ -1160,8 +1162,23 @@ end
 Which record of a snapshot file `date` names. Its time axis is seconds from the run's own model
 zero, so the instant that zero stood for has to come from the file's own
 `$RESULTS_START_DATE_ATTRIBUTE` attribute; `nothing` takes the last record and needs no attribute.
+
+`date` names the nearest record, which must lie within `record_tolerance` of it: under an adaptive
+time step a `TimeInterval` writer fires on the first step past each scheduled instant, so its
+records drift off the schedule by up to a step (the daily records of a 640-day Oslofjord run sat as
+much as 35 s late). The instant actually read is logged, since it is not quite the one asked for.
 """
 results_record_index(filepath, ds, ::Nothing) = ds.dim["time"]
+
+"""
+    record_tolerance(ds)
+
+How far from a named date a snapshot record may lie and still be the one that date names: half the
+writer's `interval`, which Oceananigans records for a `TimeInterval` schedule, so every record is
+reachable and no date is ambiguous between two. A file with no `interval` — another schedule, or one
+cut down to a few records by hand — has no schedule to be near, so its dates must match to 1 s.
+"""
+record_tolerance(ds) = haskey(ds.attrib, "interval") ? ds.attrib["interval"] / 2 : 1
 
 function results_record_index(filepath, ds, date::DateTime)
     haskey(ds.attrib, RESULTS_START_DATE_ATTRIBUTE) || error(
@@ -1174,12 +1191,14 @@ function results_record_index(filepath, ds, date::DateTime)
     seconds = Second(date - source_start).value
     times = ds["time"][:]
     index = argmin(abs.(times .- seconds))
+    tolerance = record_tolerance(ds)
 
-    abs(times[index] - seconds) <= 1 || error(
-        "No record within 1 s of $date in $filepath, whose axis runs $source_start to " *
+    abs(times[index] - seconds) <= tolerance || error(
+        "No record within $tolerance s of $date in $filepath, whose axis runs $source_start to " *
         "$(source_start + Second(round(Int, last(times)))).",
     )
 
+    @info "Reading record $index, $(source_start + Millisecond(round(Int, 1000 * times[index])))"
     return index
 end
 

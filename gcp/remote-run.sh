@@ -35,7 +35,13 @@ readonly REGISTRY_HOST="${IMAGE_URI%%/*}"
 
 mark() { echo "$1" | gcloud storage cp - "$RUN_PREFIX/status" --quiet || true; }
 
+# Only a job that staged the results directory (`--resume`) or started it empty (a fresh
+# run_simulation) owns what is in it. Any other job — a prepare step — finds whatever an earlier run
+# left on this disk, and syncing that would put an archived run's files, checkpoints included, back
+# under the name it was archived from, where they block the next fresh run.
+owns_results() { [[ "$RESUME" == "true" || "$STEPS" == *run_simulation* ]]; }
 sync_results() {
+    owns_results || return 0
     [[ -d "$RESULTS/$FJORD" ]] || return 0
     gcloud storage rsync -r "$RESULTS/$FJORD" "$BUCKET/results/$FJORD" --quiet
 }

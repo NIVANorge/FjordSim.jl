@@ -186,7 +186,9 @@ gcp/fjordsim-gcp run --config oslofjorden --steps run_simulation --gpu
 Omitting `--gpu` hides the GPU from the container, and `architecture = :auto` resolves to `CPU()` —
 the same config runs either way without an edit. (The VM itself always has an L4; that is the
 launcher's choice, not ours.) Anything a prep job writes under the fjord's data directory is synced
-back to the bucket when it finishes, so the next job finds it.
+back to the bucket when it finishes, so the next job finds it. Its results directory is not: only a
+fresh `run_simulation` or a `--resume` owns what is there, and a prep job would otherwise upload
+whatever an earlier run left on the VM's disk, back under a name that run was archived from.
 
 `add_rivers` needs `NVE_API_KEY` in your own environment — the same variable a local run uses. `run`
 writes it to a mode-600 file on the VM rather than passing it as an argument, which would be

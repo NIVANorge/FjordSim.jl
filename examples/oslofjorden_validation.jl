@@ -72,6 +72,11 @@
 # because the 9 April 2014 NIVA casts are more stratified than the run was at 7e-6. The measurement
 # is beside `closure` below.
 #
+# **The boundary tide.** Norkyst-v3's tide is corrected to Viker, constituent by constituent, because
+# its M2 is 40 % too large and its S2 half the observed. The measurement is under "The boundary
+# tide" below. It is applied to the prepared file, so it takes effect only once `prepare_boundaries`
+# is re-run.
+#
 # **The writers.** A 640-day run cannot afford `oslofjorden()`'s three-hourly full-domain snapshots —
 # at 4.4 M cells a record is 89 MB, so that is roughly 450 GB — and a validation does not need them:
 # what it needs is high cadence at a few dozen points. So the 3D fields drop to daily (57 GB) for maps
@@ -135,9 +140,13 @@
 # scope: FjordSim has no particle tracking.
 
 using FjordSim
+using FjordSim: AbstractBoundaryDataConfig, Configs, Forcing
+using FjordSim.Validation: TIDAL_CONSTITUENTS
+using LinearAlgebra: qr
+using NCDatasets: NCDataset
 using Oceananigans: WENO, CATKEVerticalDiffusivity
 using Oceananigans.Units
-using Dates: DateTime
+using Dates: DateTime, Dates
 
 # --- Station positions ------------------------------------------------------------------------
 #
@@ -219,6 +228,184 @@ const OSLOFJORD_TEMPERATURE_STATIONS = [
     Station(name = "Hvalstrand",   longitude = 10.483, latitude = 59.837),
     Station(name = "Storøyodden",  longitude = 10.630, latitude = 59.894),
 ]
+
+# --- The boundary tide ------------------------------------------------------------------------
+#
+# Norkyst-v3's hindcast sea level along the southern boundary has the wrong tide, and FjordSim
+# carries it straight in. Fitted from 2014-05-01 to 2015-12-31, its M2 is 17.7 cm and its S2 1.4 cm,
+# against 12.3 cm and 2.9 cm observed at Viker. The model's own tide at Viker is the boundary's (M2
+# 17.3 cm), and its amplification from Viker to Oscarsborg is right (M2 x1.17 against x1.16
+# observed). The model/observed amplitude ratio is the same at all three gauges, and the boundary
+# tide is nearly uniform along the 60 km edge (M2 17.2-17.8 cm, phase within 1.3°). So one
+# correction per constituent, applied along the whole edge, fixes the input. FjordOs did the same:
+# METreport 4/2016 §4.3 forced its boundary with a tide corrected to Viker.
+#
+# `TideCorrectedBoundaries` does it after the regrid, inside `prepare_boundaries`. It holds the
+# Norkyst-v3 boundary config and forwards everything else to it. Specific to this dataset and this
+# box, which is why it lives here and not in `src/`. The gains are measured for the hindcast's
+# 2014-15 tide only. `oslofjorden()`'s operational archive would need its own.
+
+"""
+    TidalGain(constituent, amplitude_factor, phase_shift)
+
+The correction to one constituent: its amplitude is multiplied by `amplitude_factor` and its phase
+delayed by `phase_shift` degrees (negative is earlier). `constituent` is a name from
+`TIDAL_CONSTITUENTS`.
+"""
+struct TidalGain
+    constituent::String
+    amplitude_factor::Float64
+    phase_shift::Float64
+end
+
+# Observed over modelled at Viker, from the full 640-day run (stamp 20261014T142318) against
+# Kartverket's 10-minute record, 2014-05-01 to 2015-12-31. Each phase shift is the observed phase
+# minus the modelled. The constituents are the six above 0.4 cm at Viker that a 20-month record
+# separates; standard errors are 0.1 cm. Oscarsborg and Oslo give the same gains within 0.02 for M2
+# and 0.15 for S2. Their M2 phase is also 11° ahead, against Viker's 3°, which is a fault of the
+# interior that a boundary correction cannot reach.
+const VIKER_TIDE_GAINS = [
+    TidalGain("M2", 0.713,   2.7),   # 17.27 cm modelled, 12.32 observed
+    TidalGain("S2", 2.071, -34.0),   #  1.40,  2.89
+    TidalGain("N2", 0.903,  -4.1),   #  3.35,  3.02
+    TidalGain("K2", 1.254,  32.7),   #  0.48,  0.61
+    TidalGain("O1", 1.552,   7.7),   #  1.19,  1.85
+    TidalGain("K1", 0.353,  17.8),   #  1.01,  0.36
+]
+
+"""
+    TideCorrectedBoundaries(source, gains)
+
+`source`'s open-boundary data with its tide corrected per constituent by `gains`.
+
+`prepare_boundaries` writes the file exactly as `source` would, then corrects it in place
+(`correct_boundary_tide!`). Every other hook is `source`'s: where the file is, which edges are open,
+the download, and how the run reads the file.
+"""
+struct TideCorrectedBoundaries{C <: AbstractBoundaryDataConfig} <: AbstractBoundaryDataConfig
+    source::C
+    gains::Vector{TidalGain}
+end
+
+Configs.boundary_data_path(config::TideCorrectedBoundaries) =
+    Configs.boundary_data_path(config.source)
+Configs.boundary_data_directory(config::TideCorrectedBoundaries) =
+    Configs.boundary_data_directory(config.source)
+Configs.plot_path(config::TideCorrectedBoundaries) = Configs.plot_path(config.source)
+Configs.open_edges(config::TideCorrectedBoundaries) = Configs.open_edges(config.source)
+Forcing.boundary_variable_names(config::TideCorrectedBoundaries) =
+    Forcing.boundary_variable_names(config.source)
+Forcing.download_boundaries(target_grid, config::TideCorrectedBoundaries) =
+    Forcing.download_boundaries(target_grid, config.source)
+
+function Forcing.prepare_boundaries(
+    target_grid,
+    config::TideCorrectedBoundaries;
+    coverage = nothing,
+)
+    result = Forcing.prepare_boundaries(target_grid, config.source; coverage)
+    correct_boundary_tide!(result.output_file, Configs.open_edges(config), config.gains)
+    return result
+end
+
+"""
+    tidal_design(hours)
+
+The least-squares design matrix for a mean plus every constituent in `TIDAL_CONSTITUENTS`, as
+`harmonic_fit` builds it: column 1 is the mean, columns `2k` and `2k + 1` the cosine and sine of
+constituent `k`.
+"""
+function tidal_design(hours)
+    design = ones(length(hours), 1 + 2 * length(TIDAL_CONSTITUENTS))
+    for (k, constituent) in enumerate(TIDAL_CONSTITUENTS)
+        ω = 2π / constituent.period_hours
+        design[:, 2k] = cos.(ω .* hours)
+        design[:, 2k + 1] = sin.(ω .* hours)
+    end
+    return design
+end
+
+"""
+    tidal_increment(factorization, design, series, gains)
+
+What to add to each column of `series` (time × nodes) to apply `gains`: for each corrected
+constituent, the corrected harmonic minus the fitted one.
+
+The fit includes every constituent in `TIDAL_CONSTITUENTS`, not only the corrected ones, so the
+others are not aliased into them. A constituent `a cos ωt + b sin ωt` has amplitude `hypot(a, b)`
+and phase `atan(b, a)`. Scaling the amplitude by `g` and delaying the phase by `Δ` turns `(a, b)`
+into `g` times `(a, b)` rotated by `Δ`.
+"""
+function tidal_increment(factorization, design, series, gains)
+    coefficients = factorization \ series
+    change = zero(coefficients)
+    for gain in gains
+        k = findfirst(c -> c.name == gain.constituent, TIDAL_CONSTITUENTS)
+        isnothing(k) && throw(ArgumentError("$(gain.constituent) is not in TIDAL_CONSTITUENTS"))
+        a = coefficients[2k, :]
+        b = coefficients[2k + 1, :]
+        Δ = deg2rad(gain.phase_shift)
+        change[2k, :] = gain.amplitude_factor .* (a .* cos(Δ) .- b .* sin(Δ)) .- a
+        change[2k + 1, :] = gain.amplitude_factor .* (a .* sin(Δ) .+ b .* cos(Δ)) .- b
+    end
+    return design * change
+end
+
+"""
+    correct_boundary_tide!(path, edges, gains)
+
+Correct the tide in the prepared boundary file at `path` on every edge in `edges`, in place.
+
+`eta`, `ubar` and `vbar` are fitted and corrected at every wet boundary node over the file's whole
+time axis. What the fit does not take out is left as it was: the mean, the surges, the subtidal
+exchange. The velocities get the same gains as the sea level because the Flather condition combines
+the exterior transport with the exterior elevation, and correcting only one would change the tide
+the boundary lets in by the wrong amount. The 3D `u` and `v` get their depth mean's correction at
+every wet level, so the barotropic tide in them stays the one in `ubar` and `vbar`. Dry nodes, all
+missing in the file, are skipped. A file this has already corrected is refused rather than corrected
+twice.
+"""
+function correct_boundary_tide!(path, edges, gains)
+    NCDataset(path, "a") do ds
+        haskey(ds.attrib, "tide_correction") && error(
+            "$path already has its boundary tide corrected ($(ds.attrib["tide_correction"])). " *
+            "Re-run `prepare_boundaries` to start from the uncorrected data.",
+        )
+        times = ds["time"][:]
+        design = tidal_design([Dates.value(t - first(times)) / 3_600_000 for t in times])
+        factorization = qr(design)
+
+        for edge in edges, (barotropic, full) in (("eta", nothing), ("ubar", "u"), ("vbar", "v"))
+            name = "$(edge)_$(barotropic)"
+            haskey(ds, name) || continue
+            values = ds[name][:, :]
+            wet = [i for i in axes(values, 1) if !any(ismissing, view(values, i, :))]
+            series = Float64.(permutedims(values[wet, :]))
+            increment = tidal_increment(factorization, design, series, gains)
+            for (j, i) in enumerate(wet)
+                values[i, :] .+= Float32.(view(increment, :, j))
+            end
+            ds[name][:, :] = values
+            @info "Corrected the tide in $name at $(length(wet)) wet nodes"
+
+            isnothing(full) && continue
+            field = "$(edge)_$(full)"
+            haskey(ds, field) || continue
+            values = ds[field][:, :, :]
+            for (j, i) in enumerate(wet), k in axes(values, 2)
+                level = view(values, i, k, :)
+                any(ismissing, level) && continue
+                level .+= Float32.(view(increment, :, j))
+            end
+            ds[field][:, :, :] = values
+            @info "Applied the $barotropic correction to every wet level of $field"
+        end
+
+        ds.attrib["tide_correction"] = join(
+            ("$(g.constituent) x$(g.amplitude_factor) $(g.phase_shift)°" for g in gains), ", ")
+    end
+    return path
+end
 
 # --- The config -------------------------------------------------------------------------------
 
@@ -376,35 +563,40 @@ FjordConfig(
         years            = years,
         rivers           = rivers,
     ),
-    boundary_config = NorKystHindcastBoundariesConfig(
-        data_root        = data_root,
-        output_directory = "norkyst_v3_hourly",
-        output_file      = base.boundary_config.output_file,
-        plot_file        = base.boundary_config.plot_file,
-        # Measured from the land mask. The southern wall is 311 wet cells of 351, to 317 m; the
-        # northern one is dry. The western one is wet for 14 cells, 2.8 km at 58.95-58.97°N off
-        # Nevlunghavn, to 41 m — all of it inside the sixteen-cell `BoundarySponge` of the southern
-        # edge it meets, so the westward outflow METreport 4/2016 §5.1 describes turning "inside of
-        # Store Færder" leaves through the southern boundary a few cells from the corner rather than
-        # being blocked. The eastern one is wet for 26 cells at 59.07-59.11°N, to 66 m, where the
-        # Idefjord approach meets the Swedish border, and the edge of what the Norwegian FileGDB
-        # covers: a sill fjord with no large exchange, on data that thins out at the wall.
-        #
-        # Opening either would cost far more than it buys. `boundary_domain` takes the *bounding
-        # box* of the open edges' bands, and a full-width southern band with a full-height western
-        # or eastern one spans the whole domain — about 110 GB of hourly download over two years
-        # against roughly 5 GB for the southern edge alone.
-        open_edges       = :south,
-        margin           = base.boundary_config.margin,
-        architecture     = base.boundary_config.architecture,
-        # `ubar_eastward`/`vbar_northward`, not the operational collection's `ubar`/`vbar`: these
-        # come from the `sdepth` files and are already rotated to geographic axes.
-        # `boundary_variable_names` maps them onto the `ubar`/`vbar` the read side expects.
-        parameters       = [
-            "temperature", "salinity", "u_eastward", "v_northward", "zeta",
-            "ubar_eastward", "vbar_northward",
-        ],
-        years            = years,
+    # The tide in it corrected to Viker; see "The boundary tide" above.
+    boundary_config = TideCorrectedBoundaries(
+        NorKystHindcastBoundariesConfig(
+            data_root        = data_root,
+            output_directory = "norkyst_v3_hourly",
+            output_file      = base.boundary_config.output_file,
+            plot_file        = base.boundary_config.plot_file,
+            # Measured from the land mask. The southern wall is 311 wet cells of 351, to 317 m; the
+            # northern one is dry. The western one is wet for 14 cells, 2.8 km at 58.95-58.97°N off
+            # Nevlunghavn, to 41 m — all of it inside the sixteen-cell `BoundarySponge` of the
+            # southern edge it meets, so the westward outflow METreport 4/2016 §5.1 describes
+            # turning "inside of Store Færder" leaves through the southern boundary a few cells from
+            # the corner rather than being blocked. The eastern one is wet for 26 cells at
+            # 59.07-59.11°N, to 66 m, where the Idefjord approach meets the Swedish border, and the
+            # edge of what the Norwegian FileGDB covers: a sill fjord with no large exchange, on
+            # data that thins out at the wall.
+            #
+            # Opening either would cost far more than it buys. `boundary_domain` takes the *bounding
+            # box* of the open edges' bands, and a full-width southern band with a full-height
+            # western or eastern one spans the whole domain — about 110 GB of hourly download over
+            # two years against roughly 5 GB for the southern edge alone.
+            open_edges       = :south,
+            margin           = base.boundary_config.margin,
+            architecture     = base.boundary_config.architecture,
+            # `ubar_eastward`/`vbar_northward`, not the operational collection's `ubar`/`vbar`:
+            # these come from the `sdepth` files and are already rotated to geographic axes.
+            # `boundary_variable_names` maps them onto the `ubar`/`vbar` the read side expects.
+            parameters       = [
+                "temperature", "salinity", "u_eastward", "v_northward", "zeta",
+                "ubar_eastward", "vbar_northward",
+            ],
+            years            = years,
+        ),
+        VIKER_TIDE_GAINS,
     ),
     atmosphere_config = atmosphere,
     simulation_config = SimulationConfig(
@@ -462,10 +654,10 @@ FjordConfig(
             # Hourly T/S profiles at the CTD stations and the two inner-basin stations. The
             # observations are a dozen casts a year, so hourly is far more than the comparison at
             # cast dates needs — but it is also what the Hovmøller diagrams of METreport 11/2017
-            # Figs. 25-28 are drawn from, and what resolves a deep-water renewal event, which happens
-            # over days and is the thing this domain is judged on. `e` rides along because the
-            # reports' two standing conclusions are both about vertical mixing — too weak in the open
-            # fjord, too vigorous inside the sills — and the TKE is what would show it.
+            # Figs. 25-28 are drawn from, and what resolves a deep-water renewal event, which
+            # happens over days and is the thing this domain is judged on. `e` rides along because
+            # the reports' two standing conclusions are both about vertical mixing — too weak in the
+            # open fjord, too vigorous inside the sills — and the TKE is what would show it.
             StationWriter(
                 name               = :hydrography,
                 output_file        = "stations_hydrography.nc",
@@ -477,8 +669,8 @@ FjordConfig(
             # The fixed-point temperature sites. Hourly matches the Scanmar mooring's own cadence,
             # and the beaches' three-hourly daytime sampling is a subset of it. The whole column is
             # written rather than the top cell alone, because the report's explanation for the beach
-            # discrepancy is a diurnal cycle in the model that is too strong, and that is a statement
-            # about the surface layer rather than the surface.
+            # discrepancy is a diurnal cycle in the model that is too strong, and that is a
+            # statement about the surface layer rather than the surface.
             StationWriter(
                 name               = :surface_temperature,
                 output_file        = "stations_temperature.nc",

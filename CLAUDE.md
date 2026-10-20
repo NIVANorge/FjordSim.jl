@@ -268,6 +268,12 @@ forcings.
 - No trailing whitespace, no trailing blank lines; files end with exactly one newline
 - Always use explicit `return` in functions longer than one expression
 - Delete commented-out code — git is the history; no debugging artifacts or stale copy-paste
+- Comments are for any reader, on any machine, at any later time: state what holds for everyone —
+  what the code does and why, and measured numbers with what they were measured on. Never the
+  author's situation or the file's history: not "the FileGDB is already on this machine", "Lista
+  has no run yet", "the 42 m layers this file had", "from your environment". A machine's state
+  belongs nowhere in the repo; a task's progress goes in `TODO.md`; history goes in the commit
+  message.
 - Prefer dispatch over conditionals: multiple dispatch instead of `if`/`else` branching on types
 
 ## Common Pitfalls

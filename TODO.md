@@ -52,8 +52,8 @@ surface is 2–4 g/kg saltier than NorKyst.
 
 ## Vertical mixing is too strong
 
-This probably applies to every setup and example: `oslofjorden`, `drammensfjorden` and
-`examples/lista.jl` all use `CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6)`. The
+This probably applies to every setup and example: `oslofjorden` and `drammensfjorden` use
+`CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6)`. `examples/lista.jl` has moved to 7e-7. The
 `oslofjorden()` comment shows that this TKE floor, not the prognostic TKE, sets κ below about 6 m.
 It argues that 7e-6 is at the low end of the measured basin diffusivities, but the run contradicts
 that:

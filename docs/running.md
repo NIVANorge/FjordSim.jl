@@ -62,7 +62,9 @@ some config edits silently do nothing until the files are rewritten.
 
 **`start_date` or `stop_time`.** The prepare steps pad their time axes to the run window
 (`coverage_window`), and the river file's daily axis *is* that window. Re-run, in this order, with
-`prepare_forcing` first for a setup that names a `forcing_config`:
+`prepare_forcing` first for a setup that names a `forcing_config`, and after a `start_date` change
+`download_initial_state` and `prepare_initial_state` for one that names an `initial_state_config`
+(`FromInitialState` refuses a file prepared for another `start_date`):
 
 ```bash
 julia --project -m FjordSim add_rivers          --config examples/oslofjorden.jl
@@ -73,7 +75,8 @@ julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden.jl
 **`z_faces`, the grid `size`, or any `bathymetry_config` smoothing knob.** `z_faces` is written into
 `bathymetry.nc` and `simulation_grid` reads the *file*, not the config; the land mask the forcing and
 boundary prepares build their masks from comes from the same file. Re-run, in this order, with
-`prepare_forcing` after `prepare_bathymetry` for a setup that names a `forcing_config`:
+`prepare_forcing` and `prepare_initial_state` after `prepare_bathymetry` for a setup that names
+them:
 
 ```bash
 julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden.jl

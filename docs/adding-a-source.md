@@ -5,7 +5,8 @@
 
 Every pipeline is a generic function on the config supertype plus a small set of hooks. Add a
 source by subtyping and overloading the hooks — never by editing the generic function. The
-adapter files (`src/Bathymetry/geonorge.jl`, `src/Forcing/norkyst.jl`, `src/Rivers/nve_rivers.jl`,
+adapter files (`src/Bathymetry/geonorge.jl`, `src/Forcing/norkyst.jl`,
+`src/InitialState/norkyst_initial_state.jl`, `src/Rivers/nve_rivers.jl`,
 `src/Boundaries/norkyst_boundaries.jl`) are the templates.
 
 Grid — `AbstractGridConfig`:
@@ -42,6 +43,18 @@ Forcing — `AbstractForcingConfig`, consumed by `prepare_forcing`:
 | `simulation_forcing(config, grid, filepath, tracers, reference_date)` → the forcing term object `coupled_simulation` consumes | no; defaults to `forcing_from_file`, the FjordSim NetCDF contract |
 | `forcing_date_range(config, filepath)` → `(first, last)` `DateTime`s | no; defaults to reading `ds["time"]` from the prepared NetCDF. A source that overrides `simulation_forcing` overrides this too |
 | `source_field_grid(source, architecture)`, `projected_target_nodes(longitude, latitude, source)` | only for a source grid that is not a regular projected grid; dispatch on the source-grid type, not the config |
+
+Initial state — `AbstractInitialStateConfig`, consumed by `prepare_initial_state`:
+
+| Hook | Required |
+|---|---|
+| `initial_state_record(config, date)` → the `SourceRecord` holding the state at `date` | yes |
+| `initial_state_source_grid(config, filepath)` → source grid | yes |
+| `initial_state_variable_names(config)` → `Dict` source name => FjordSim name | yes |
+| `download_initial_state(target_grid, config, date)` | only if it downloads |
+
+`date` is the simulation config's `start_date`, passed by the `FjordConfig` drivers: the dataset
+decides which of its records stands for that instant, and fetches only that one.
 
 Rivers — `AbstractRiverConfig`, consumed by `add_rivers`:
 
@@ -187,7 +200,8 @@ pipeline *argument*, not a hook: the `FjordConfig` drivers derive it with `cover
 source inherits the padding unchanged. No source gains a hook for it.
 
 Required fields are listed in each supertype's docstring in `src/Configs.jl`. Path resolution
-(`bathymetry_path`, `forcing_path`, `forcing_directory`, `river_forcing_path`, `boundary_data_path`,
+(`bathymetry_path`, `forcing_path`, `forcing_directory`, `initial_state_path`,
+`initial_state_directory`, `river_forcing_path`, `boundary_data_path`,
 `boundary_data_directory`, `atmosphere_path`,
 `atmosphere_directory`, `results_path`, `plot_path`) and the plots come for free. A missing
 required hook surfaces as a `MethodError` naming it, which the "Config extensibility" testset

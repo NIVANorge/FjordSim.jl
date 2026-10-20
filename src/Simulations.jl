@@ -15,6 +15,7 @@ export SimulationConfig,
     ProgressCallback,
     AdaptiveTimeStep,
     FromForcing,
+    FromInitialState,
     FromResults,
     simulation_architecture,
     model_tracers,
@@ -49,10 +50,12 @@ using ..Configs:
     AbstractCallbackConfig,
     AbstractTimeSteppingConfig,
     AbstractForcingConfig,
+    AbstractInitialStateConfig,
     AbstractRiverConfig,
     FjordConfig,
     bathymetry_path,
     forcing_path,
+    initial_state_path,
     river_forcing_path,
     results_path,
     run_tag,
@@ -63,6 +66,7 @@ using ..Utils: progress, cell_advection_timescale_coupled_model
 using ..Atmospheres: prescribed_atmosphere, prescribed_radiation, atmosphere_date_range
 using ..Regridding: interpolation_architecture, column_wet_levels
 using ..Forcing: simulation_forcing, forcing_date_range
+using ..InitialState: INITIAL_STATE_DATE_ATTRIBUTE
 using ..Rivers: river_forcing, river_date_range, read_river_columns, combine_forcing
 using ..Boundaries: boundary_series, boundary_date_range
 using ..BoundaryConditions: field_boundary_conditions
@@ -956,7 +960,7 @@ a new subtype rather than an edit to `build_simulation`.
 - `callbacks`: a tuple of `AbstractCallbackConfig`s. `()` reports nothing.
 - `time_stepping`: an `AbstractTimeSteppingConfig`.
 - `initial_conditions`: where the ocean state starts from — a `NamedTuple` of constants, fields or
-  functions, a `FromForcing`, or a `FromResults`. `build_simulation` puts it through
+  functions, a `FromForcing`, a `FromInitialState`, or a `FromResults`. `build_simulation` puts it through
   `resolve_initial_conditions`, so what reaches `coupled_simulation` is always a `NamedTuple` `set!`
   accepts.
 - `start_date`: the calendar instant model time zero stands for.
@@ -1036,6 +1040,15 @@ end
 FromForcing() = FromForcing(nothing)
 
 """
+    FromInitialState()
+
+Initial conditions read from the file `prepare_initial_state` wrote: a single record on the model
+grid, at the run's `start_date`. Needs an `initial_state_config`, and the file must have been prepared
+for this `start_date` — see `initial_state_variables`.
+"""
+struct FromInitialState end
+
+"""
     FromResults(path, date = nothing)
 
 Initial conditions read from a previous run's snapshot file, at `date` — or from its last record
@@ -1064,9 +1077,11 @@ initial_conditions_date(::FromForcing{Nothing}, start_date) = start_date
 initial_conditions_date(initial_conditions::FromForcing, start_date) = initial_conditions.date
 
 """
-    resolve_initial_conditions(initial_conditions, grid, forcing_file, config)
+    resolve_initial_conditions(initial_conditions, grid, forcing_file, initial_state_file, config)
 
 Turn a setup's `initial_conditions` into the `NamedTuple` `set!(model; ...)` consumes.
+`initial_state_file` is where `prepare_initial_state` writes, unchecked, or `nothing` for a setup
+naming no initial state.
 
 Dispatched on the kind of source, so `coupled_simulation` never learns that there is more than one:
 it still receives something splattable and still applies it with a single `set!`.
@@ -1081,10 +1096,10 @@ The free surface `η` and any closure-owned tracer the config does not name (CAT
 defaults, so reading a state in is a *warm start*, not a restart: the barotropic mode and the
 turbulence field re-adjust over the first hours. Use `pickup` for an exact continuation.
 """
-resolve_initial_conditions(initial_conditions::NamedTuple, grid, forcing_file, config) =
+resolve_initial_conditions(initial_conditions::NamedTuple, grid, forcing_file, initial_state_file, config) =
     initial_conditions
 
-function resolve_initial_conditions(initial_conditions::FromForcing, grid, forcing_file, config)
+function resolve_initial_conditions(initial_conditions::FromForcing, grid, forcing_file, initial_state_file, config)
     date = initial_conditions_date(initial_conditions, config.start_date)
     @info "Initial conditions from forcing $forcing_file at $date"
     return forcing_state(forcing_file, grid, date, model_tracers(config.model))
@@ -1093,13 +1108,28 @@ end
 # There is no forcing file because the setup names no forcing config at all — `resolve_forcing_file`
 # returns `nothing` for one. Stated here rather than left to fail inside `NCDataset(nothing)` after
 # the grid has been built.
-resolve_initial_conditions(::FromForcing, grid, ::Nothing, config) = error(
+resolve_initial_conditions(::FromForcing, grid, ::Nothing, initial_state_file, config) = error(
     "Initial conditions are `FromForcing`, but this setup names no `forcing_config`, so there is no " *
     "prepared forcing file to read a state from. Name one, give `initial_conditions` a `NamedTuple` " *
-    "of constants, or start from a previous run's snapshot with `FromResults`.",
+    "of constants, start from one day of source data with `FromInitialState`, or from a previous " *
+    "run's snapshot with `FromResults`.",
 )
 
-function resolve_initial_conditions(initial_conditions::FromResults, grid, forcing_file, config)
+function resolve_initial_conditions(::FromInitialState, grid, forcing_file, initial_state_file, config)
+    isfile(initial_state_file) || error(
+        "Initial state $initial_state_file does not exist. Run `julia --project -m FjordSim " *
+        "download_initial_state` and `prepare_initial_state` for this setup first.",
+    )
+    @info "Initial conditions from initial state $initial_state_file"
+    return initial_state_variables(initial_state_file, grid, config.start_date, model_tracers(config.model))
+end
+
+resolve_initial_conditions(::FromInitialState, grid, forcing_file, ::Nothing, config) = error(
+    "Initial conditions are `FromInitialState`, but this setup names no `initial_state_config` to " *
+    "read a state from. Name one, or give `initial_conditions` a `NamedTuple` of constants.",
+)
+
+function resolve_initial_conditions(initial_conditions::FromResults, grid, forcing_file, initial_state_file, config)
     filepath = results_state_path(initial_conditions, config)
     isfile(filepath) || error("Results file $filepath does not exist.")
     @info "Initial conditions from results $filepath"
@@ -1134,6 +1164,26 @@ function forcing_state(filepath, grid, date, tracers)
             "$(last(dates)). Name a date on that axis, or prepare forcing covering $date.",
         )
         return state_variables(ds, index, eltype(grid), tracers)
+    end
+end
+
+"""
+    initial_state_variables(filepath, grid, start_date, tracers)
+
+The state variables a prepared initial-state file holds, refusing a file prepared for another
+`start_date`: the record is chosen when the file is prepared, so a changed `start_date` would
+otherwise start the run from the old one.
+"""
+function initial_state_variables(filepath, grid, start_date, tracers)
+    return NCDataset(filepath) do ds
+        validate_state_dimensions(filepath, ds, grid, ("Nx", "Ny", "Nz"))
+        prepared_date = DateTime(ds.attrib[INITIAL_STATE_DATE_ATTRIBUTE])
+        prepared_date == start_date || error(
+            "$filepath was prepared for start_date $prepared_date, but this run starts at $start_date. " *
+            "Re-run download_initial_state and prepare_initial_state.",
+        )
+        @info "Reading the initial state recorded at $(only(ds["time"][:]))"
+        return state_variables(ds, 1, eltype(grid), tracers)
     end
 end
 
@@ -1258,6 +1308,15 @@ simulation_forcing_path(config::FjordConfig) = simulation_forcing_path(config.fo
 
 simulation_forcing_path(::Nothing) = nothing
 simulation_forcing_path(config::AbstractForcingConfig) = forcing_path(config)
+
+"""
+    simulation_initial_state_path(config)
+
+Where `FromInitialState` reads from, or `nothing` for a setup naming no initial state. Not checked to
+exist here, since only `FromInitialState` reads it.
+"""
+simulation_initial_state_path(::Nothing) = nothing
+simulation_initial_state_path(config::AbstractInitialStateConfig) = initial_state_path(config)
 
 """
     resolve_river_file(rivers)
@@ -2075,8 +2134,8 @@ The rivers are forcing terms of their own, added to the file forcing by `combine
 free-surface source `η` and a top-cell source on each tracer the river file carries. The open
 boundaries are built from the file forcing alone, which is what they always saw.
 
-The initial conditions go through `resolve_initial_conditions`, so a `FromForcing` or `FromResults`
-is read here — where the grid and the forcing path are known — and what `coupled_simulation`
+The initial conditions go through `resolve_initial_conditions`, so a `FromForcing`, `FromInitialState`
+or `FromResults` is read here — where the grid and the file paths are known — and what `coupled_simulation`
 receives is always a plain `NamedTuple`. Note that `pickup` supersedes them: the checkpoint restores
 the state that `set!` had just written.
 
@@ -2168,6 +2227,7 @@ function build_simulation(config::FjordConfig)
         simulation_config.initial_conditions,
         grid,
         forcing_file,
+        simulation_initial_state_path(config.initial_state_config),
         simulation_config,
     )
 

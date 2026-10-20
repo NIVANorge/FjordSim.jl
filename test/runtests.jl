@@ -25,6 +25,7 @@ include("utilities.jl")
             :AbstractGridConfig,
             :AbstractBathymetryConfig,
             :AbstractForcingConfig,
+            :AbstractInitialStateConfig,
             :AbstractRiverConfig,
             :AbstractSimulationConfig,
             :EvenGrid,
@@ -44,6 +45,15 @@ include("utilities.jl")
             :prepare_bathymetry,
             :prepare_forcing,
             :download_forcing,
+            :download_initial_state,
+            :prepare_initial_state,
+            :initial_state_path,
+            :initial_state_directory,
+            :initial_state_record,
+            :initial_state_source_grid,
+            :initial_state_variable_names,
+            :NorKystInitialStateConfig,
+            :FromInitialState,
             :add_rivers,
             :download_rivers,
             :interpolation_architecture,
@@ -1203,6 +1213,8 @@ end
             "prepare_bathymetry",
             "download_forcing",
             "prepare_forcing",
+            "download_initial_state",
+            "prepare_initial_state",
             "add_rivers",
             "download_boundaries",
             "prepare_boundaries",
@@ -1254,6 +1266,8 @@ end
 
             @test isnothing(download_forcing(config))
             @test isnothing(prepare_forcing(config))
+            @test isnothing(download_initial_state(config))
+            @test isnothing(prepare_initial_state(config))
             @test isnothing(add_rivers(config))
             @test isnothing(download_boundaries(config))
             @test isnothing(prepare_boundaries(config))
@@ -4680,7 +4694,7 @@ end
         # A literal NamedTuple is already what `set!` wants, so it passes through by identity — the
         # behaviour every setup had before the other two shapes existed.
         constants = (T = 5.0, S = 33.0)
-        @test resolve_initial_conditions(constants, nothing, "unused.nc", nothing) === constants
+        @test resolve_initial_conditions(constants, nothing, "unused.nc", nothing, nothing) === constants
 
         Nx, Ny, Nz = 6, 5, 4
 
@@ -4792,12 +4806,14 @@ end
                 FromResults("snapshots_tagged.nc"),
                 grid,
                 forcing_file,
+                nothing,
                 simulation_config,
             ).T[1, 1, 1] == 30
             @test_throws ErrorException resolve_initial_conditions(
                 FromResults("absent.nc"),
                 grid,
                 forcing_file,
+                nothing,
                 simulation_config,
             )
 
@@ -4807,8 +4823,91 @@ end
                 FromForcing(),
                 grid,
                 forcing_file,
+                nothing,
                 simulation_config,
             ).T[2, 2, 2] == 1
+        end
+    end
+
+    @testset "initial state" begin
+        resolve_initial_conditions = FjordSim.Simulations.resolve_initial_conditions
+        initial_state_filename = FjordSim.InitialState.initial_state_filename
+
+        Nx, Ny, Nz = 6, 5, 4
+        start_date = DateTime(2020, 1, 1)
+
+        mktempdir() do tmp
+            bathymetry_config = test_bathymetry_config(data_root = tmp)
+            # A land column, so the regridded state has dry cells to mark.
+            bottom_height = fill(-40.0, (Nx, Ny))
+            bottom_height[1, 1] = 0.0
+            (; grid_config, grid) = immersed_test_grid(
+                bathymetry_path(bathymetry_config);
+                size = (Nx, Ny, Nz),
+                bottom_height,
+            )
+            config = NorKystInitialStateConfig(
+                data_root = tmp,
+                output_directory = "norkyst_initial",
+                parameters = ["temperature", "salinity", "u_eastward", "v_northward"],
+            )
+
+            # Nothing downloaded is an error naming the step that downloads it.
+            @test_throws "download_initial_state" prepare_initial_state(grid, config, start_date)
+
+            # The download for the day `start_date` falls in: one daily mean, stamped at noon.
+            mkpath(initial_state_directory(config))
+            downloaded = write_hourly_source_stub(
+                joinpath(initial_state_directory(config), initial_state_filename(config, start_date));
+                dates = [DateTime(2020, 1, 1, 12)],
+                longitude = (9.9, 11.1),
+                latitude = (58.9, 60.1),
+                depths = [0.0, 20.0, 50.0],
+                value = (name, level, index) -> name == "temperature" ? 7.0f0 :
+                                                name == "salinity" ? 34.0f0 : 0.1f0,
+            )
+
+            result = prepare_initial_state(grid, config, start_date)
+            @test result.output_file == initial_state_path(config)
+            @test result.date == DateTime(2020, 1, 1, 12)    # the source record's own instant
+            @test sort(result.variables) == ["S", "T", "u", "v"]
+            NCDataset(result.output_file) do ds
+                @test DateTime(ds.attrib["start_date"]) == start_date
+                @test ds.dim["time"] == 1
+                @test !haskey(ds, "T_lambda")
+            end
+
+            simulation_config = test_simulation_config(results_root = tmp, start_date = start_date)
+            state = resolve_initial_conditions(
+                FromInitialState(), grid, nothing, result.output_file, simulation_config,
+            )
+            @test keys(state) == (:T, :S, :u, :v)
+            @test size(state.u) == (Nx + 1, Ny, Nz)
+            @test state.T[3, 3, 2] ≈ 7
+            @test state.S[3, 3, 2] ≈ 34
+            @test state.T[1, 1, 2] == 0                       # land zeroed
+
+            # The record is chosen when the file is prepared, so a file prepared for another
+            # start_date is refused rather than read.
+            later = test_simulation_config(results_root = tmp, start_date = DateTime(2020, 1, 2))
+            @test_throws "prepared for start_date" resolve_initial_conditions(
+                FromInitialState(), grid, nothing, result.output_file, later,
+            )
+            @test_throws "prepare_initial_state" resolve_initial_conditions(
+                FromInitialState(), grid, nothing, joinpath(tmp, "absent.nc"), simulation_config,
+            )
+            @test_throws "initial_state_config" resolve_initial_conditions(
+                FromInitialState(), grid, nothing, nothing, simulation_config,
+            )
+
+            # The setup-level drivers take the date from the simulation config. A day already
+            # downloaded is not fetched again, which is what lets this run offline.
+            setup = FjordConfig(; grid_config, bathymetry_config, initial_state_config = config, simulation_config)
+            @test download_initial_state(setup) == downloaded
+            @test prepare_initial_state(setup).date == DateTime(2020, 1, 1, 12)
+            @test_throws "simulation_config" prepare_initial_state(
+                FjordConfig(; grid_config, bathymetry_config, initial_state_config = config),
+            )
         end
     end
 
@@ -5202,7 +5301,7 @@ end
             # Reading a state from a forcing file that does not exist is a stated error rather than a
             # failure inside `NCDataset(nothing)` after the grid has been built.
             @test_throws ErrorException FjordSim.Simulations.resolve_initial_conditions(
-                FromForcing(), nothing, nothing, config.simulation_config,
+                FromForcing(), nothing, nothing, nothing, config.simulation_config,
             )
         end
     end

@@ -49,13 +49,15 @@ step whose config is `nothing` is a no-op:
 | `grid_config` | `EvenGrid` | — | — | always |
 | `bathymetry_config` | `DybdedataConfig` (Geonorge) | `prepare_bathymetry` | `bathymetry.nc` | always: it *is* the model grid |
 | `forcing_config` | `NorKystConfig`, `NorKystHindcastConfig` | `download_forcing`, `prepare_forcing` | `forcing.nc` | `FromForcing` initial conditions |
+| `initial_state_config` | `NorKystInitialStateConfig` | `download_initial_state`, `prepare_initial_state` | `initial_state.nc` | `FromInitialState` initial conditions |
 | `river_config` | `NVERiversConfig` | `add_rivers` | `rivers_nve.nc` | river inflow; `RiverMouthMixing` |
 | `boundary_config` | `NorKystBoundariesConfig`, `NorKystHindcastBoundariesConfig` | `download_boundaries`, `prepare_boundaries` | `boundaries.nc` | any open edge; `OpenLateralBoundaryFromData` |
 | `atmosphere_config` | `NORA3Config` | `download_atmosphere`, `prepare_atmosphere` | `atmosphere.nc` | the prescribed atmosphere and radiation the surface fluxes are computed from |
 | `simulation_config` | `SimulationConfig` | `run_simulation`, `validate_simulation` | results | running at all |
 
-NorKyst's operational archive (`NorKystConfig`, `NorKystBoundariesConfig`) begins on 2017-02-20; a
-window before that needs the hindcast configs, which cover 2012 onwards. Each field is a type
+NorKyst's operational archive (`NorKystConfig`, `NorKystInitialStateConfig`,
+`NorKystBoundariesConfig`) begins on 2017-02-20; a window before that needs the hindcast configs,
+which cover 2012 onwards (there is no hindcast initial-state config). Each field is a type
 parameter of `FjordConfig`, so it is chosen when the config is built and cannot be set to `nothing`
 on an existing instance afterwards.
 
@@ -159,8 +161,10 @@ spacing have to be worked out for the new grid rather than copied:
 - **Open boundaries.** `OpenLateralBoundaryFromData`'s `inflow_timescale` relaxes by `Δt/τ` per step;
   compare that with the advective rate into the boundary cell, `u/Δx`, or the nudging does nothing.
   Too strong an inflow nudge reflects. A `BoundarySponge` damps what the open edges radiate.
-- **Initial conditions.** `FromForcing()` needs a `forcing_config`; `FromResults(path)` continues
-  from an earlier run's snapshot; a `NamedTuple` of constants or functions needs nothing.
+- **Initial conditions.** `FromInitialState()` needs an `initial_state_config` and downloads one day
+  for `start_date`; `FromForcing()` needs a `forcing_config`, whose download covers whole years;
+  `FromResults(path)` continues from an earlier run's snapshot; a `NamedTuple` of constants or
+  functions needs nothing.
 - **Run window.** `start_date` and `stop_time` decide what the prepare steps write, since they pad
   every time axis to the window — changing either is a data change too.
 

@@ -37,25 +37,28 @@ or set the destination in a config file.
 ## Quick start: Oslofjorden
 
 [`examples/oslofjorden.jl`](examples/oslofjorden.jl) is the reference setup: Geonorge bathymetry,
-NVE rivers, hourly NorKyst-800m open-boundary data along the southern edge, and NORA3 atmosphere.
-It names no forcing, so `download_forcing` and `prepare_forcing` report that and do nothing.
+an initial state from one NorKyst-800m daily mean, NVE rivers, hourly NorKyst-800m open-boundary
+data along the southern edge, and NORA3 atmosphere. It names no forcing, so `download_forcing` and
+`prepare_forcing` report that and do nothing.
 Please note: It may take several hours to download the data.
 
 `add_rivers` also needs a free NVE HydAPI key — sign up at https://hydapi.nve.no/Users and set it
 as `NVE_API_KEY` in your environment before running that step.
 
-Preparing the data and running it is seven commands. Only `prepare_bathymetry` is
+Preparing the data and running it is nine commands. Only `prepare_bathymetry` is
 required of every setup; the others belong to optional components (see
 [What a run is made of](#what-a-run-is-made-of)):
 
 ```bash
-julia --project -m FjordSim prepare_bathymetry   --config examples/oslofjorden.jl  # required
-julia --project -m FjordSim add_rivers           --config examples/oslofjorden.jl  # optional: rivers
-julia --project -m FjordSim download_boundaries  --config examples/oslofjorden.jl  # optional: open boundaries
-julia --project -m FjordSim prepare_boundaries   --config examples/oslofjorden.jl  # optional: open boundaries
-julia --project -m FjordSim download_atmosphere  --config examples/oslofjorden.jl  # optional: atmosphere
-julia --project -m FjordSim prepare_atmosphere   --config examples/oslofjorden.jl  # optional: atmosphere
-julia --project -m FjordSim run_simulation       --config examples/oslofjorden.jl  # the run itself
+julia --project -m FjordSim prepare_bathymetry     --config examples/oslofjorden.jl  # required
+julia --project -m FjordSim download_initial_state --config examples/oslofjorden.jl  # optional: initial state
+julia --project -m FjordSim prepare_initial_state  --config examples/oslofjorden.jl  # optional: initial state
+julia --project -m FjordSim add_rivers             --config examples/oslofjorden.jl  # optional: rivers
+julia --project -m FjordSim download_boundaries    --config examples/oslofjorden.jl  # optional: open boundaries
+julia --project -m FjordSim prepare_boundaries     --config examples/oslofjorden.jl  # optional: open boundaries
+julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden.jl  # optional: atmosphere
+julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden.jl  # optional: atmosphere
+julia --project -m FjordSim run_simulation         --config examples/oslofjorden.jl  # the run itself
 ```
 
 Each subcommand is named after the function it calls, so the same steps run from the REPL:
@@ -64,6 +67,8 @@ Each subcommand is named after the function it calls, so the same steps run from
 using FjordSim
 config = fjord_config("examples/oslofjorden.jl")
 prepare_bathymetry(config)
+download_initial_state(config)
+prepare_initial_state(config)
 add_rivers(config)
 download_boundaries(config)
 prepare_boundaries(config)
@@ -90,10 +95,11 @@ run does without that component. So a setup names what it wants and skips the re
 | Component | `FjordConfig` field | Steps | Without it |
 |---|---|---|---|
 | Bathymetry | `bathymetry_config` | `prepare_bathymetry` | — (required) |
-| Forcing | `forcing_config` | `download_forcing`, `prepare_forcing` | no interior forcing terms, no `FromForcing` initial conditions |
+| Initial state | `initial_state_config` | `download_initial_state`, `prepare_initial_state` | no `FromInitialState` initial conditions |
 | Rivers | `river_config` | `add_rivers` | no river inflow |
 | Open boundaries | `boundary_config` | `download_boundaries`, `prepare_boundaries` | every lateral edge is a closed wall |
 | Atmosphere | `atmosphere_config` | `download_atmosphere`, `prepare_atmosphere` | no prescribed atmosphere or radiation |
+| Forcing | `forcing_config` | `download_forcing`, `prepare_forcing` | no interior forcing terms, no `FromForcing` initial conditions |
 | Simulation | `simulation_config` | `run_simulation`, `validate_simulation` | data preparation only |
 
 1. **Bathymetry** — the domain's depth and land/sea mask. `prepare_bathymetry` regrids a bathymetry
@@ -101,14 +107,12 @@ run does without that component. So a setup names what it wants and skips the re
    result as a NetCDF file. That file is what actually defines the model's `ImmersedBoundaryGrid`. The
    built-in source is the public [Geonorge](https://www.geonorge.no/) Sjøkart Dybdedata dataset.
 
-2. **Forcing** — interior fields from a larger-scale ocean model. `prepare_forcing` regrids them
-   (built in: NorKyst-800m daily means of temperature, salinity and velocity) onto the simulation
-   grid, each with a rate field `λ` beside it. The run adds every variable to the model as a forcing
-   term: where `|λ| < 1` it relaxes the model field towards the file's value at rate `λ` (s⁻¹) — the
-   interior nudging ROMS does towards its climatology file — and where `|λ| > 1` it reads the value as
-   a tracer flux into the cell, a source or sink. The built-in `prepare_forcing` writes `λ = 0`
-   everywhere, so today these terms are zero and the file serves as the `FromForcing` initial state
-   — the ocean starts from a realistic state rather than a uniform water column.
+2. **Initial state** — one record of a larger-scale ocean model at the run's `start_date`, for a
+   realistic start without the whole-window download the forcing (below) needs.
+   `download_initial_state` fetches a single day (built in: the NorKyst-800m daily mean of the day
+   `start_date` falls in) and `prepare_initial_state` regrids it onto the simulation grid;
+   `FromInitialState()` initial conditions read it. The file records the `start_date` it was prepared for, and a run starting at
+   another one refuses it, so changing `start_date` means re-running both steps.
 
 3. **Rivers** — `add_rivers` writes each river's daily discharge and temperature on the surface
    columns it enters through (built in: NVE's HydAPI), which the run adds as a volume source. It is its
@@ -129,10 +133,20 @@ run does without that component. So a setup names what it wants and skips the re
    grid, independent of the ocean grid since NumericalEarth interpolates between them, producing the
    eight variables a `PrescribedAtmosphere`/`PrescribedRadiation` pair needs.
 
-The forcing, rivers and open-boundary data go onto the bathymetry's grid, so their steps need the
-processed bathymetry: that is where their land mask comes from. The atmosphere is independent.
-`FromForcing` initial conditions need a prepared forcing file; a setup without one starts from
-constants, functions, or `FromResults` from an earlier run.
+6. **Forcing** — interior fields from a larger-scale ocean model. `prepare_forcing` regrids them
+   (built in: NorKyst-800m daily means of temperature, salinity and velocity) onto the simulation
+   grid, each with a rate field `λ` beside it. The run adds every variable to the model as a forcing
+   term: where `|λ| < 1` it relaxes the model field towards the file's value at rate `λ` (s⁻¹) — the
+   interior nudging ROMS does towards its climatology file — and where `|λ| > 1` it reads the value as
+   a tracer flux into the cell, a source or sink. The built-in `prepare_forcing` writes `λ = 0`
+   everywhere, so today these terms are zero and the file serves as the `FromForcing` initial state
+   — the ocean starts from a realistic state rather than a uniform water column.
+
+The initial state, rivers, open-boundary data and forcing go onto the bathymetry's grid, so their
+steps need the processed bathymetry: that is where their land mask comes from. The atmosphere is
+independent. `FromForcing` initial conditions need a prepared forcing file and `FromInitialState` a
+prepared initial state; a setup with neither starts from constants, functions, or `FromResults` from
+an earlier run.
 
 ### A new fjord
 
@@ -187,16 +201,27 @@ before it stay in the previous launch's file.
 `loops > 1` runs the same window repeatedly, saving the ocean state.
 Each iteration resets all clocks to zero, saves the time step reached by the master, and writes its own file (`snapshots_ocean_<tag>_loop02.nc`) so that loops can be compared without overwriting each other.
 
-### Starting from forcing or from a previous run
+### Starting from forcing, an initial state or a previous run
 
-`initial_conditions` takes one of three shapes:
+`initial_conditions` takes one of four shapes:
 
 ```julia
 initial_conditions = (T = 5.0, S = 33.0)                       # constants, functions or fields
 initial_conditions = FromForcing()                             # prepared forcing at `start_date`
 initial_conditions = FromForcing(DateTime(2020, 3, 1))         # ...or at a named date
+initial_conditions = FromInitialState()                        # the prepared initial state at `start_date`
 initial_conditions = FromResults("snapshots_ocean_20260814T143012.nc")   # a previous run's last record
 initial_conditions = FromResults("snapshots_ocean_20260814T143012.nc", DateTime(2020, 6, 1))
+```
+
+`FromInitialState()` reads the day the setup's `initial_state_config` downloaded and prepared:
+
+```julia
+initial_state_config = NorKystInitialStateConfig(
+    data_root = data_root,
+    output_directory = "norkyst_initial",
+    parameters = ["temperature", "salinity", "u_eastward", "v_northward"],
+),
 ```
 
 All are a **lossy warm start**: the tracers from the config plus `u` and `v` are set, while the free surface, the turbulence state and the timestepper tendencies keep their defaults, so the first hours are a barotropic adjustment.

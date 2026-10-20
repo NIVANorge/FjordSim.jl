@@ -1,8 +1,8 @@
 module Regridding
 
-# The regridding core shared by the forcing and open-boundary pipelines: source records and the time
-# axes built from them, the water masks, the projected source grid, and the kernel that interpolates
-# a source slab onto the target nodes. Nothing here names a dataset.
+# The regridding core shared by the forcing, initial-state and open-boundary pipelines: source
+# records and the time axes built from them, the water masks, the projected source grid, and the
+# kernel that interpolates a source slab onto the target nodes. Nothing here names a dataset.
 
 export native_times_to_seconds,
     FORCING_DEFLATE_LEVEL,

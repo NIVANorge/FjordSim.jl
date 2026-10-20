@@ -1,46 +1,24 @@
 # Lista: the open coast of southernmost Norway, from Sokndal past Lindesnes (6.22-7.25°E,
 # 57.89-58.34°N), with Fedafjorden, the Flekkefjord sounds, Rosfjorden and the northern slope of the
-# Norwegian Trench. Hourly NorKyst-800m data on an open boundary on three sides, NVE rivers, NORA3
-# atmosphere, run from 1 January 2024 to 1 October 2025.
+# Norwegian Trench. A NorKyst-800m initial state, hourly NorKyst-800m data on an open boundary on
+# three sides, NVE rivers, NORA3 atmosphere, run from 1 January 2024 to 1 October 2025.
 #
 # # Preparing and running it locally
 #
-#   julia --project -m FjordSim prepare_bathymetry  --config examples/lista.jl
-#   julia --project -m FjordSim add_rivers          --config examples/lista.jl
-#   julia --project -m FjordSim download_boundaries --config examples/lista.jl
-#   julia --project -m FjordSim prepare_boundaries  --config examples/lista.jl
-#   julia --project -m FjordSim download_atmosphere --config examples/lista.jl
-#   julia --project -m FjordSim prepare_atmosphere  --config examples/lista.jl
-#   julia --project -m FjordSim run_simulation      --config examples/lista.jl   # needs a GPU
+#   julia --project -m FjordSim prepare_bathymetry     --config examples/lista.jl
+#   julia --project -m FjordSim download_initial_state --config examples/lista.jl
+#   julia --project -m FjordSim prepare_initial_state  --config examples/lista.jl
+#   julia --project -m FjordSim add_rivers             --config examples/lista.jl
+#   julia --project -m FjordSim download_boundaries    --config examples/lista.jl
+#   julia --project -m FjordSim prepare_boundaries     --config examples/lista.jl
+#   julia --project -m FjordSim download_atmosphere    --config examples/lista.jl
+#   julia --project -m FjordSim prepare_atmosphere     --config examples/lista.jl
+#   julia --project -m FjordSim run_simulation         --config examples/lista.jl   # needs a GPU
 #
 # `add_rivers` needs `NVE_API_KEY` (free at https://hydapi.nve.no/Users). `prepare_bathymetry` reads
 # Oslofjord's extracted copy of the national Geonorge FileGDB, `~/FjordSim_data/oslofjorden/`, by
 # absolute path, and downloads it there (4.5 GB) if it is missing. Everything else goes to
 # `~/FjordSim_data/lista/`, and results to `~/FjordSim_results/lista/`.
-#
-# # On GCP
-#
-# `prepare_bathymetry` runs before `push-data`, wherever a copy of the FileGDB is: on the VM it
-# would need all of Oslofjord's raw data staged (`--stage oslofjorden --stage-all`), and its output
-# is small. The downloads and regrids then run on the VM. Their OPeNDAP reads are latency-bound, and
-# the VM, in `europe-west4`, measured about five times faster at them than a laptop:
-#
-#   julia --project -m FjordSim prepare_bathymetry --config examples/lista.jl
-#   gcp/fjordsim-gcp push-data lista
-#   gcp/fjordsim-gcp up && gcp/fjordsim-gcp bootstrap
-#   gcp/fjordsim-gcp run --config examples/lista.jl --steps add_rivers,download_boundaries,prepare_boundaries,download_atmosphere,prepare_atmosphere
-#   gcp/fjordsim-gcp run --config examples/lista.jl --steps run_simulation --gpu --run-id lista-2024
-#   gcp/fjordsim-gcp logs lista-2024
-#   gcp/fjordsim-gcp pull-results lista
-#   gcp/fjordsim-gcp down
-#
-# `run` takes `NVE_API_KEY` from the environment of the shell that calls it. The VM is Spot and is
-# deleted after 24 hours, so a long run usually has to be resumed from its last checkpoint:
-#
-#   gcp/fjordsim-gcp up && gcp/fjordsim-gcp bootstrap
-#   gcp/fjordsim-gcp run --config examples/lista.jl --steps run_simulation --gpu --run-id lista-2024 --resume
-#
-# The file's basename, `lista`, is what names the staged directories in the bucket, so keep it.
 #
 # # Settle these after `prepare_bathymetry`, before the rest
 #
@@ -150,6 +128,13 @@ FjordConfig(
         preserve_sills        = true,
         geonorge_cache        = true,
         regrid_cache          = false,
+    ),
+    # One NorKyst daily mean, the day `start_date` falls in, for `FromInitialState()` below.
+    initial_state_config = NorKystInitialStateConfig(
+        data_root        = data_root,
+        output_directory = "norkyst_initial",
+        output_file      = "initial_state.nc",
+        parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
     ),
     river_config = NVERiversConfig(
         data_root   = data_root,
@@ -320,8 +305,8 @@ FjordConfig(
             max_time_step        = 3minutes,
             max_time_step_change = 1.01,
         ),
-        # A uniform water column at rest.
-        initial_conditions = (T = 5.0, S = 33.0),
+        # The NorKyst daily mean of `start_date`: T, S, u and v.
+        initial_conditions = FromInitialState(),
         # 1 January 2024 to 1 October 2025: 366 + 273 days. NorKyst ends on 2025-10-05, so this is
         # the last whole month the boundary data covers.
         start_date         = DateTime(2024, 1, 1),

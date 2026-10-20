@@ -1,5 +1,5 @@
-# The Drammensfjord setup: Geonorge Sjøkart Dybdedata bathymetry, NVE rivers, hourly NorKyst-800m
-# data on the open southern edge and NORA3 atmosphere, on a 170 x 256 x 18 grid covering 10.20-10.50°E, 59.53-59.76°N — 99 m
+# The Drammensfjord setup: Geonorge Sjøkart Dybdedata bathymetry, a NorKyst-800m initial state, NVE
+# rivers, hourly NorKyst-800m data on the open southern edge and NORA3 atmosphere, on a 170 x 256 x 18 grid covering 10.20-10.50°E, 59.53-59.76°N — 99 m
 # cells, and the whole fjord from the Drammenselva and Lierelva mouths down past the Svelvik sill to
 # the last narrows before Breiangen. It runs the calendar year 2020, as `oslofjorden.jl` does.
 #
@@ -14,13 +14,15 @@
 #
 # # Preparing and running it
 #
-#   julia --project -m FjordSim prepare_bathymetry  --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim add_rivers          --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim download_boundaries --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim prepare_boundaries  --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim download_atmosphere --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim prepare_atmosphere  --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim run_simulation      --config examples/drammensfjorden.jl   # needs a GPU
+#   julia --project -m FjordSim prepare_bathymetry     --config examples/drammensfjorden.jl
+#   julia --project -m FjordSim download_initial_state --config examples/drammensfjorden.jl
+#   julia --project -m FjordSim prepare_initial_state  --config examples/drammensfjorden.jl
+#   julia --project -m FjordSim add_rivers             --config examples/drammensfjorden.jl
+#   julia --project -m FjordSim download_boundaries    --config examples/drammensfjorden.jl
+#   julia --project -m FjordSim prepare_boundaries     --config examples/drammensfjorden.jl
+#   julia --project -m FjordSim download_atmosphere    --config examples/drammensfjorden.jl
+#   julia --project -m FjordSim prepare_atmosphere     --config examples/drammensfjorden.jl
+#   julia --project -m FjordSim run_simulation         --config examples/drammensfjorden.jl   # needs a GPU
 
 using FjordSim
 using Oceananigans:
@@ -96,6 +98,14 @@ FjordConfig(
         preserve_sills        = true,
         geonorge_cache        = true,
         regrid_cache          = false,
+    ),
+    # One NorKyst daily mean, the day `start_date` falls in, for `FromInitialState()` below. Its
+    # own directory: the download is subset to this domain's box.
+    initial_state_config = NorKystInitialStateConfig(
+        data_root        = data_root,
+        output_directory = "norkyst_initial",
+        output_file      = "initial_state.nc",
+        parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
     ),
     # Overloads river_locations, river_series, river_discharge and download_rivers (all
     # required). Its own `data_root`: the ELVIS and REGINE caches record the domain they
@@ -245,8 +255,8 @@ FjordConfig(
             max_time_step        = 3minutes,
             max_time_step_change = 1.01,
         ),
-        # A uniform water column at rest.
-        initial_conditions = (T = 5.0, S = 33.0),
+        # The NorKyst daily mean of `start_date`: T, S, u and v.
+        initial_conditions = FromInitialState(),
         # The whole of 2020, a leap year, so 366 days from midnight lands on midnight. The
         # prepare steps pad their time axes to reach the ends of this window.
         start_date         = DateTime(2020, 1, 1),

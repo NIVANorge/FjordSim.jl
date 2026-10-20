@@ -59,9 +59,14 @@ export forcing_from_file,
     forcing_monthly_filename,
     NorKystConfig,
     NorKystHindcastConfig,
-    # NorKyst subsetting, shared with the NorKyst boundary adapters in `Boundaries`
+    # NorKyst subsetting, shared with the NorKyst adapters in `InitialState` and `Boundaries`
     NORKYST_PROJECTION_VARIABLE,
     NorKystSubset,
+    NORKYST_VARIABLE_NAMES,
+    NORKYST_CATALOG_URL,
+    NORKYST_OPENDAP_URL,
+    norkyst_source_grid,
+    subset_ranges,
     list_opendap_files,
     list_hindcast_files,
     bounding_range,
@@ -69,7 +74,10 @@ export forcing_from_file,
     define_output_file,
     write_parameter_chunk!,
     write_time_dependent_coordinates!,
-    decoded_attributes
+    decoded_attributes,
+    # the prepared file's staggering, shared with the initial state's
+    data_location,
+    forcing_dimension_names
 
 """ Custom backend for FieldTimeSeries """
 struct NetCDFBackend <: AbstractInMemoryBackend{Int}

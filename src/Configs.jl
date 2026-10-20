@@ -3,6 +3,7 @@ module Configs
 export AbstractGridConfig,
     AbstractBathymetryConfig,
     AbstractForcingConfig,
+    AbstractInitialStateConfig,
     AbstractRiverConfig,
     AbstractBoundaryDataConfig,
     AbstractAtmosphereConfig,
@@ -25,6 +26,8 @@ export AbstractGridConfig,
     bathymetry_path,
     forcing_path,
     forcing_directory,
+    initial_state_path,
+    initial_state_directory,
     river_forcing_path,
     boundary_data_path,
     boundary_data_directory,
@@ -171,6 +174,40 @@ config's `relaxation_timescale` set the rate of; that band is gone.
 `src/Forcing/norkyst.jl` is the template to copy for a new dataset.
 """
 abstract type AbstractForcingConfig end
+
+"""
+    AbstractInitialStateConfig
+
+Supertype for initial-state configurations. A concrete subtype describes one dataset the ocean state
+at `start_date` is read from, and how to download it. `prepare_initial_state` regrids that one record
+onto the simulation grid, and `FromInitialState` initial conditions read it back.
+
+Independent of the forcing config: the forcing file has to span the whole run window, because the
+run reads it as forcing terms at every step, while this file is a single record read once. A setup
+wanting a realistic start without interior forcing names this and no forcing config.
+
+The record is the one `start_date` falls in, so changing `start_date` means re-running both steps;
+the prepared file records the `start_date` it was prepared for, and `build_simulation` refuses a
+mismatch.
+
+# Fields a subtype provides
+- `data_root`, `output_file`: resolved by `initial_state_path`, the prepared file.
+- `output_directory`: resolved by `initial_state_directory`; the directory the download writes into.
+- `parameters`: source variable names to prepare.
+
+# Methods a subtype provides
+- `initial_state_record(config, date)`: the downloaded `SourceRecord` holding the state at `date`.
+  Required.
+- `initial_state_source_grid(config, filepath)`: geometry of the source data, e.g. a
+  `ProjectedSourceGrid`. Required.
+- `initial_state_variable_names(config)`: source variable name => FjordSim state name. Required.
+- `download_initial_state(target_grid, config, date)`: fetch the record for `date`. Only if it
+  downloads.
+
+`FjordSim.InitialState.NorKystInitialStateConfig` is the built-in implementation, for one day of
+NorKyst-800m; `src/InitialState/norkyst_initial_state.jl` is the template to copy for a new dataset.
+"""
+abstract type AbstractInitialStateConfig end
 
 """
     AbstractRiverConfig
@@ -617,6 +654,18 @@ unchanged.
 forcing_directory(config::AbstractForcingConfig) = joinpath(config.data_root, config.output_directory)
 
 """
+    initial_state_path(config)
+    initial_state_directory(config)
+
+Resolve `config.output_file` and `config.output_directory` against `config.data_root`: the file
+`prepare_initial_state` writes, and the directory `download_initial_state` writes into. An absolute
+field is returned unchanged.
+"""
+initial_state_path(config::AbstractInitialStateConfig) = joinpath(config.data_root, config.output_file)
+initial_state_directory(config::AbstractInitialStateConfig) =
+    joinpath(config.data_root, config.output_directory)
+
+"""
     river_forcing_path(config)
 
 Resolve `config.output_file` against `config.data_root`: the river file written by `add_rivers`.
@@ -812,6 +861,9 @@ functions taking it are untouched. Each instantiation still has concrete field t
 - `bathymetry_config`: any `AbstractBathymetryConfig`.
 - `forcing_config`: any `AbstractForcingConfig`, or `nothing` for a setup that runs with no
   forcing at all. Defaults to `nothing`, so a setup opts in by naming one.
+- `initial_state_config`: any `AbstractInitialStateConfig`, or `nothing` for a setup whose initial
+  conditions come from elsewhere. Defaults to `nothing`. Independent of `forcing_config`: the
+  initial state is one record at `start_date`, in a file of its own.
 - `river_config`: any `AbstractRiverConfig`, or `nothing` for a setup with no rivers. Defaults to
   `nothing`, so a setup opts in by naming one. Independent of `forcing_config`: the river file is
   its own, written by `add_rivers` from the bathymetry alone.
@@ -839,6 +891,7 @@ Base.@kwdef mutable struct FjordConfig{
     G<:AbstractGridConfig,
     B<:AbstractBathymetryConfig,
     F,
+    I,
     R,
     O,
     A,
@@ -847,6 +900,7 @@ Base.@kwdef mutable struct FjordConfig{
     grid_config::G
     bathymetry_config::B
     forcing_config::F = nothing
+    initial_state_config::I = nothing
     river_config::R = nothing
     boundary_config::O = nothing
     atmosphere_config::A = nothing

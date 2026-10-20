@@ -644,9 +644,11 @@ FjordConfig(
         ),
         callbacks = simulation.callbacks,
         time_stepping = simulation.time_stepping,
-        # `oslofjorden.jl`'s T and S, plus N, P, Z and D as their profiles on `start_date`.
+        # A uniform T and S, plus N, P, Z and D as their profiles on `start_date`. Not
+        # `oslofjorden.jl`'s `FromInitialState()`, which reads a file and does not combine with
+        # the profiles here.
         initial_conditions = merge(
-            simulation.initial_conditions,
+            (T = 5.0, S = 33.0),
             map(profile -> (λ, φ, z) -> profile(z, simulation.start_date), NPZD_PROFILES),
         ),
         start_date = simulation.start_date,

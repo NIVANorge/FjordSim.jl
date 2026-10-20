@@ -26,9 +26,10 @@ julia --project -m FjordSim --help                                 # subcommands
 julia --project -m FjordSim <step> --config <setup.jl>             # one pipeline step
 ```
 
-The steps, in order: `prepare_bathymetry`, `download_forcing`, `prepare_forcing`, `add_rivers`
-(needs `NVE_API_KEY`), `download_boundaries`, `prepare_boundaries`, `download_atmosphere`,
-`prepare_atmosphere`, `run_simulation` (needs a GPU), `validate_simulation`. `--config` is the only
+The steps, in order: `prepare_bathymetry`, `download_forcing`, `prepare_forcing`,
+`download_initial_state`, `prepare_initial_state`, `add_rivers` (needs `NVE_API_KEY`),
+`download_boundaries`, `prepare_boundaries`, `download_atmosphere`, `prepare_atmosphere`,
+`run_simulation` (needs a GPU), `validate_simulation`. `--config` is the only
 option and is required. From the REPL each step is a function of the same name on a `FjordConfig`;
 `build_simulation(config)` assembles a `Simulation` without running it. Details: `docs/running.md`.
 
@@ -50,12 +51,12 @@ option and is required. From the REPL each step is a function of the same name o
 FjordSim wraps [Oceananigans.jl](https://github.com/CliMA/Oceananigans.jl) and
 [NumericalEarth.jl](https://github.com/NumericalEarth/NumericalEarth.jl) to set up regional ocean
 simulations of Norwegian fjords. A simulation reads prepared files only. The bathymetry (which
-defines the grid) is the one every setup needs; the forcing, rivers, open-boundary data and
-atmosphere are each optional — a `FjordConfig` field defaulting to `nothing`, whose steps are then
+defines the grid) is the one every setup needs; the forcing, initial state, rivers, open-boundary
+data and atmosphere are each optional — a `FjordConfig` field defaulting to `nothing`, whose steps are then
 no-ops (`docs/architecture.md`, "What a run is assembled from").
 
-**A new grid, bathymetry source, forcing dataset, river dataset, open-boundary dataset or
-atmosphere dataset is added by subtyping the matching `Abstract*Config` supertype and overloading
+**A new grid, bathymetry source, forcing dataset, initial-state dataset, river dataset,
+open-boundary dataset or atmosphere dataset is added by subtyping the matching `Abstract*Config` supertype and overloading
 methods on it — never by editing the generic pipeline.** Read `docs/adding-a-source.md` first.
 
 The modules, in `include` order from `src/FjordSim.jl`:
@@ -69,23 +70,25 @@ The modules, in `include` order from `src/FjordSim.jl`:
 4. **Bathymetry** (`src/Bathymetry/`) — `prepare_bathymetry` and the eight-stage
    `smooth_bathymetry_gaps!` pipeline (order is forced; see the doc before reordering).
 5. **Atmosphere** (`src/Atmospheres/`) — `prepare_atmosphere`, NORA3 read/download.
-6. **Regridding** (`src/Regridding.jl`) — the core `Forcing` and `Boundaries` share: source
-   records and time axes, water masks, the projected source grid and the interpolation kernel.
+6. **Regridding** (`src/Regridding.jl`) — the core `Forcing`, `InitialState` and `Boundaries`
+   share: source records and time axes, water masks, the projected source grid and the interpolation kernel.
 7. **Forcing** (`src/Forcing/`) — the interior forcing pipeline (`prepare_forcing`,
    `download_forcing`) and its NorKyst adapters.
-8. **Rivers** (`src/Rivers/`) — the river pipeline (`add_rivers`) and its NVE adapter.
-9. **Boundaries** (`src/Boundaries/`) — the open-boundary data pipeline (`download_boundaries`,
-   `prepare_boundaries`, `boundary_series`) and its NorKyst adapters.
-10. **Boundary conditions** (`src/BoundaryConditions.jl`) — `AirSeaFluxes`, `QuadraticBottomDrag`,
+8. **Initial state** (`src/InitialState/`) — `download_initial_state`, `prepare_initial_state`:
+   one source record at `start_date` for `FromInitialState`, and its NorKyst adapter.
+9. **Rivers** (`src/Rivers/`) — the river pipeline (`add_rivers`) and its NVE adapter.
+10. **Boundaries** (`src/Boundaries/`) — the open-boundary data pipeline (`download_boundaries`,
+    `prepare_boundaries`, `boundary_series`) and its NorKyst adapters.
+11. **Boundary conditions** (`src/BoundaryConditions.jl`) — `AirSeaFluxes`, `QuadraticBottomDrag`,
     `OpenLateralBoundaryFromData`.
-11. **Grids** (`src/Grids.jl`) — `EvenGrid`, the `domain_grid`/`simulation_grid` hooks.
-12. **Simulations** (`src/Simulations.jl`) — `SimulationConfig`, `build_simulation`/`run_simulation`,
+12. **Grids** (`src/Grids.jl`) — `EvenGrid`, the `domain_grid`/`simulation_grid` hooks.
+13. **Simulations** (`src/Simulations.jl`) — `SimulationConfig`, `build_simulation`/`run_simulation`,
     writers, callbacks, looping, checkpointing, initial conditions.
-13. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
+14. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
     observation sources, skill and tidal statistics, and the comparison figures. `StationWriter`
     (in `Simulations`) is what a run writes for it.
-14. **CLI** (`src/CLI.jl`) — subcommand dispatch, logging.
-15. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
+15. **CLI** (`src/CLI.jl`) — subcommand dispatch, logging.
+16. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
 
 ## Setups
 

@@ -6,6 +6,7 @@ using ..Configs: AbstractSimulationConfig, fjord_config, run_tag
 using ..Bathymetry: prepare_bathymetry
 using ..Atmospheres: prepare_atmosphere, download_atmosphere
 using ..Forcing: prepare_forcing, download_forcing
+using ..InitialState: download_initial_state, prepare_initial_state
 using ..Rivers: add_rivers
 using ..Boundaries: download_boundaries, prepare_boundaries
 using ..Simulations: run_simulation
@@ -21,6 +22,8 @@ const SUBCOMMANDS = [
     "prepare_bathymetry" => prepare_bathymetry,
     "download_forcing" => download_forcing,
     "prepare_forcing" => prepare_forcing,
+    "download_initial_state" => download_initial_state,
+    "prepare_initial_state" => prepare_initial_state,
     "add_rivers" => add_rivers,
     "download_boundaries" => download_boundaries,
     "prepare_boundaries" => prepare_boundaries,
@@ -65,6 +68,12 @@ Subcommands, in the order a setup is prepared and run:
   prepare_forcing       Regrid the download onto the simulation grid. Needs prepare_bathymetry.
                         Where the interpolation runs is the forcing config's `architecture` field,
                         not a command-line option. A setup with no forcing config does nothing.
+  download_initial_state
+                        Download the one day of source data the initial state at start_date is read
+                        from. A setup with no initial-state config does nothing.
+  prepare_initial_state Regrid that day onto the simulation grid, for FromInitialState initial
+                        conditions. Needs prepare_bathymetry; re-run both initial-state steps when
+                        start_date changes. A setup with no initial-state config does nothing.
   add_rivers            Write the river inflow file: each river's discharge and water properties on
                         the surface columns it enters through, on a daily axis over the run window.
                         Needs prepare_bathymetry, not prepare_forcing; re-run it when start_date or
@@ -85,6 +94,7 @@ Subcommands, in the order a setup is prepared and run:
   run_simulation        Build and run the coupled simulation, writing NetCDF snapshots into the
                         setup's results directory. Needs every step above that the setup
                         configures: prepare_bathymetry, prepare_forcing if it names forcing,
+                        prepare_initial_state if it starts FromInitialState,
                         add_rivers if it names rivers, prepare_boundaries if it names
                         open-boundary data, and prepare_atmosphere if it names an atmosphere.
                         Only prepare_bathymetry is required. Where it runs

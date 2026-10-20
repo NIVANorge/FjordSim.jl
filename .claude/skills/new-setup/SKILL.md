@@ -9,8 +9,8 @@ The rules and defaults are in `docs/setups.md`; read it first. The worked setups
 This is the order to work through.
 
 1. **Pin down what the run is for.** Ask the user for the domain (box), the run window, which
-   components it needs (forcing, rivers, open boundaries, atmosphere, a run at all) and what it will
-   be judged on. A variant of an existing setup is a new file that does
+   components it needs (forcing, initial state, rivers, open boundaries, atmosphere, a run at all)
+   and what it will be judged on. A variant of an existing setup is a new file that does
    `base = include("<setup>.jl")`, not an edit to the original; ask before changing an existing setup.
 2. **Check the data covers it.** The run window against the source archives (NorKyst's operational
    archive starts 2017-02-20; earlier needs the hindcast configs), and the box against Geonorge's

@@ -120,11 +120,18 @@ end
 """
     forcing_source_grid(config::AbstractNorKystConfig, filepath)
 
+`norkyst_source_grid(filepath)`.
+"""
+forcing_source_grid(config::AbstractNorKystConfig, filepath) = norkyst_source_grid(filepath)
+
+"""
+    norkyst_source_grid(filepath)
+
 Read the projected coordinates, depth levels and projection of a downloaded NorKyst subset.
 Errors unless the projected coordinates are regularly spaced, which `source_field_grid` needs in
-order to express them as a `RectilinearGrid`.
+order to express them as a `RectilinearGrid`. Shared with the NorKyst initial state.
 """
-function forcing_source_grid(config::AbstractNorKystConfig, filepath)
+function norkyst_source_grid(filepath)
     return NCDataset(filepath) do ds
         x = Array{Float64}(ds["X"][:])
         y = Array{Float64}(ds["Y"][:])
@@ -207,13 +214,18 @@ end
 
 """
     subset_ranges(ds, target_grid, config::AbstractNorKystConfig)
+    subset_ranges(ds, target_grid, parameters)
 
-The NorKyst index window covering the lon/lat domain of `target_grid`.
+The NorKyst index window covering the lon/lat domain of `target_grid`, extracting `parameters`
+(by default the config's). The second form is shared with the NorKyst initial state.
 
 The bounds come from `x_domain`/`y_domain` rather than a grid config's own fields, so any
 `AbstractGridConfig` works; they are the same face bounds an `EvenGrid` is built from.
 """
-function subset_ranges(ds, target_grid, config::AbstractNorKystConfig)
+subset_ranges(ds, target_grid, config::AbstractNorKystConfig) =
+    subset_ranges(ds, target_grid, config.parameters)
+
+function subset_ranges(ds, target_grid, parameters::Vector{String})
     longitude_range = x_domain(target_grid)
     latitude_range = y_domain(target_grid)
 
@@ -233,7 +245,7 @@ function subset_ranges(ds, target_grid, config::AbstractNorKystConfig)
 
     spatial_dimensions = dimnames(latitude_variable)
     subset_mask = mask[(ranges[dimension] for dimension in spatial_dimensions)...]
-    return NorKystSubset(ranges, subset_mask, spatial_dimensions, config.parameters)
+    return NorKystSubset(ranges, subset_mask, spatial_dimensions, parameters)
 end
 
 function variable_indices(variable, ranges)

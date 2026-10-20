@@ -9,6 +9,7 @@ export
     AbstractGridConfig,
     AbstractBathymetryConfig,
     AbstractForcingConfig,
+    AbstractInitialStateConfig,
     AbstractRiverConfig,
     AbstractBoundaryDataConfig,
     AbstractAtmosphereConfig,
@@ -25,6 +26,8 @@ export
     prepare_bathymetry,
     prepare_forcing,
     download_forcing,
+    download_initial_state,
+    prepare_initial_state,
     add_rivers,
     download_rivers,
     download_boundaries,
@@ -48,6 +51,8 @@ export
     bathymetry_path,
     forcing_path,
     forcing_directory,
+    initial_state_path,
+    initial_state_directory,
     river_forcing_path,
     boundary_data_path,
     boundary_data_directory,
@@ -67,6 +72,9 @@ export
     forcing_variable_names,
     forcing_monthly_filename,
     forcing_date_range,
+    initial_state_record,
+    initial_state_source_grid,
+    initial_state_variable_names,
     river_locations,
     river_series,
     river_discharge,
@@ -96,6 +104,7 @@ export
     DybdedataConfig,
     NorKystConfig,
     NorKystHindcastConfig,
+    NorKystInitialStateConfig,
     NVERiversConfig,
     NVERiver,
     NorKystBoundariesConfig,
@@ -135,6 +144,7 @@ export
     attach_time_stepping!,
     initial_time_step,
     FromForcing,
+    FromInitialState,
     FromResults,
     # validation
     AbstractObservationConfig,
@@ -207,6 +217,7 @@ include("Bathymetry/Bathymetry.jl")
 include("Atmospheres/Atmospheres.jl")
 include("Regridding.jl")
 include("Forcing/Forcing.jl")
+include("InitialState/InitialState.jl")
 include("Rivers/Rivers.jl")
 include("Boundaries/Boundaries.jl")
 include("BoundaryConditions.jl")
@@ -224,6 +235,7 @@ using .Bathymetry
 using .Atmospheres
 using .Regridding
 using .Forcing
+using .InitialState
 using .Rivers
 using .Boundaries
 using .BoundaryConditions

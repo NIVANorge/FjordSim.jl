@@ -169,7 +169,8 @@ gcp/fjordsim-gcp pull-results drammensfjorden
 ```
 
 `push-data` uploads only the prepared NetCDFs, because that is all a simulation opens. `--all` adds
-the raw sources (`norkyst_hourly/`, `nora3/`, the FileGDB), which only a `prepare_*` step needs.
+the raw sources (`norkyst_hourly/`, `norkyst_initial/`, `nora3/`, the FileGDB), which only a
+`prepare_*` step needs.
 
 ### Prepare in the cloud
 
@@ -177,7 +178,7 @@ Better for the slow steps, and it keeps the raw sources off your disk entirely.
 
 ```bash
 gcp/fjordsim-gcp run --config examples/oslofjorden.jl \
-    --steps prepare_bathymetry,add_rivers,download_boundaries,prepare_boundaries
+    --steps prepare_bathymetry,download_initial_state,prepare_initial_state,add_rivers,download_boundaries,prepare_boundaries
 gcp/fjordsim-gcp run --config examples/oslofjorden.jl \
     --steps download_atmosphere,prepare_atmosphere
 gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --gpu

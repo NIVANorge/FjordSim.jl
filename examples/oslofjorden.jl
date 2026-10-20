@@ -1,5 +1,6 @@
-# The Oslofjord setup: Geonorge Sjøkart Dybdedata bathymetry, NVE rivers, hourly NorKyst-800m data
-# on the open southern edge and NORA3 atmosphere, on a 240 x 520 x 24 grid covering 10.2-11.02°E, 59.0-59.93°N.
+# The Oslofjord setup: Geonorge Sjøkart Dybdedata bathymetry, a NorKyst-800m initial state, NVE
+# rivers, hourly NorKyst-800m data on the open southern edge and NORA3 atmosphere, on a 240 x 520 x 24
+# grid covering 10.2-11.02°E, 59.0-59.93°N.
 #
 # The rivers are **discovered**, not stated: `minimum_discharge = 0.5` has `add_rivers` read NVE's
 # ELVIS river network and REGINE catchments for this domain and place every mouth at or above that
@@ -29,17 +30,21 @@
 #
 # `start_date` and `stop_time` also decide what the prepare steps write: they pad the boundary and
 # atmosphere time axes to span exactly this window, and the river file is written on it, so changing
-# either means re-running `add_rivers`, `prepare_boundaries` and `prepare_atmosphere`.
+# either means re-running `add_rivers`, `prepare_boundaries` and `prepare_atmosphere`. The initial
+# state is the day `start_date` falls in, so changing `start_date` also means re-running
+# `download_initial_state` and `prepare_initial_state`.
 #
 # # Preparing and running it
 #
-#   julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden.jl
-#   julia --project -m FjordSim add_rivers          --config examples/oslofjorden.jl
-#   julia --project -m FjordSim download_boundaries --config examples/oslofjorden.jl
-#   julia --project -m FjordSim prepare_boundaries  --config examples/oslofjorden.jl
-#   julia --project -m FjordSim download_atmosphere --config examples/oslofjorden.jl
-#   julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden.jl
-#   julia --project -m FjordSim run_simulation      --config examples/oslofjorden.jl   # needs a GPU
+#   julia --project -m FjordSim prepare_bathymetry     --config examples/oslofjorden.jl
+#   julia --project -m FjordSim download_initial_state --config examples/oslofjorden.jl
+#   julia --project -m FjordSim prepare_initial_state  --config examples/oslofjorden.jl
+#   julia --project -m FjordSim add_rivers             --config examples/oslofjorden.jl
+#   julia --project -m FjordSim download_boundaries    --config examples/oslofjorden.jl
+#   julia --project -m FjordSim prepare_boundaries     --config examples/oslofjorden.jl
+#   julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden.jl
+#   julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden.jl
+#   julia --project -m FjordSim run_simulation         --config examples/oslofjorden.jl   # needs a GPU
 
 using FjordSim
 using Oceananigans:
@@ -160,6 +165,16 @@ FjordConfig(
         preserve_sills        = true,
         geonorge_cache        = true,
         regrid_cache          = false,
+    ),
+    # NorKystInitialStateConfig overloads initial_state_record, initial_state_source_grid and
+    # initial_state_variable_names — hooks prepare_initial_state calls — plus
+    # download_initial_state, which fetches the one NorKyst daily file for `start_date`. Read by
+    # `initial_conditions = FromInitialState()` below.
+    initial_state_config = NorKystInitialStateConfig(
+        data_root        = data_root,
+        output_directory = "norkyst_initial",
+        output_file      = "initial_state.nc",
+        parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
     ),
     # NVERiversConfig overloads river_locations, river_series, river_discharge and
     # download_rivers (all required, hooks add_rivers calls), all dispatching on this
@@ -451,9 +466,10 @@ FjordConfig(
             max_time_step        = 3minutes,
             max_time_step_change = 1.01,
         ),
-        # A uniform water column at rest. `FromResults("snapshots_ocean_<tag>.nc")` continues
-        # from a previous run instead.
-        initial_conditions = (T = 5.0, S = 33.0),
+        # The NorKyst daily mean of `start_date`, from `initial_state_config`: T, S, u and v.
+        # `(T = 5.0, S = 33.0)` starts from a uniform water column at rest instead, and
+        # `FromResults("snapshots_ocean_<tag>.nc")` continues from a previous run.
+        initial_conditions = FromInitialState(),
         # The whole calendar year 2020, which is a leap year — so 366 days from midnight on
         # 1 January lands exactly on midnight a year later. The prepare steps pad their time
         # axes to reach both ends.

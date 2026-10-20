@@ -142,8 +142,6 @@ how to download and subset it.
 - `parameters`: source variable names to prepare.
 - `architecture`: `:auto`, `:cpu` or `:gpu`, resolved by `interpolation_architecture` to decide
   where `prepare_forcing` runs its interpolation kernel.
-- `rivers`: an `AbstractRiverConfig` read by `add_rivers`, or `nothing` for no rivers. Only
-  needed by a setup that adds rivers.
 
 The open edge is *not* a field here. It belongs to the open-boundary data config
 (`AbstractBoundaryDataConfig`), which hangs off `FjordConfig` rather than off this config, and
@@ -181,8 +179,9 @@ rivers reach the sea, how much water each one carries, and what that water is. `
 it into a river file of its own, which the run reads as a volume inflow through the surface of a
 few columns at every mouth.
 
-Rivers are optional: a forcing config whose `rivers` field is `nothing` skips the step
-entirely.
+Rivers are optional: a `FjordConfig` whose `river_config` is `nothing` skips the step entirely.
+They are independent of the forcing config — the river file stands alone, so a setup can name rivers
+with no interior forcing.
 
 # Fields a subtype provides
 - `data_root`, `output_file`, `plot_file`: resolved by `river_forcing_path`, the river file, and by
@@ -812,6 +811,9 @@ functions taking it are untouched. Each instantiation still has concrete field t
 - `bathymetry_config`: any `AbstractBathymetryConfig`.
 - `forcing_config`: any `AbstractForcingConfig`, or `nothing` for a setup that runs with no
   forcing at all. Defaults to `nothing`, so a setup opts in by naming one.
+- `river_config`: any `AbstractRiverConfig`, or `nothing` for a setup with no rivers. Defaults to
+  `nothing`, so a setup opts in by naming one. Independent of `forcing_config`: the river file is
+  its own, written by `add_rivers` from the bathymetry alone.
 - `boundary_config`: any `AbstractBoundaryDataConfig`, or `nothing` for a setup whose lateral
   boundaries are closed. Defaults to `nothing`, so a setup opts in by naming one. Independent of
   `forcing_config`: the exterior state along the open edge is its own hourly file from its own
@@ -836,6 +838,7 @@ Base.@kwdef mutable struct FjordConfig{
     G<:AbstractGridConfig,
     B<:AbstractBathymetryConfig,
     F,
+    R,
     O,
     A,
     S,
@@ -843,6 +846,7 @@ Base.@kwdef mutable struct FjordConfig{
     grid_config::G
     bathymetry_config::B
     forcing_config::F = nothing
+    river_config::R = nothing
     boundary_config::O = nothing
     atmosphere_config::A = nothing
     simulation_config::S = nothing

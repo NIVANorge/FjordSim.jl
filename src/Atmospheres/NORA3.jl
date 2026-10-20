@@ -20,7 +20,7 @@ import Oceananigans.OutputReaders: new_backend
 # The dataset interface below is *extended*, not redefined: these are NumericalEarth's own generic
 # functions, so its machinery dispatches into this backend rather than silently falling back to the
 # generic `Metadata` defaults. A bare `using NumericalEarth` would make each definition a new
-# module-local binding that shadows the upstream one — see `Datasets.jl` for the same import block.
+# module-local binding that shadows the upstream one.
 import NumericalEarth.DataWrangling:
     all_dates,
     available_variables,

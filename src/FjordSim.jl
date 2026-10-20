@@ -202,7 +202,6 @@ using NCDatasets
 using Adapt
 
 include("Configs.jl")
-include("Datasets.jl")
 include("Utils.jl")
 # Plotting comes before the pipelines that call it: their setup-level drivers plot as their last
 # step, and Plotting itself only needs Configs.
@@ -225,7 +224,6 @@ include("Validation/Validation.jl")
 include("CLI.jl")
 
 using .Configs
-using .Datasets
 using .Utils
 using .Plotting
 using .Bathymetry

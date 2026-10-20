@@ -132,99 +132,99 @@ function oslofjorden()
             architecture     = :auto,
             parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
             years            = [2020],
-            # NVERiversConfig overloads river_locations, river_series, river_discharge and
-            # download_rivers (all required, hooks add_rivers calls), all dispatching on this
-            # config's type. It queries NVE, so the window follows `years` and every value has
-            # provenance. The HydAPI half needs an API key — `NVE_API_KEY`, free at
-            # https://hydapi.nve.no/Users.
+        ),
+        # NVERiversConfig overloads river_locations, river_series, river_discharge and
+        # download_rivers (all required, hooks add_rivers calls), all dispatching on this
+        # config's type. It queries NVE, so the window follows `years` and every value has
+        # provenance. The HydAPI half needs an API key — `NVE_API_KEY`, free at
+        # https://hydapi.nve.no/Users.
+        #
+        # `add_rivers` writes the river file on its own, so the forcing above is never touched
+        # and `initial_conditions = FromForcing()` below reads an ocean state no river has
+        # written into.
+        river_config = NVERiversConfig(
+            data_root  = data_root,
+            output_file = "rivers_nve.nc",
+            plot_file   = "rivers_nve.png",
+            years       = [2020],
+            # Every outlet below is *discovered* from NVE's ELVIS river network and sized by
+            # its REGINE catchment, so this setup states no river coordinate at all. It used
+            # to state nine, copied from the OF800 dataset's outlet table, and measured
+            # against NVE's own mouths they were wrong in ways nothing checked: Mosseleva 7 km
+            # and Gjersjøelva 6 km from their rivers, Drammenselva 602 m from the nearest
+            # water in a column at the 2 m `minimum_depth` floor, Glomma on a shelf beside
+            # both of its beds rather than in either, and Glomma's whole western arm missing.
             #
-            # `add_rivers` writes the river file on its own, so the forcing above is never touched
-            # and `initial_conditions = FromForcing()` below reads an ocean state no river has
-            # written into.
-            rivers           = NVERiversConfig(
-                data_root  = data_root,
-                output_file = "rivers_nve.nc",
-                plot_file   = "rivers_nve.png",
-                years       = [2020],
-                # Every outlet below is *discovered* from NVE's ELVIS river network and sized by
-                # its REGINE catchment, so this setup states no river coordinate at all. It used
-                # to state nine, copied from the OF800 dataset's outlet table, and measured
-                # against NVE's own mouths they were wrong in ways nothing checked: Mosseleva 7 km
-                # and Gjersjøelva 6 km from their rivers, Drammenselva 602 m from the nearest
-                # water in a column at the 2 m `minimum_depth` floor, Glomma on a shelf beside
-                # both of its beds rather than in either, and Glomma's whole western arm missing.
+            # 0.5 m³/s gives 21 mouths carrying 99.6 % of the domain's 1179 m³/s. Lowering it
+            # to 0.15 would add twelve more streams for the remaining 0.3 %.
+            minimum_discharge = 0.5,
+            # A river's water enters through the surface of its columns, so this is a vertical
+            # Courant bound on the 1 m top cell: 1 mm/s is w·Δt/Δz = 0.18 at the 3-minute
+            # `max_time_step` below, leaving the time step to the horizontal CFL rather than to
+            # the river mouths. `add_rivers` spreads each river over as many of the 193 m
+            # columns around its mouth as its peak discharge needs to stay under it — one for a
+            # small stream, tens for Glomma — and logs the count.
+            maximum_inflow_velocity = 1.0e-3,
+            # Overrides, keyed by the `vassdragsnr` of each mouth's terminal ELVIS segment.
+            # They never add a river — a mouth discovery finds enters with or without one —
+            # and an override matching no discovered mouth is an error. An override's job is
+            # attaching a gauge (`discharge_station`, sometimes `temperature_station`) to a
+            # mouth that would otherwise run on its catchment normal alone; Glomma's two also
+            # split one gauge between its mouths with `discharge_fraction`. The eleven mouths
+            # named nowhere below — Aulivassdraget, Årosvassdraget, Hølenelva, Alna, Istreelva,
+            # Askerelva, Årungelva, Sageneelva, Borreelva, Selvikelva and Ljanselva — run at
+            # their catchment normal, which is the whole point of discovery: a river with no
+            # gauge still enters at its own size.
+            outlets = [
+                # Glomma, Norway's largest catchment, reaching the sea through **two** mouths
+                # at Fredrikstad: Østerelva east of Kråkerøy and Vesterelva west of it. Both
+                # beds are resolved on this grid, cells (222, 99) and (198, 99). ELVIS files
+                # Vesterelva under the small Seutelva catchment, so discovery finds it as a
+                # 1.7 m³/s stream; these two overrides put Solbergfoss's observed series
+                # across both instead, and the 2/3–1/3 split is a stated assumption — NVE's
+                # own Nedre Glomma flood report describes the division and publishes no
+                # fraction, and none was found elsewhere.
                 #
-                # 0.5 m³/s gives 21 mouths carrying 99.6 % of the domain's 1179 m³/s. Lowering it
-                # to 0.15 would add twelve more streams for the remaining 0.3 %.
-                minimum_discharge = 0.5,
-                # A river's water enters through the surface of its columns, so this is a vertical
-                # Courant bound on the 1 m top cell: 1 mm/s is w·Δt/Δz = 0.18 at the 3-minute
-                # `max_time_step` below, leaving the time step to the horizontal CFL rather than to
-                # the river mouths. `add_rivers` spreads each river over as many of the 193 m
-                # columns around its mouth as its peak discharge needs to stay under it — one for a
-                # small stream, tens for Glomma — and logs the count.
-                maximum_inflow_velocity = 1.0e-3,
-                # Overrides, keyed by the `vassdragsnr` of each mouth's terminal ELVIS segment.
-                # They never add a river — a mouth discovery finds enters with or without one —
-                # and an override matching no discovered mouth is an error. An override's job is
-                # attaching a gauge (`discharge_station`, sometimes `temperature_station`) to a
-                # mouth that would otherwise run on its catchment normal alone; Glomma's two also
-                # split one gauge between its mouths with `discharge_fraction`. The eleven mouths
-                # named nowhere below — Aulivassdraget, Årosvassdraget, Hølenelva, Alna, Istreelva,
-                # Askerelva, Årungelva, Sageneelva, Borreelva, Selvikelva and Ljanselva — run at
-                # their catchment normal, which is the whole point of discovery: a river with no
-                # gauge still enters at its own size.
-                outlets = [
-                    # Glomma, Norway's largest catchment, reaching the sea through **two** mouths
-                    # at Fredrikstad: Østerelva east of Kråkerøy and Vesterelva west of it. Both
-                    # beds are resolved on this grid, cells (222, 99) and (198, 99). ELVIS files
-                    # Vesterelva under the small Seutelva catchment, so discovery finds it as a
-                    # 1.7 m³/s stream; these two overrides put Solbergfoss's observed series
-                    # across both instead, and the 2/3–1/3 split is a stated assumption — NVE's
-                    # own Nedre Glomma flood report describes the division and publishes no
-                    # fraction, and none was found elsewhere.
-                    #
-                    # Discharge at Solbergfoss and temperature 40 km downstream at Sarpfossen,
-                    # because no station carries both.
-                    NVERiver(
-                        vassdragsnr = "002.A21", name = "Glomma (Osterelva)",
-                        discharge_station = "2.605.0", temperature_station = "2.1087.0",
-                        discharge_fraction = 2 // 3,
-                    ),
-                    NVERiver(
-                        vassdragsnr = "002.2A", name = "Glomma (Vesterelva)",
-                        discharge_station = "2.605.0", temperature_station = "2.1087.0",
-                        discharge_fraction = 1 // 3,
-                    ),
-                    # Drammenselva, the second largest input. Mjøndalen bru carries discharge and
-                    # temperature on one id at 4 m a.s.l., ~5 km above the fjord.
-                    NVERiver(
-                        vassdragsnr = "012.A2", name = "Drammenselva",
-                        discharge_station = "12.534.0", temperature_station = "12.534.0",
-                    ),
-                    # Mossevassdraget at Moss dam, 693 km². No water temperature series.
-                    NVERiver(vassdragsnr = "003.A4", discharge_station = "3.23.0"),
-                    # Nordmarkvassdraget is Akerselva's catchment. Temperature deliberately
-                    # omitted: the 2020 series averages 21.2 °C and peaks at 31.1 °C, which is a
-                    # dry or sun-exposed sensor, not an Oslo river. The river carries the mean
-                    # temperature of the gauged ones instead.
-                    NVERiver(
-                        vassdragsnr = "006.A10", name = "Akerselva",
-                        discharge_station = "6.38.0",
-                    ),
-                    # Lysakerelva. Temperature omitted for the same reason and worse: mean
-                    # 19.6 °C, max 37.2 °C in 2020.
-                    NVERiver(vassdragsnr = "007.A0", discharge_station = "7.29.0"),
-                    # Sandvikselva, 226 km², and the only small stream here whose temperature
-                    # survives inspection: mean 8.4 °C, range 1.0-20.9 °C in 2020.
-                    NVERiver(
-                        vassdragsnr = "008.A2",
-                        discharge_station = "8.2.0", temperature_station = "8.2.0",
-                    ),
-                    # Lierelva at Oppsal, 223 km² of a 310 km² catchment. No temperature series.
-                    NVERiver(vassdragsnr = "011.A0", discharge_station = "11.6.0"),
-                ],
-            ),
+                # Discharge at Solbergfoss and temperature 40 km downstream at Sarpfossen,
+                # because no station carries both.
+                NVERiver(
+                    vassdragsnr = "002.A21", name = "Glomma (Osterelva)",
+                    discharge_station = "2.605.0", temperature_station = "2.1087.0",
+                    discharge_fraction = 2 // 3,
+                ),
+                NVERiver(
+                    vassdragsnr = "002.2A", name = "Glomma (Vesterelva)",
+                    discharge_station = "2.605.0", temperature_station = "2.1087.0",
+                    discharge_fraction = 1 // 3,
+                ),
+                # Drammenselva, the second largest input. Mjøndalen bru carries discharge and
+                # temperature on one id at 4 m a.s.l., ~5 km above the fjord.
+                NVERiver(
+                    vassdragsnr = "012.A2", name = "Drammenselva",
+                    discharge_station = "12.534.0", temperature_station = "12.534.0",
+                ),
+                # Mossevassdraget at Moss dam, 693 km². No water temperature series.
+                NVERiver(vassdragsnr = "003.A4", discharge_station = "3.23.0"),
+                # Nordmarkvassdraget is Akerselva's catchment. Temperature deliberately
+                # omitted: the 2020 series averages 21.2 °C and peaks at 31.1 °C, which is a
+                # dry or sun-exposed sensor, not an Oslo river. The river carries the mean
+                # temperature of the gauged ones instead.
+                NVERiver(
+                    vassdragsnr = "006.A10", name = "Akerselva",
+                    discharge_station = "6.38.0",
+                ),
+                # Lysakerelva. Temperature omitted for the same reason and worse: mean
+                # 19.6 °C, max 37.2 °C in 2020.
+                NVERiver(vassdragsnr = "007.A0", discharge_station = "7.29.0"),
+                # Sandvikselva, 226 km², and the only small stream here whose temperature
+                # survives inspection: mean 8.4 °C, range 1.0-20.9 °C in 2020.
+                NVERiver(
+                    vassdragsnr = "008.A2",
+                    discharge_station = "8.2.0", temperature_station = "8.2.0",
+                ),
+                # Lierelva at Oppsal, 223 km² of a 310 km² catchment. No temperature series.
+                NVERiver(vassdragsnr = "011.A0", discharge_station = "11.6.0"),
+            ],
         ),
         # The exterior state along the open southern edge, from the *hourly* NorKyst collection: a
         # Flather boundary compares the model's own η against the exterior one, and the daily means

@@ -541,7 +541,7 @@ bathymetry.max_sounding_distance = 2000.0
 # river table has 37 named rivers over a comparable domain, so the two counts should end up close.
 # Every override `oslofjorden()` states lies well inside this box, which only grew, so none of them
 # matches no mouth.
-rivers = base.forcing_config.rivers
+rivers = base.river_config
 rivers.data_root = data_root
 rivers.years = years
 
@@ -683,8 +683,8 @@ FjordConfig(
         architecture     = base.forcing_config.architecture,
         parameters       = base.forcing_config.parameters,
         years            = years,
-        rivers           = rivers,
     ),
+    river_config = rivers,
     # The tide in it corrected to Viker; see "The boundary tide" above.
     boundary_config = TideCorrectedBoundaries(
         NorKystHindcastBoundariesConfig(

@@ -62,9 +62,10 @@ and a top-cell tracer source; see "Rivers as a volume source" in `docs/architect
 section) for why that pair, and why the columns are spread. The speed bound is a vertical Courant
 number on the top cell, so it has no default: it belongs to the setup's grid and time step.
 
-A river config is not a `FjordConfig` field — it goes in the forcing config's `rivers` field,
-`nothing` for a setup with no rivers. The file it writes stands beside the prepared forcing rather than
-inside it, so `add_rivers` needs only the bathymetry and the run window. Every `river_series` variable
+A river config is a `FjordConfig` field of its own, `river_config`, `nothing` for a setup with no
+rivers, and independent of the forcing config. The file it writes stands beside the prepared forcing
+rather than inside it, so `add_rivers` needs only the bathymetry and the run window, and a setup can
+name rivers with no forcing at all. Every `river_series` variable
 is written; the run uses those naming a model tracer and ignores the rest, so one river dataset can
 serve models with different tracers.
 
@@ -79,10 +80,9 @@ Open-boundary data — `AbstractBoundaryDataConfig`, consumed by `prepare_bounda
 | `boundary_date_range(config)` → `(first, last)` `DateTime`s | no | reads `ds["time"]` from the prepared NetCDF |
 | `boundary_source_slab(config, reader, step, source_name)` → one source slab | no | `blended_slab`, a plain read. Override only for a variable *derived* from more than one of the source's own — a velocity component stated along the source's own grid axes is the case that needs it |
 
-Unlike a river config, this **is** a `FjordConfig` field, `boundary_config`, `nothing` for a setup
-whose lateral boundary is not data-driven. It hung off the forcing config's `boundaries` field until a
-setup needed an open boundary with no interior forcing; the exterior state was always its own hourly
-file from its own collection read by its own pipeline, and either config is nameable without the other.
+Like a river config, this is a `FjordConfig` field of its own, `boundary_config`, `nothing` for a
+setup whose lateral boundary is not data-driven: the exterior state is its own hourly file from its own
+collection read by its own pipeline, and either config is nameable without the forcing one.
 
 The edges **are** a field of it, `open_edges`, read through the `open_edges` accessor and stated nowhere
 else. Write one `Symbol` or a collection of them — a domain in the open ocean names all four — and the
@@ -144,7 +144,7 @@ the one hardcoded `Callback(progress, TimeInterval(...))` fired.
 
 | Supertype | Field | Required hooks |
 |---|---|---|
-| `AbstractCoupledSimulationConfig` | `model` | `coupled_simulation(model, grid; forcing, boundary_conditions, initial_conditions, atmosphere, radiation, boundary_config, stop_time, initial_time_step)`, `model_tracers(model)` |
+| `AbstractCoupledSimulationConfig` | `model` | `coupled_simulation(model, grid; forcing, boundary_conditions, initial_conditions, atmosphere, radiation, boundary_config, river_columns, stop_time, initial_time_step)`, `model_tracers(model)` |
 | `AbstractBoundaryConditionSetConfig` | `boundary_conditions` | `field_boundary_conditions(config, grid, forcing, boundary_config, tracers, boundaries)` |
 | `AbstractBoundaryConditionConfig` | the pieces inside the set | `boundary_condition_sides(config, grid, forcing, boundary_config, tracers[, boundaries])` — implement the six-argument form only if the piece reads the prepared open-boundary state; the five-argument one is reached through a forwarding fallback. The fourth argument was the *forcing* config before the open edge moved, so a piece that reads it needs checking |
 | `AbstractCallbackConfig` | `callbacks` (a tuple) | `attach_callback!(simulation, callback, config)` |
@@ -162,7 +162,7 @@ subtype and a new method, not an edit to `coupled_simulation`.
 | Supertype | Field | Required hook | Built-in |
 |---|---|---|---|
 | `AbstractFreeSurfaceConfig` | `free_surface` | `free_surface(config, grid)` → the free-surface object `coupled_simulation` passes to `HydrostaticFreeSurfaceModel` | `SplitExplicitFreeSurfaceConfig` |
-| `AbstractClosureConfig` | `closure` | `model_closure(config, grid, boundary_config)` → the closure, or tuple of closures, it passes | `BoundarySponge` |
+| `AbstractClosureConfig` | `closure` | `model_closure(config, grid, boundary_config, river_columns)` → the closure, or tuple of closures, it passes | `BoundarySponge`, `RiverMouthMixing` |
 
 The two differ in one way that matters. `free_surface` is *always* a config — there is nothing else
 it could hold. `closure` holds a config **or** a pre-built Oceananigans closure, and usually the
@@ -171,8 +171,9 @@ setup naming a plain closure needs no change and never sees the hook. Same patte
 `initial_conditions` and `resolve_initial_conditions`.
 
 `model_closure` takes `boundary_config` as well as the grid because a closure may act on the open
-edges, which are stated only on the `AbstractBoundaryDataConfig`. That is why `coupled_simulation`
-carries `boundary_config` too.
+edges, which are stated only on the `AbstractBoundaryDataConfig`, and `river_columns` — what
+`read_river_columns` reads from the river file, or `nothing` — because one may act on the river
+mouths. That is why `coupled_simulation` carries both too.
 
 `CoupledHydrostaticSimulation` also carries `extra_kwargs`, which is not a hook but the reason a
 setup rarely needs a *new* `AbstractCoupledSimulationConfig` subtype: it splats one `NamedTuple` per

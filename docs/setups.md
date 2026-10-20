@@ -26,13 +26,12 @@ two bands are different data. What `drammensfjorden()` *does* share, by absolute
 `~/FjordSim_data/oslofjorden/`, is the FileGDB, the daily NorKyst months and the NORA3 months, all
 of which Oslofjord's larger domain already covers. That containment is the precondition: a month
 missing from the shared directory is re-downloaded subset to the *smaller* box, which would then
-shrink Oslofjord's own prepare step. A setup wanting no rivers or no boundary data leaves the
-field unnamed so it defaults to `nothing`, making that step a no-op; because `rivers` is a type
-parameter of `NorKystConfig` and `boundary_config` one of `FjordConfig`, that is a construction-time
-choice in both cases and cannot be undone on an existing
-instance. `forcing_config`, `atmosphere_config` and `simulation_config` default to `nothing` the same
-way, making both
-atmosphere steps and `run_simulation` no-ops — though both built-in setups name all three.
+shrink Oslofjord's own prepare step. Only the grid and the bathymetry are required. A setup
+wanting no forcing, rivers, boundary data, atmosphere or run leaves `forcing_config`, `river_config`,
+`boundary_config`, `atmosphere_config` or `simulation_config` unnamed so it defaults to `nothing`,
+making those steps no-ops — though both built-in setups name all of them. Each is a type parameter
+of `FjordConfig`, so that is a construction-time choice and cannot be undone on an existing
+instance.
 
 The simulation config is rooted separately, at `~/FjordSim_results/<fjord>/` rather than under
 `data_root`, since it writes rather than reads. Unlike every other config, `SimulationConfig` has

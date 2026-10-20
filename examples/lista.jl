@@ -160,52 +160,52 @@ FjordConfig(
         architecture     = :auto,
         parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
         years            = years,
-        rivers           = NVERiversConfig(
-            data_root   = data_root,
-            output_file = "rivers_nve.nc",
-            plot_file   = "rivers_nve.png",
-            years       = years,
-            # Mouths are discovered from NVE's ELVIS network and REGINE catchments. At 0.5 m³/s
-            # that finds 20 of them, carrying 310.8 of the 315.0 m³/s that the 35 mouths above
-            # 0.15 m³/s carry. Sira (130.5), Kvina (89.5) and Lygna (39.6) dominate.
-            minimum_discharge = 0.5,
-            # The vertical Courant bound on the 1 m top cell, as on `oslofjorden`: 1 mm/s is
-            # w·Δt/Δz = 0.18 at the 3-minute `max_time_step`. On 490 m cells most rivers need one
-            # column; the log of `add_rivers` states how many each got.
-            maximum_inflow_velocity = 1.0e-3,
-            # Overrides, keyed by each mouth's terminal ELVIS `vassdragsnr` (from the discovery).
-            # A gauge's daily series is the river's inflow, so its floods reach the fjord. Every
-            # series named here was checked for daily values over the run window.
-            outlets = [
-                # Røynestad (25.85.0), 1139 km². Kvina is regulated by Sira-Kvina, which diverts
-                # its upper catchment to Sira: the gauge's 2024-2025 mean is 20.7 m³/s against
-                # 72.6 natural. It is used unscaled, so it does not count the residual catchment
-                # below the gauge. Rafossen (25.35.0) has temperature for every day of the window.
-                NVERiver(
-                    vassdragsnr = "025.A0", name = "Kvina",
-                    discharge_station = "25.85.0", temperature_station = "25.35.0",
-                ),
-                # Tingvatn (24.9.0) drains only 272 km² of Lygna. Its 2024-2025 mean of 17.4 m³/s
-                # is scaled by 2.38, the mouth's REGINE normal (39.64) over the gauge's own
-                # (16.66), which gives about 41 m³/s.
-                #
-                # Kvina's temperature at Rafossen, because both of Lygna's own temperature gauges
-                # start on 2024-07-31: Tingvatn (24.9.0) and Lygna ndf. Lygne (24.5.0), which also
-                # stops on 2025-07-28. The gap fill copies the nearest recorded day, so January to July
-                # 2024 would all have been forced at the temperature of 31 July.
-                NVERiver(
-                    vassdragsnr = "024.A0", name = "Lygna",
-                    discharge_station = "24.9.0", temperature_station = "25.35.0",
-                    discharge_fraction = 2.38,
-                ),
-                # HydAPI has no public discharge for Sira or Sokno in this window, so both run on
-                # their REGINE natural normals. Sira's normal understates it by the water
-                # Sira-Kvina brings in from Kvina. Temperature is from Sira ndf. Sirdalsvatnet
-                # (26.47.0) and Sokno ovf. Litlå (26.53.0), both complete.
-                NVERiver(vassdragsnr = "026.A", name = "Sira", temperature_station = "26.47.0"),
-                NVERiver(vassdragsnr = "026.4A0", name = "Sokno", temperature_station = "26.53.0"),
-            ],
-        ),
+    ),
+    river_config = NVERiversConfig(
+        data_root   = data_root,
+        output_file = "rivers_nve.nc",
+        plot_file   = "rivers_nve.png",
+        years       = years,
+        # Mouths are discovered from NVE's ELVIS network and REGINE catchments. At 0.5 m³/s
+        # that finds 20 of them, carrying 310.8 of the 315.0 m³/s that the 35 mouths above
+        # 0.15 m³/s carry. Sira (130.5), Kvina (89.5) and Lygna (39.6) dominate.
+        minimum_discharge = 0.5,
+        # The vertical Courant bound on the 1 m top cell, as on `oslofjorden`: 1 mm/s is
+        # w·Δt/Δz = 0.18 at the 3-minute `max_time_step`. On 490 m cells most rivers need one
+        # column; the log of `add_rivers` states how many each got.
+        maximum_inflow_velocity = 1.0e-3,
+        # Overrides, keyed by each mouth's terminal ELVIS `vassdragsnr` (from the discovery).
+        # A gauge's daily series is the river's inflow, so its floods reach the fjord. Every
+        # series named here was checked for daily values over the run window.
+        outlets = [
+            # Røynestad (25.85.0), 1139 km². Kvina is regulated by Sira-Kvina, which diverts
+            # its upper catchment to Sira: the gauge's 2024-2025 mean is 20.7 m³/s against
+            # 72.6 natural. It is used unscaled, so it does not count the residual catchment
+            # below the gauge. Rafossen (25.35.0) has temperature for every day of the window.
+            NVERiver(
+                vassdragsnr = "025.A0", name = "Kvina",
+                discharge_station = "25.85.0", temperature_station = "25.35.0",
+            ),
+            # Tingvatn (24.9.0) drains only 272 km² of Lygna. Its 2024-2025 mean of 17.4 m³/s
+            # is scaled by 2.38, the mouth's REGINE normal (39.64) over the gauge's own
+            # (16.66), which gives about 41 m³/s.
+            #
+            # Kvina's temperature at Rafossen, because both of Lygna's own temperature gauges
+            # start on 2024-07-31: Tingvatn (24.9.0) and Lygna ndf. Lygne (24.5.0), which also
+            # stops on 2025-07-28. The gap fill copies the nearest recorded day, so January to July
+            # 2024 would all have been forced at the temperature of 31 July.
+            NVERiver(
+                vassdragsnr = "024.A0", name = "Lygna",
+                discharge_station = "24.9.0", temperature_station = "25.35.0",
+                discharge_fraction = 2.38,
+            ),
+            # HydAPI has no public discharge for Sira or Sokno in this window, so both run on
+            # their REGINE natural normals. Sira's normal understates it by the water
+            # Sira-Kvina brings in from Kvina. Temperature is from Sira ndf. Sirdalsvatnet
+            # (26.47.0) and Sokno ovf. Litlå (26.53.0), both complete.
+            NVERiver(vassdragsnr = "026.A", name = "Sira", temperature_station = "26.47.0"),
+            NVERiver(vassdragsnr = "026.4A0", name = "Sokno", temperature_station = "26.53.0"),
+        ],
     ),
     boundary_config = NorKystBoundariesConfig(
         data_root        = data_root,

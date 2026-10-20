@@ -183,9 +183,6 @@ include("utilities.jl")
             (:Utils, :extract_z_faces),
             (:Utils, :netcdf_to_jld2),
             (:Utils, :save_fts),
-            (:Datasets, :ForcingDataset),
-            (:Datasets, :ResultsDataset),
-            (:Datasets, :last_date),
             (:Setups, :fjord_config),
             (:Setups, :setup_names),
             (:Simulations, :SimulationConfig),
@@ -948,7 +945,8 @@ end
         config = FjordConfig(
             grid_config = SingleColumnGrid(120.0),
             bathymetry_config = MinimalBathymetry(data_root, "column.nc", "column.png"),
-            forcing_config = ConstantForcing(data_root, "column_forcing.nc", "column_forcing.png", 8.0, nothing),
+            forcing_config = ConstantForcing(data_root, "column_forcing.nc", "column_forcing.png", 8.0),
+            river_config = MinimalRivers(data_root, "column_rivers.nc", "column_rivers.png", 10, 1.0e-3),
             atmosphere_config = MinimalAtmosphere(
                 data_root,
                 "column_atmosphere.nc",
@@ -959,7 +957,7 @@ end
             ),
             simulation_config = MinimalSimulation(data_root, DateTime(2021, 3, 4, 5), 7200.0),
         )
-        rivers = MinimalRivers(data_root, "column_rivers.nc", "column_rivers.png", 10, 1.0e-3)
+        rivers = config.river_config
 
         @test config.grid_config isa AbstractGridConfig
         @test config.bathymetry_config isa AbstractBathymetryConfig
@@ -971,6 +969,7 @@ end
         # Field types are still concrete, so the struct stays type-stable per instantiation.
         @test all(isconcretetype, fieldtypes(typeof(config)))
         @test fieldtype(typeof(config), :grid_config) === SingleColumnGrid
+        @test fieldtype(typeof(config), :river_config) === MinimalRivers
         @test fieldtype(typeof(config), :atmosphere_config) === MinimalAtmosphere
         @test fieldtype(typeof(config), :simulation_config) === MinimalSimulation
         # Unnamed, so its own type parameter resolves to `Nothing` — concrete, like the rest.
@@ -1096,9 +1095,6 @@ end
         @test FjordSim.Simulations.output_path_trait(MinimalWriter()) isa
               FjordSim.Simulations.NamesNoOutputFile
 
-        # A forcing config carrying no rivers skips the step rather than needing a river dataset.
-        @test isnothing(add_rivers(grid, config.forcing_config))
-
         # ...and a setup naming no atmosphere skips both atmosphere steps the same way, which is why
         # `atmosphere_config` defaults to `nothing`.
         @test isnothing(prepare_atmosphere(grid, nothing))
@@ -1108,10 +1104,13 @@ end
         bare = FjordConfig(
             grid_config = SingleColumnGrid(120.0),
             bathymetry_config = MinimalBathymetry(data_root, "column.nc", "column.png"),
-            forcing_config = ConstantForcing(data_root, "f.nc", "f.png", 8.0, nothing),
+            forcing_config = ConstantForcing(data_root, "f.nc", "f.png", 8.0),
         )
         @test isnothing(bare.atmosphere_config)
         @test isnothing(download_atmosphere(bare))
+        # ...and one naming no rivers skips `add_rivers` rather than needing a river dataset.
+        @test isnothing(bare.river_config)
+        @test isnothing(add_rivers(bare))
         # ...and the same for a setup that is only prepared and never run.
         @test isnothing(bare.simulation_config)
         @test isnothing(build_simulation(bare))
@@ -1267,9 +1266,9 @@ end
         config = fjord_config(name)
 
         # A nested config downloads under the setup's own root rather than sharing from elsewhere.
-        rivers = config.forcing_config.rivers
+        rivers = config.river_config
         if !isnothing(rivers)
-            @test rivers.data_root == config.forcing_config.data_root
+            @test rivers.data_root == config.bathymetry_config.data_root
         end
 
         if !isnothing(config.atmosphere_config)
@@ -1377,24 +1376,22 @@ end
     end
 
     @testset "opt-out no-ops" begin
-        # A step the setup opts out of is a no-op through the FjordConfig arity too, matching
-        # `add_rivers(grid, config, ::Nothing)` and `prepare_atmosphere(grid, ::Nothing)`. Rooted in a
-        # temporary directory so nothing can touch the real ~/FjordSim_data.
+        # Only the grid and the bathymetry are required: every other step is a no-op through the
+        # FjordConfig arity for a setup naming no config for it, before any prerequisite is checked.
+        # Rooted in a temporary directory so nothing can touch the real ~/FjordSim_data.
         mktempdir() do tmp
-            # `drammensfjorden()` itself now names rivers, an atmosphere and a simulation config, so a
-            # config naming none of them is assembled from its grid and bathymetry plus a rivers-free
-            # forcing config — `atmosphere_config` and `simulation_config` default to `nothing` when
-            # omitted, and `rivers` is a type parameter of NorKystConfig, so it has to be left unnamed at
-            # construction rather than unset afterwards.
             base = drammensfjorden()
             config = FjordConfig(
                 grid_config = base.grid_config,
                 bathymetry_config = base.bathymetry_config,
-                forcing_config = test_forcing_config(data_root = tmp),
             )
             config.bathymetry_config.data_root = tmp
 
+            @test isnothing(download_forcing(config))
+            @test isnothing(prepare_forcing(config))
             @test isnothing(add_rivers(config))
+            @test isnothing(download_boundaries(config))
+            @test isnothing(prepare_boundaries(config))
             @test isnothing(prepare_atmosphere(config))
             @test isnothing(download_atmosphere(config))
             # Both return on the `nothing` simulation config, before any prerequisite is checked, so
@@ -3385,13 +3382,11 @@ end
                 );
                 maximum_inflow_velocity = 30.0 / (1.5 * cell_areas[1, 2]),
             )
-            forcing_config = test_forcing_config(data_root = tmp, rivers = rivers)
-            @test forcing_config.rivers isa AbstractRiverConfig
-            @test all(isconcretetype, fieldtypes(typeof(forcing_config)))
+            forcing_config = test_forcing_config(data_root = tmp)
 
             # No prepared forcing exists, and none is needed: the river file stands alone.
             @test !isfile(forcing_path(forcing_config))
-            result = add_rivers(grid, forcing_config; coverage)
+            result = add_rivers(grid, rivers; coverage)
             @test !isfile(forcing_path(forcing_config))
             @test result.output_file == joinpath(tmp, "rivers.nc")
             @test result.variables == ["N", "S", "T"]
@@ -3437,29 +3432,23 @@ end
             clash = StubRivers(
                 tmp, basename(forcing_path(forcing_config)), rivers.locations, discharge, rivers.series,
             )
-            @test_throws ErrorException add_rivers(
-                grid, test_forcing_config(data_root = tmp, rivers = clash); coverage,
-            )
+            @test_throws ErrorException FjordSim.Rivers.validate_river_output(clash, forcing_config)
+            @test isnothing(FjordSim.Rivers.validate_river_output(clash, nothing))
+            @test isnothing(FjordSim.Rivers.validate_river_output(rivers, forcing_config))
 
             # The axis comes from the run window, so a setup with no simulation config has none.
-            @test_throws ErrorException add_rivers(grid, forcing_config)
+            @test_throws ErrorException add_rivers(grid, rivers)
 
             # A discharge of the wrong shape, or one that would take water out, is refused rather
             # than written; so is an inflow speed that could never be met.
             short = StubRivers(tmp, "short.nc", rivers.locations, [10.0 20.0], rivers.series)
-            @test_throws ErrorException add_rivers(
-                grid, test_forcing_config(data_root = tmp, rivers = short); coverage,
-            )
+            @test_throws ErrorException add_rivers(grid, short; coverage)
             negative = StubRivers(tmp, "negative.nc", rivers.locations, [10.0 -1.0 0.0], rivers.series)
-            @test_throws ErrorException add_rivers(
-                grid, test_forcing_config(data_root = tmp, rivers = negative); coverage,
-            )
+            @test_throws ErrorException add_rivers(grid, negative; coverage)
             still = StubRivers(
                 tmp, "still.nc", rivers.locations, discharge, rivers.series; maximum_inflow_velocity = 0.0,
             )
-            @test_throws ArgumentError add_rivers(
-                grid, test_forcing_config(data_root = tmp, rivers = still); coverage,
-            )
+            @test_throws ArgumentError add_rivers(grid, still; coverage)
         end
     end
 
@@ -3490,7 +3479,7 @@ end
                 tmp, "rivers.nc", [location], [10.0 10.0],
                 Dict("T" => Float32[3 5], "S" => Float32[0 0]); maximum_inflow_velocity = Inf,
             )
-            mouth = only(add_rivers(grid, test_forcing_config(data_root = tmp, rivers = rivers); coverage).mouths)
+            mouth = only(add_rivers(grid, rivers; coverage).mouths)
             @test FjordSim.Rivers.river_date_range(rivers) == (start, start + Day(1))
             @test read_river_columns(rivers) == (; target_i = [1], target_j = [2])
 
@@ -3542,9 +3531,7 @@ end
                 tmp, "ambient.nc", [location], [10.0 10.0],
                 Dict("T" => Float32[NaN NaN], "S" => Float32[0 0]); maximum_inflow_velocity = Inf,
             )
-            @test_throws "non-finite T" add_rivers(
-                grid, test_forcing_config(data_root = tmp, rivers = ambient); coverage,
-            )
+            @test_throws "non-finite T" add_rivers(grid, ambient; coverage)
 
             # A river file written before rivers were a volume source carries no inflow, and is
             # refused with the step that rewrites it rather than read as no rivers at all.
@@ -3593,7 +3580,7 @@ end
                     Dict(key => fill(Float32(value), 1, 2) for (key, value) in river_values),
                 )
                 add_rivers(
-                    grid, test_forcing_config(data_root = tmp, rivers = rivers);
+                    grid, rivers;
                     coverage = (start, start + Day(1)),
                 )
                 model = HydrostaticFreeSurfaceModel(
@@ -4669,45 +4656,45 @@ end
             config = fjord_config(name)
             isnothing(config.forcing_config) && continue
             @test simulation_forcing_path(config) == forcing_path(config.forcing_config)
-            rivers = config.forcing_config.rivers
-            isnothing(rivers) && continue
-            @test river_forcing_path(rivers) != forcing_path(config.forcing_config)
+            isnothing(config.river_config) && continue
+            @test river_forcing_path(config.river_config) != forcing_path(config.forcing_config)
         end
 
         # Every prerequisite is reported as the command that produces it, and every check runs before
         # anything is read or allocated, so the temporary root stays empty apart from the stub.
         mktempdir() do tmp
             bathymetry_config = test_bathymetry_config(data_root = tmp)
-            fjord(forcing_config) = FjordConfig(;
+            fjord(forcing_config, river_config) = FjordConfig(;
                 grid_config = test_grid_config(),
                 bathymetry_config,
                 forcing_config,
+                river_config,
                 simulation_config = test_simulation_config(results_root = tmp),
             )
 
-            # `rivers` is a type parameter of NorKystConfig, so whether a config has any is a
-            # construction-time choice — hence two configs rather than one mutated.
-            with_rivers = fjord(test_forcing_config(
-                data_root = tmp,
-                rivers = StubRivers(
-                    tmp, "rivers.nc", FjordSim.Rivers.RiverLocation[], zeros(0, 0),
-                    Dict{String,Matrix{Float32}}(),
-                ),
-            ))
-            without_rivers = fjord(test_forcing_config(data_root = tmp))
+            forcing_config = test_forcing_config(data_root = tmp)
+            rivers = StubRivers(
+                tmp, "rivers.nc", FjordSim.Rivers.RiverLocation[], zeros(0, 0),
+                Dict{String,Matrix{Float32}}(),
+            )
+            with_rivers = fjord(forcing_config, rivers)
+            without_rivers = fjord(forcing_config, nothing)
+            rivers_only = fjord(nothing, rivers)
 
             @test_throws "prepare_bathymetry" build_simulation(with_rivers)
 
             touch(bathymetry_path(bathymetry_config))
-            # Either way the prepared forcing comes next, since the rivers are not in it...
-            @test isnothing(without_rivers.forcing_config.rivers)
-            @test simulation_forcing_path(without_rivers) ==
-                  forcing_path(without_rivers.forcing_config)
+            # A setup naming forcing is told to prepare it next, since the rivers are not in it...
+            @test simulation_forcing_path(without_rivers) == forcing_path(forcing_config)
             @test_throws "prepare_forcing" build_simulation(without_rivers)
             @test_throws "prepare_forcing" build_simulation(with_rivers)
 
+            # ...one naming none is asked for no forcing at all, rivers or not...
+            @test isnothing(simulation_forcing_path(rivers_only))
+            @test_throws "add_rivers" build_simulation(rivers_only)
+
             # ...and a config naming rivers is then told to run add_rivers, which writes their file.
-            touch(forcing_path(with_rivers.forcing_config))
+            touch(forcing_path(forcing_config))
             @test_throws "add_rivers" build_simulation(with_rivers)
         end
     end
@@ -5067,7 +5054,7 @@ end
             simulation_config = config.simulation_config
             snapshot, checkpointer = simulation_config.writers
             @test isnothing(config.atmosphere_config)
-            @test isnothing(config.forcing_config.rivers)
+            @test isnothing(config.river_config)
 
             simulation = build_simulation(config)
             @test simulation isa Simulation
@@ -5426,8 +5413,9 @@ end
 
     @testset "run! with rivers" begin
         # The rivers through the whole build: `add_rivers` against the simulation grid, then
-        # `build_simulation` reading the river file next to the forcing, combining the two sets of
-        # terms, and a run that takes the river's water into the free surface.
+        # `build_simulation` reading the river file, and a run that takes the river's water into the
+        # free surface. With no forcing config at all, since rivers need nothing but the bathymetry;
+        # `combine_forcing` pairing them with file forcing is covered in "river forcing terms".
         mktempdir() do tmp
             Nx, Ny, Nz = 16, 16, 8
             bottom_height = fill(-80.0, (Nx, Ny))
@@ -5451,31 +5439,29 @@ end
                 fill(500.0, 1, records),
                 Dict("T" => fill(4.0f0, 1, records), "S" => zeros(Float32, 1, records)),
             )
-            forcing_config = test_forcing_config(data_root = tmp, rivers = rivers)
             boundaries_config = test_boundaries_config(data_root = tmp)
-            write_prepared_forcing(forcing_path(forcing_config); size = (Nx, Ny, Nz))
             write_prepared_boundaries(
                 boundary_data_path(boundaries_config);
                 size = (Nx, Ny, Nz),
                 dates = [DateTime(2020, 1, 1, 12), DateTime(2020, 1, 2, 12)],
             )
-            add_rivers(grid, forcing_config; coverage)
+            add_rivers(grid, rivers; coverage)
 
             config = FjordConfig(;
                 grid_config,
                 bathymetry_config,
-                forcing_config,
+                river_config = rivers,
                 boundary_config = boundaries_config,
                 simulation_config,
             )
+            @test isnothing(config.forcing_config)
             simulation = build_simulation(config)
             ocean_model = simulation.model.ocean.model
 
-            # The free surface is forced by the rivers alone; T and S by the prepared forcing and
-            # the rivers together.
+            # Every forcing term is a river's: the free surface's inflow and each tracer's source.
             @test ocean_model.forcing.η isa FjordSim.Rivers.RiverInflow
-            @test ocean_model.forcing.S isa Oceananigans.Forcings.MultipleForcings
-            @test ocean_model.forcing.T isa Oceananigans.Forcings.MultipleForcings
+            @test ocean_model.forcing.S isa FjordSim.Rivers.RiverTracerSource
+            @test ocean_model.forcing.T isa FjordSim.Rivers.RiverTracerSource
 
             run!(simulation)
             @test all(isfinite, interior(ocean_model.tracers.T))

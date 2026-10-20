@@ -12,10 +12,10 @@ const NORKYST_HINDCAST_OPENDAP_URL =
 # The record of each daily file to keep. The hindcast publishes 24 hourly instants per day where
 # the operational collection publishes one daily mean, and the interior forcing wants a daily
 # cadence: `prepare_forcing` writes `λ = 0` everywhere, so the file's values are read only for
-# initial conditions and as the carrier `add_rivers` patches. Keeping every hour would multiply
-# both the download and the prepared file by 24 for no gain. Hour 12 is chosen rather than a daily
-# mean because it reproduces the operational product's own 12:00 stamp exactly, which is what the
-# `pad_time_steps` arithmetic in the setups is written against.
+# initial conditions. Keeping every hour would multiply both the download and the prepared file by
+# 24 for no gain. Hour 12 is chosen rather than a daily mean because it reproduces the operational
+# product's own 12:00 stamp exactly, which is what the `pad_time_steps` arithmetic in the setups is
+# written against.
 const NORKYST_HINDCAST_HOUR = 12
 
 """
@@ -50,9 +50,8 @@ Two differences are worth knowing before using it:
 - `opendap_url`: OPeNDAP base URL; `YYYY/MM/<file>` is appended per day.
 - `parameters`: Variable names to extract. Required.
 - `years`: Calendar years to download. Required.
-- `rivers`: An `AbstractRiverConfig` for `add_rivers`, or `nothing`.
 """
-Base.@kwdef mutable struct NorKystHindcastConfig{R} <: AbstractNorKystConfig
+Base.@kwdef mutable struct NorKystHindcastConfig <: AbstractNorKystConfig
     data_root::String
     output_directory::String
     output_file::String = "forcing.nc"
@@ -62,7 +61,6 @@ Base.@kwdef mutable struct NorKystHindcastConfig{R} <: AbstractNorKystConfig
     opendap_url::String = NORKYST_HINDCAST_OPENDAP_URL
     parameters::Vector{String}
     years::Vector{Int}
-    rivers::R = nothing
 end
 
 """

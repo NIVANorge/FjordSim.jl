@@ -328,7 +328,7 @@ RiverMouthMixing(; base, diffusivity, mixing_depth) =
 function Configs.model_closure(config::RiverMouthMixing, grid, boundary_config, river_columns)
     isnothing(river_columns) && error(
         "RiverMouthMixing mixes the columns the rivers enter through, but this setup names no " *
-        "rivers. Name an `AbstractRiverConfig` on the forcing config, or drop RiverMouthMixing.",
+        "rivers. Name a `river_config` on the `FjordConfig`, or drop RiverMouthMixing.",
     )
 
     base = model_closure(config.base, grid, boundary_config, river_columns)
@@ -966,8 +966,9 @@ a new subtype rather than an edit to `build_simulation`.
 - `pickup`: resume from the newest checkpoint under `results_root` instead of starting fresh.
   Requires a `CheckpointWriter`.
 
-Nothing that could be derived from another config is a field at all: which forcing file, which open
-boundary and which atmosphere reader all come from `forcing_config` and `atmosphere_config`.
+Nothing that could be derived from another config is a field at all: which forcing, river and
+open-boundary files and which atmosphere reader all come from `forcing_config`, `river_config`,
+`boundary_config` and `atmosphere_config`.
 
 `start_date` is a field rather than something derived from an input file because every prepared
 file has its *own* first record, and each reader used to zero its own axis there: the Oslofjord
@@ -1257,14 +1258,6 @@ simulation_forcing_path(config::FjordConfig) = simulation_forcing_path(config.fo
 
 simulation_forcing_path(::Nothing) = nothing
 simulation_forcing_path(config::AbstractForcingConfig) = forcing_path(config)
-
-"""
-    setup_rivers(forcing_config)
-
-The setup's river config, or `nothing` when it names no rivers or no forcing at all.
-"""
-setup_rivers(::Nothing) = nothing
-setup_rivers(config::AbstractForcingConfig) = config.rivers
 
 """
     resolve_river_file(rivers)
@@ -2100,7 +2093,7 @@ function build_simulation(config::FjordConfig)
     )
 
     forcing_file = resolve_forcing_file(config)
-    rivers = setup_rivers(config.forcing_config)
+    rivers = config.river_config
     river_file = resolve_river_file(rivers)
 
     simulation_config.loops >= 1 ||
@@ -2252,8 +2245,8 @@ end
 Build the simulation a setup describes and run its window `loops` times.
 
 This is the setup-level driver, the same shape as `prepare_forcing(config::FjordConfig)`, and the
-last step of the pipeline: it needs `prepare_bathymetry`, `prepare_forcing`, `add_rivers` if the
-setup names rivers, and `prepare_atmosphere` if it names an atmosphere.
+last step of the pipeline: it needs `prepare_bathymetry`, and each of `prepare_forcing`,
+`add_rivers`, `prepare_boundaries` and `prepare_atmosphere` whose config the setup names.
 
 # Looping
 

@@ -55,15 +55,12 @@ overrides `data_root` for that entry only.
 - `opendap_url`: OPeNDAP base URL for streaming data.
 - `parameters`: Variable names to extract (e.g. `["temperature", "salinity"]`). Required.
 - `years`: Calendar years to download. Required.
-- `rivers`: An `AbstractRiverConfig` for `add_rivers` to write on top of the prepared forcing,
-  or `nothing` for a setup with no rivers. The struct is parametric over its type so the field
-  stays concretely typed either way.
 
-The open edge is not here, and neither is the open-boundary dataset: both belong to the
-`AbstractBoundaryDataConfig` a setup names on its `FjordConfig`. `prepare_forcing` takes the edge as
-a keyword.
+The rivers and the open edges are not here: they belong to the `AbstractRiverConfig` and the
+`AbstractBoundaryDataConfig` a setup names on its `FjordConfig`. `prepare_forcing` takes the edges
+as a keyword.
 """
-Base.@kwdef mutable struct NorKystConfig{R} <: AbstractNorKystConfig
+Base.@kwdef mutable struct NorKystConfig <: AbstractNorKystConfig
     data_root::String
     output_directory::String
     output_file::String = "forcing.nc"
@@ -73,7 +70,6 @@ Base.@kwdef mutable struct NorKystConfig{R} <: AbstractNorKystConfig
     opendap_url::String = NORKYST_OPENDAP_URL
     parameters::Vector{String}
     years::Vector{Int}
-    rivers::R = nothing
 end
 
 """

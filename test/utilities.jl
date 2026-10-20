@@ -39,7 +39,6 @@ struct ConstantForcing <: AbstractForcingConfig
     output_file::String
     plot_file::String
     temperature::Float64
-    rivers::Nothing
 end
 
 struct MinimalRivers <: AbstractRiverConfig

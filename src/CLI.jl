@@ -85,9 +85,10 @@ Subcommands, in the order a setup is prepared and run:
                         after changing `resolution` or `padding`.
   run_simulation        Build and run the coupled simulation, writing NetCDF snapshots into the
                         setup's results directory. Needs every step above that the setup
-                        configures: prepare_bathymetry, prepare_forcing, add_rivers if it names
-                        rivers, prepare_boundaries if it names open-boundary data, and
-                        prepare_atmosphere if it names an atmosphere. Where it runs
+                        configures: prepare_bathymetry, prepare_forcing if it names forcing,
+                        add_rivers if it names rivers, prepare_boundaries if it names
+                        open-boundary data, and prepare_atmosphere if it names an atmosphere.
+                        Only prepare_bathymetry is required. Where it runs
                         is the simulation config's `architecture` field. A setup with no
                         simulation config does nothing.
   validate_simulation   Score a finished run against observations, writing skill tables and

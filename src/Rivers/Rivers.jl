@@ -449,10 +449,10 @@ end
 
 """
     add_rivers(config::FjordConfig)
-    add_rivers(target_grid, config::AbstractForcingConfig; coverage = nothing)
+    add_rivers(target_grid, rivers::AbstractRiverConfig; coverage = nothing)
 
-Write the river inflow file at `river_forcing_path(config.rivers)`. Returns `nothing` when the setup
-has no rivers, or no forcing config at all.
+Write the river inflow file at `river_forcing_path(rivers)`. Returns `nothing` when the setup names
+no `river_config`.
 
 Each river is a volume of water — `river_discharge` m³/s carrying the `river_series` values — that
 enters through the surface of the columns `river_mouths` gives it. The file stores that already on
@@ -461,8 +461,8 @@ spanning the run window. So the run only reads gridded series, and everything ab
 enters is decided here, once, against the same land mask the run uses.
 
 The file stands alone. It is not a copy of the prepared forcing, so this step needs only the
-bathymetry, a change to the forcing needs no re-run of it, and `FromForcing` initial conditions read
-a forcing file no river has touched. Its time axis comes from the run window, so it needs
+bathymetry and works with no forcing config at all, a change to the forcing needs no re-run of it,
+and `FromForcing` initial conditions read a forcing file no river has touched. Its time axis comes from the run window, so it needs
 `coverage` — a change of `start_date` or `stop_time` means re-running this step.
 
 The `FjordConfig` method is the setup-level driver: it reads the grid from the processed bathymetry,
@@ -470,9 +470,9 @@ so the rivers are placed against the same land mask the model sees, downloads th
 and takes `coverage` from the simulation config.
 """
 function add_rivers(config::FjordConfig)
-    isnothing(config.forcing_config) && return nothing
-    rivers = config.forcing_config.rivers
+    rivers = config.river_config
     isnothing(rivers) && return nothing
+    validate_river_output(rivers, config.forcing_config)
 
     bathymetry_file = bathymetry_path(config.bathymetry_config)
     isfile(bathymetry_file) || error(
@@ -488,7 +488,7 @@ function add_rivers(config::FjordConfig)
 
     # The grid stays on the CPU: building the land masks walks `peripheral_node` cell by cell.
     grid = simulation_grid(config.grid_config, bathymetry_file, CPU())
-    result = add_rivers(grid, config.forcing_config; coverage = coverage_window(config.simulation_config))
+    result = add_rivers(grid, rivers; coverage = coverage_window(config.simulation_config))
 
     plot_file = plot_rivers(grid, rivers, result.mouths)
 
@@ -501,17 +501,23 @@ function add_rivers(config::FjordConfig)
     return result
 end
 
-add_rivers(target_grid, config::AbstractForcingConfig; coverage = nothing) =
-    add_rivers(target_grid, config, config.rivers; coverage)
+"""
+    validate_river_output(rivers, forcing_config)
 
-add_rivers(target_grid, config::AbstractForcingConfig, ::Nothing; coverage = nothing) = nothing
+Refuse a river file that would overwrite the prepared forcing: the two configs name their files
+independently, often under one `data_root`.
+"""
+validate_river_output(rivers::AbstractRiverConfig, ::Nothing) = nothing
 
-function add_rivers(
-    target_grid,
-    config::AbstractForcingConfig,
-    rivers::AbstractRiverConfig;
-    coverage = nothing,
-)
+function validate_river_output(rivers::AbstractRiverConfig, forcing_config::AbstractForcingConfig)
+    abspath(river_forcing_path(rivers)) == abspath(forcing_path(forcing_config)) && error(
+        "The river output would overwrite the prepared forcing at $(forcing_path(forcing_config)). " *
+        "Give the river config an `output_file` that differs from the forcing config's.",
+    )
+    return nothing
+end
+
+function add_rivers(target_grid, rivers::AbstractRiverConfig; coverage = nothing)
     times = river_forcing_times(coverage)
     locations = river_locations(rivers)
     discharge = river_discharge(rivers, times)
@@ -554,10 +560,6 @@ function add_rivers(
     end
 
     output_file = river_forcing_path(rivers)
-    abspath(output_file) == abspath(forcing_path(config)) && error(
-        "The river output would overwrite the prepared forcing at $(forcing_path(config)). " *
-        "Give the river config an `output_file` that differs from the forcing config's.",
-    )
     isdir(dirname(output_file)) || mkpath(dirname(output_file))
     write_river_file(output_file, target_grid, mouths, locations, discharge, series, times)
 

@@ -123,7 +123,7 @@ atmosphere is independent.
 Only the grid and the bathymetry are always required.
 Every other component is a config field defaulting to `nothing`, and a step whose config is absent is a no-op rather than an error — so a setup names what it wants and skips the rest.
 
-Rivers need no prepared forcing: `add_rivers` writes their own file from the bathymetry and the run window alone, so a setup can keep them with `download_forcing` and `prepare_forcing` skipped.
+Rivers are their own `river_config`, independent of `forcing_config`: `add_rivers` writes their file from the bathymetry and the run window alone, so a setup can name rivers and no forcing at all.
 What does need a prepared forcing file is `FromForcing` initial conditions;
 use constants, functions, or `FromResults` from an earlier run instead.
 

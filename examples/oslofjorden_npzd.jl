@@ -577,16 +577,14 @@ against one. That is the right contract for a dataset adapter and the wrong one 
 a report, so this extends the pipeline at the level where it composes — a second method on
 `prepare_forcing` itself — rather than pretending the values came from NorKyst.
 """
-struct NPZDForcing{F,R} <: AbstractForcingConfig
+struct NPZDForcing{F} <: AbstractForcingConfig
     base::F
     data_root::String
     output_file::String
     plot_file::String
-    rivers::R
 end
 
-NPZDForcing(base) =
-    NPZDForcing(base, base.data_root, base.output_file, base.plot_file, base.rivers)
+NPZDForcing(base) = NPZDForcing(base, base.data_root, base.output_file, base.plot_file)
 
 FjordSim.download_forcing(target_grid, config::NPZDForcing) = download_forcing(target_grid, config.base)
 
@@ -596,7 +594,7 @@ FjordSim.download_forcing(target_grid, config::NPZDForcing) = download_forcing(t
 Regrid `base`'s variables, then append the biogeochemical ones to the file it wrote.
 
 `base` writes to the same path this config resolves — they share `data_root` and `output_file` — so
-there is one prepared file, not two, and `add_rivers` copies it complete.
+there is one prepared file, not two.
 """
 function FjordSim.prepare_forcing(
     target_grid,
@@ -678,18 +676,17 @@ end
 # untouched or wraps exactly one of them.
 base = oslofjorden()
 
-# The rivers first, since the forcing config holds them. `output_file` is a new name so
-# `oslofjorden()`'s own `rivers_nve.nc` survives for comparison, and so does every other file this
-# example writes.
+# `output_file` is a new name so `oslofjorden()`'s own `rivers_nve.nc` survives for comparison, and
+# so does every other file this example writes.
 rivers = NPZDRivers(
-    base.forcing_config.rivers,
+    base.river_config,
     output_file = "rivers_npzd.nc",
     plot_file = "rivers_npzd.png",
 )
 
-# A fresh `NorKystConfig` rather than a mutated copy of `base.forcing_config`, because `rivers` is a
-# type parameter: swapping it is a new object either way. Same `output_directory`, so the downloaded
-# NorKyst months are shared rather than fetched again — `download_forcing` is the one step in this
+# A fresh `NorKystConfig` rather than a mutated `base.forcing_config`, so `oslofjorden()`'s own
+# `forcing.nc` survives. Same `output_directory`, so the downloaded NorKyst months are shared rather
+# than fetched again — `download_forcing` is the one step in this
 # pipeline that talks to MET's OPeNDAP server, and the only reason to re-run it is a new year.
 forcing = NPZDForcing(
     NorKystConfig(
@@ -700,7 +697,6 @@ forcing = NPZDForcing(
         architecture = base.forcing_config.architecture,
         parameters = base.forcing_config.parameters,
         years = base.forcing_config.years,
-        rivers = rivers,
     ),
 )
 
@@ -724,6 +720,7 @@ FjordConfig(
     grid_config = base.grid_config,
     bathymetry_config = base.bathymetry_config,
     forcing_config = forcing,
+    river_config = rivers,
     boundary_config = boundaries,
     atmosphere_config = base.atmosphere_config,
     simulation_config = SimulationConfig(

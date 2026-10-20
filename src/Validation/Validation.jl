@@ -183,8 +183,9 @@ function default_observations(config::FjordConfig)
 
     isempty(gauges) && return ()
 
-    # The setup's own data root, so the cache lands beside its other downloads.
-    data_root = isnothing(config.forcing_config) ? pwd() : config.forcing_config.data_root
+    # The bathymetry's data root, the one every setup has, so the cache lands beside its other
+    # downloads.
+    data_root = config.bathymetry_config.data_root
     return (KartverketSeaLevel(; data_root, stations = unique(g -> g.name, gauges)),)
 end
 

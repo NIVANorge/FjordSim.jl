@@ -214,13 +214,14 @@ include("Utils.jl")
 # step, and Plotting itself only needs Configs.
 include("Plotting.jl")
 include("Bathymetry/Bathymetry.jl")
-include("Atmospheres/Atmospheres.jl")
 include("Regridding.jl")
+include("Atmospheres/Atmospheres.jl")
+include("DataSources/NorKyst.jl")
 include("Forcing/Forcing.jl")
 include("InitialState/InitialState.jl")
 include("Rivers/Rivers.jl")
-include("Boundaries/Boundaries.jl")
 include("BoundaryConditions.jl")
+include("Boundaries/Boundaries.jl")
 include("Grids.jl")
 # Simulations reads the grid back from the processed bathymetry, so it comes after Grids.
 include("Simulations.jl")
@@ -232,13 +233,13 @@ using .Configs
 using .Utils
 using .Plotting
 using .Bathymetry
-using .Atmospheres
 using .Regridding
+using .Atmospheres
 using .Forcing
 using .InitialState
 using .Rivers
-using .Boundaries
 using .BoundaryConditions
+using .Boundaries
 using .Grids
 using .Simulations
 using .Validation

@@ -18,14 +18,19 @@
 # `boundary_source_slab` method at all, and the generic `blended_slab` default applies to all seven
 # variables.
 
-const NORKYST_HINDCAST_BOUNDARY_CATALOG_URL =
-    "https://thredds.met.no/thredds/catalog/romshindcast/norkyst_v3/zdepth"
-const NORKYST_HINDCAST_BOUNDARY_OPENDAP_URL =
-    "https://thredds.met.no/thredds/dodsC/romshindcast/norkyst_v3/zdepth"
-const NORKYST_HINDCAST_BAROTROPIC_CATALOG_URL =
-    "https://thredds.met.no/thredds/catalog/romshindcast/norkyst_v3/sdepth"
-const NORKYST_HINDCAST_BAROTROPIC_OPENDAP_URL =
-    "https://thredds.met.no/thredds/dodsC/romshindcast/norkyst_v3/sdepth"
+using ..NorKyst:
+    NORKYST_HINDCAST_CATALOG_URL,
+    NORKYST_HINDCAST_OPENDAP_URL,
+    NORKYST_HINDCAST_BAROTROPIC_CATALOG_URL,
+    NORKYST_HINDCAST_BAROTROPIC_OPENDAP_URL,
+    NorKystSubset,
+    list_hindcast_files,
+    subset_ranges,
+    time_length,
+    define_output_file,
+    write_parameter_chunk!,
+    write_time_dependent_coordinates!,
+    decoded_attributes
 
 # The two variables that come from the `sdepth` file rather than the `zdepth` one.
 const NORKYST_HINDCAST_BAROTROPIC_VARIABLES = ("ubar_eastward", "vbar_northward")
@@ -100,8 +105,8 @@ function NorKystHindcastBoundariesConfig(;
     open_edges,
     margin = 0.05,
     architecture = :auto,
-    catalog_url = NORKYST_HINDCAST_BOUNDARY_CATALOG_URL,
-    opendap_url = NORKYST_HINDCAST_BOUNDARY_OPENDAP_URL,
+    catalog_url = NORKYST_HINDCAST_CATALOG_URL,
+    opendap_url = NORKYST_HINDCAST_OPENDAP_URL,
     barotropic_catalog_url = NORKYST_HINDCAST_BAROTROPIC_CATALOG_URL,
     barotropic_opendap_url = NORKYST_HINDCAST_BAROTROPIC_OPENDAP_URL,
     parameters,
@@ -180,43 +185,6 @@ function download_boundaries(target_grid, config::NorKystHindcastBoundariesConfi
 end
 
 """
-    boundary_subset_ranges(ds, longitude, latitude, config::NorKystHindcastBoundariesConfig)
-
-The Norkyst-v3 index window covering the `longitude`/`latitude` band, as the same `NorKystSubset`
-every other download here builds — so `define_output_file`, `write_parameter_chunk!` and
-`write_time_dependent_coordinates!` are reused verbatim.
-
-`parameters` is passed in rather than taken from the config, because a day is read from two files
-and each contributes only its own share of them.
-"""
-function boundary_subset_ranges(
-    ds,
-    longitude,
-    latitude,
-    config::NorKystHindcastBoundariesConfig,
-    parameters,
-)
-    latitude_variable = variable(ds, "lat")
-    longitude_variable = variable(ds, "lon")
-    source_latitude = Array(latitude_variable[ntuple(_ -> :, ndims(latitude_variable))...])
-    source_longitude = Array(longitude_variable[ntuple(_ -> :, ndims(longitude_variable))...])
-
-    mask = (source_latitude .>= latitude[1]) .&
-           (source_latitude .<= latitude[2]) .&
-           (source_longitude .>= longitude[1]) .&
-           (source_longitude .<= longitude[2])
-
-    ranges = Dict{String,UnitRange{Int}}()
-    for (index, dimension) in enumerate(dimnames(latitude_variable))
-        ranges[dimension] = bounding_range(mask, index)
-    end
-
-    spatial_dimensions = dimnames(latitude_variable)
-    subset_mask = mask[(ranges[dimension] for dimension in spatial_dimensions)...]
-    return NorKystSubset(ranges, subset_mask, spatial_dimensions, parameters)
-end
-
-"""
     define_extra_parameters!(output, template, subset)
 
 Define `subset.parameters` on an already-open output file from a second template.
@@ -289,8 +257,7 @@ function process_hindcast_boundary_month(
             push!(datasets, NCDataset(join((config.opendap_url, month_directory, file), "/")))
         end
 
-        full_subset =
-            boundary_subset_ranges(first(datasets), longitude, latitude, config, full_names)
+        full_subset = subset_ranges(first(datasets), longitude, latitude, full_names)
         total_time = sum(time_length, datasets)
         @info "  Subset $(join(("$dimension=$(length(range))" for (dimension, range) in sort(collect(full_subset.ranges))), ", ")), $total_time records"
 

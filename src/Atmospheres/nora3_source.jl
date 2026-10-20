@@ -8,6 +8,9 @@ using Dates: Date, Day, lastdayofmonth
 import Dates
 using Downloads
 
+using ..Regridding: grid_rotation_angle, rotate_to_east_north
+using .NORA3: NORA3PrescribedAtmosphere, NORA3PrescribedRadiation, MultiYearNORA3
+
 const NORA3_OPENDAP_URL = "https://thredds.met.no/thredds/dodsC/nora3"
 
 # NORA3's Lambert conformal conic projection. Files from 2024 on describe it by CF attributes only,

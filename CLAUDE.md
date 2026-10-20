@@ -69,26 +69,31 @@ The modules, in `include` order from `src/FjordSim.jl`:
    supertypes.
 4. **Bathymetry** (`src/Bathymetry/`) — `prepare_bathymetry` and the eight-stage
    `smooth_bathymetry_gaps!` pipeline (order is forced; see the doc before reordering).
-5. **Atmosphere** (`src/Atmospheres/`) — `prepare_atmosphere`, NORA3 read/download.
-6. **Regridding** (`src/Regridding.jl`) — the core `Forcing`, `InitialState` and `Boundaries`
-   share: source records and time axes, water masks, the projected source grid and the interpolation kernel.
-7. **Forcing** (`src/Forcing/`) — the interior forcing pipeline (`prepare_forcing`,
+5. **Regridding** (`src/Regridding.jl`) — the core `Forcing`, `InitialState` and `Boundaries`
+   share: source records and time axes, water masks, the projected source grid and its rotation,
+   the interpolation kernel, and the prepared files' layout.
+6. **Atmosphere** (`src/Atmospheres/`) — `prepare_atmosphere`, NORA3 read/download.
+7. **NorKyst** (`src/DataSources/NorKyst.jl`) — the NorKyst-800m dataset the forcing, initial-state
+   and boundary adapters share: endpoints, variable names, source grid, subset download.
+8. **Forcing** (`src/Forcing/`) — the interior forcing pipeline (`prepare_forcing`,
    `download_forcing`) and its NorKyst adapters.
-8. **Initial state** (`src/InitialState/`) — `download_initial_state`, `prepare_initial_state`:
+9. **Initial state** (`src/InitialState/`) — `download_initial_state`, `prepare_initial_state`:
    one source record at `start_date` for `FromInitialState`, and its NorKyst adapter.
-9. **Rivers** (`src/Rivers/`) — the river pipeline (`add_rivers`) and its NVE adapter.
-10. **Boundaries** (`src/Boundaries/`) — the open-boundary data pipeline (`download_boundaries`,
-    `prepare_boundaries`, `boundary_series`) and its NorKyst adapters.
-11. **Boundary conditions** (`src/BoundaryConditions.jl`) — `AirSeaFluxes`, `QuadraticBottomDrag`,
-    `OpenLateralBoundaryFromData`.
-12. **Grids** (`src/Grids.jl`) — `EvenGrid`, the `domain_grid`/`simulation_grid` hooks.
-13. **Simulations** (`src/Simulations.jl`) — `SimulationConfig`, `build_simulation`/`run_simulation`,
+10. **Rivers** (`src/Rivers/`) — the river pipeline (`add_rivers`) and its NVE adapter.
+11. **Boundary conditions** (`src/BoundaryConditions.jl`) — the `boundary_condition_sides` and
+    `field_boundary_conditions` hooks, `MergedBoundaryConditions`, `AirSeaFluxes`,
+    `QuadraticBottomDrag`.
+12. **Boundaries** (`src/Boundaries/`) — the open-boundary data pipeline (`download_boundaries`,
+    `prepare_boundaries`, `boundary_series`), its NorKyst adapters, and
+    `OpenLateralBoundaryFromData`, the boundary condition that reads it.
+13. **Grids** (`src/Grids.jl`) — `EvenGrid`, the `domain_grid`/`simulation_grid` hooks.
+14. **Simulations** (`src/Simulations.jl`) — `SimulationConfig`, `build_simulation`/`run_simulation`,
     writers, callbacks, looping, checkpointing, initial conditions.
-14. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
+15. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
     observation sources, skill and tidal statistics, and the comparison figures. `StationWriter`
     (in `Simulations`) is what a run writes for it.
-15. **CLI** (`src/CLI.jl`) — subcommand dispatch, logging.
-16. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
+16. **CLI** (`src/CLI.jl`) — subcommand dispatch, logging.
+17. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
 
 ## Setups
 

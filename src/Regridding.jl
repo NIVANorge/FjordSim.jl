@@ -1,8 +1,9 @@
 module Regridding
 
 # The regridding core shared by the forcing, initial-state and open-boundary pipelines: source
-# records and the time axes built from them, the water masks, the projected source grid, and the
-# kernel that interpolates a source slab onto the target nodes. Nothing here names a dataset.
+# records and the time axes built from them, the water masks, the projected source grid and its
+# rotation, the kernel that interpolates a source slab onto the target nodes, and the layout of the
+# prepared files. Nothing here names a dataset.
 
 export native_times_to_seconds,
     FORCING_DEFLATE_LEVEL,
@@ -30,7 +31,11 @@ export native_times_to_seconds,
     SourceReader,
     source_slab,
     blended_slab,
-    define_forcing_dimensions!
+    define_forcing_dimensions!,
+    data_location,
+    forcing_dimension_names,
+    grid_rotation_angle,
+    rotate_to_east_north
 
 using Oceananigans
 using Oceananigans: fill_halo_regions!
@@ -486,6 +491,58 @@ function projected_target_nodes(longitude, latitude, source::ProjectedSourceGrid
 end
 
 """
+    grid_rotation_angle(longitude, latitude)
+
+Angle from east to the source grid's local x axis, one per source cell, from finite differences
+of the 2D `longitude` and `latitude` fields.
+
+Source datasets on a projected grid give vector components relative to their own axes, which
+have to be rotated to eastward/northward before the fields mean anything geographically. Deriving
+the angle from the coordinate fields keeps this source-agnostic: it works for any curvilinear grid
+publishing 2D longitude and latitude, without knowing the projection. The analytic alternative
+for a Lambert conformal conic, `(longitude - longitude_0) * sin(latitude_1)`, needs the
+projection parameters and would not carry over to another dataset.
+
+The difference is taken along the first (x) axis, and the last column repeats the previous
+difference.
+"""
+function grid_rotation_angle(longitude, latitude)
+    Nx, Ny = size(longitude)
+    Nx >= 2 || throw(ArgumentError("need at least two source columns to derive a rotation angle"))
+    angle = Matrix{Float64}(undef, Nx, Ny)
+
+    for j = 1:Ny, i = 1:Nx
+        upper = min(i + 1, Nx)
+        lower = upper - 1
+        Δlongitude = (longitude[upper, j] - longitude[lower, j]) * cosd(latitude[i, j])
+        Δlatitude = latitude[upper, j] - latitude[lower, j]
+        angle[i, j] = atan(Δlatitude, Δlongitude)
+    end
+
+    return angle
+end
+
+"""
+    rotate_to_east_north(angle, u, v)
+
+Rotate grid-relative velocity components `u`, `v` into eastward and northward components, given
+the `grid_rotation_angle` of each cell.
+"""
+function rotate_to_east_north(angle, u, v)
+    eastward = similar(u)
+    northward = similar(v)
+
+    for index in eachindex(u, v, angle)
+        cos_angle = cos(angle[index])
+        sin_angle = sin(angle[index])
+        eastward[index] = u[index] * cos_angle - v[index] * sin_angle
+        northward[index] = v[index] * cos_angle + u[index] * sin_angle
+    end
+
+    return eastward, northward
+end
+
+"""
     source_validity(filepath, source_name)
 
 Whether each source cell holds data, taken from the first time step. Source land cells and
@@ -859,6 +916,34 @@ function define_forcing_dimensions!(ds, target_grid, dates)
     defVar(ds, "time", collect(dates), ("time",))
 
     return ds
+end
+
+"""
+    data_location(variable::Symbol)
+
+The Oceananigans location of a prepared interior variable: `u` on x faces, `v` on y faces, and
+everything else at cell centres.
+"""
+function data_location(variable::Symbol)
+    if variable in (:u,)
+        return (Face, Center, Center)
+    elseif variable in (:v,)
+        return (Center, Face, Center)
+    else
+        return (Center, Center, Center)
+    end
+end
+
+"""
+    forcing_dimension_names(name)
+
+NetCDF dimension names for a prepared interior variable, staggered according to its Oceananigans
+location. Written in Julia (fastest-first) order, which yields the `(time, Nz, Ny, Nx)` layout
+in the file.
+"""
+function forcing_dimension_names(name)
+    LX, LY, _ = data_location(Symbol(name))
+    return (LX === Face ? "Nx_faces" : "Nx", LY === Face ? "Ny_faces" : "Ny", "Nz", "time")
 end
 
 end # module

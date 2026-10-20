@@ -352,7 +352,7 @@ include("utilities.jl")
             # ...and the `Val` fallback behind that check is itself an `ArgumentError` rather than a
             # missing method, which is what makes an out-of-tree caller's mistake legible.
             @test_throws ArgumentError FjordSim.Boundaries.boundary_along_axis(Val(:middle))
-            @test_throws ArgumentError FjordSim.BoundaryConditions.open_normal_velocity_boundary_conditions(
+            @test_throws ArgumentError FjordSim.Boundaries.open_normal_velocity_boundary_conditions(
                 Val(:middle), boundaries.south, nothing,
             )
 
@@ -2286,7 +2286,7 @@ end
 
 @testset "Forcing" begin
     @testset "preparation helpers" begin
-        forcing_dimension_names = FjordSim.Forcing.forcing_dimension_names
+        forcing_dimension_names = FjordSim.Regridding.forcing_dimension_names
         source_fill = FjordSim.Regridding.source_fill
         fill_source! = FjordSim.Regridding.fill_source!
         ProjectedSourceGrid = FjordSim.Regridding.ProjectedSourceGrid
@@ -3892,8 +3892,8 @@ end
         uniform_centers = atmospheres.uniform_centers
         nora3_runs = atmospheres.nora3_runs
         nora3_month_dates = atmospheres.nora3_month_dates
-        grid_rotation_angle = atmospheres.grid_rotation_angle
-        rotate_to_east_north = atmospheres.rotate_to_east_north
+        grid_rotation_angle = FjordSim.Regridding.grid_rotation_angle
+        rotate_to_east_north = FjordSim.Regridding.rotate_to_east_north
         interpolate_to_target! = atmospheres.interpolate_to_target!
         projected_atmosphere_nodes = atmospheres.projected_atmosphere_nodes
         validate_target_coverage = atmospheres.validate_target_coverage

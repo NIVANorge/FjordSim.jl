@@ -9,7 +9,6 @@ export prepare_atmosphere,
     prescribed_atmosphere,
     prescribed_radiation,
     atmosphere_date_range,
-    rotate_to_east_north,
     AtmosphereRecord,
     ProjectedAtmosphereGrid,
     NORA3Config,
@@ -33,10 +32,6 @@ using ..Configs:
     coverage_window,
     domain_grid
 using ..Plotting: plot_atmosphere
-
-include("NORA3.jl")
-
-using .NORA3: NORA3PrescribedAtmosphere, NORA3PrescribedRadiation, MultiYearNORA3
 
 # Compression level for the prepared file, matching the forcing writer.
 const ATMOSPHERE_DEFLATE_LEVEL = 5
@@ -346,60 +341,6 @@ function interpolate_to_target!(output, slab, x, y, source::ProjectedAtmosphereG
     end
 
     return output
-end
-
-# --- Wind rotation ---
-
-"""
-    grid_rotation_angle(longitude, latitude)
-
-Angle from east to the source grid's local x axis, one per source cell, from finite differences
-of the 2D `longitude` and `latitude` fields.
-
-Source datasets on a projected grid give wind components relative to their own axes, which have
-to be rotated to eastward/northward before the fields mean anything geographically. Deriving the
-angle from the coordinate fields keeps this source-agnostic: it works for any curvilinear grid
-publishing 2D longitude and latitude, without knowing the projection. The analytic alternative
-for a Lambert conformal conic, `(longitude - longitude_0) * sin(latitude_1)`, needs the
-projection parameters and would not carry over to another dataset.
-
-The difference is taken along the first (x) axis, and the last column repeats the previous
-difference.
-"""
-function grid_rotation_angle(longitude, latitude)
-    Nx, Ny = size(longitude)
-    Nx >= 2 || throw(ArgumentError("need at least two source columns to derive a rotation angle"))
-    angle = Matrix{Float64}(undef, Nx, Ny)
-
-    for j = 1:Ny, i = 1:Nx
-        upper = min(i + 1, Nx)
-        lower = upper - 1
-        Δlongitude = (longitude[upper, j] - longitude[lower, j]) * cosd(latitude[i, j])
-        Δlatitude = latitude[upper, j] - latitude[lower, j]
-        angle[i, j] = atan(Δlatitude, Δlongitude)
-    end
-
-    return angle
-end
-
-"""
-    rotate_to_east_north(angle, u, v)
-
-Rotate grid-relative velocity components `u`, `v` into eastward and northward components, given
-the `grid_rotation_angle` of each cell.
-"""
-function rotate_to_east_north(angle, u, v)
-    eastward = similar(u)
-    northward = similar(v)
-
-    for index in eachindex(u, v, angle)
-        cos_angle = cos(angle[index])
-        sin_angle = sin(angle[index])
-        eastward[index] = u[index] * cos_angle - v[index] * sin_angle
-        northward[index] = v[index] * cos_angle + u[index] * sin_angle
-    end
-
-    return eastward, northward
 end
 
 # --- Preparation ---
@@ -742,6 +683,7 @@ function define_atmosphere_dimensions!(ds, longitude, latitude, records)
     return ds
 end
 
+include("NORA3.jl")
 include("nora3_source.jl")
 
 end  # module Atmospheres

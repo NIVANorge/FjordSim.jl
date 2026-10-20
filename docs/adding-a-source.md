@@ -9,6 +9,19 @@ adapter files (`src/Bathymetry/geonorge.jl`, `src/Forcing/norkyst.jl`,
 `src/InitialState/norkyst_initial_state.jl`, `src/Rivers/nve_rivers.jl`,
 `src/Boundaries/norkyst_boundaries.jl`) are the templates.
 
+Where an adapter's code goes:
+
+- **The module file holds only what every source of the pipeline shares.** `Forcing.jl`,
+  `Boundaries.jl` and the rest import `Configs`, `Regridding`, `Utils` and `Plotting`, never a
+  dataset. Everything one dataset needs — its config type, its hook methods, its download, and the
+  `using` lines for them — goes in the adapter file the module `include`s at its end.
+- **A dataset more than one pipeline reads gets its own module in `src/DataSources/`**, holding what
+  is the dataset's rather than a pipeline's: endpoints, variable names, source grid, subset download.
+  Each adapter imports from it (`using ..NorKyst: …`). A dataset only one pipeline reads — NORA3,
+  NVE, Geonorge — keeps all of that in its adapter.
+- **A helper that names no dataset goes in `Regridding`** — a file layout, a mask, a rotation — not
+  in the first pipeline that needed it, where a second pipeline would have to import a sibling.
+
 Grid — `AbstractGridConfig`:
 
 | Hook | Required |
@@ -143,9 +156,9 @@ this hook and `simulation_forcing`, which is the only thing keeping the two in p
 
 The prepared variable names and units are *not* a hook — they are fixed by the read side in
 `ATMOSPHERE_VARIABLES`. A source whose download already normalizes names (as NORA3's does, since
-five of its eight variables are derived rather than copied) returns the identity mapping. The
-core's `grid_rotation_angle` and `rotate_to_east_north` are available to any adapter whose source
-gives wind relative to its own grid axes.
+five of its eight variables are derived rather than copied) returns the identity mapping.
+`Regridding`'s `grid_rotation_angle` and `rotate_to_east_north` are available to any adapter whose
+source gives wind relative to its own grid axes.
 
 Simulation — `AbstractSimulationConfig`, consumed by `build_simulation`: **no hooks**. It is data
 only, read field by field, so an alternative simulation config is a subtype supplying the field

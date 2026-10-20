@@ -4,10 +4,18 @@
 # what is different — where the files are, what they are called, and that a day is 24 hourly
 # records rather than one daily mean.
 
-const NORKYST_HINDCAST_CATALOG_URL =
-    "https://thredds.met.no/thredds/catalog/romshindcast/norkyst_v3/zdepth"
-const NORKYST_HINDCAST_OPENDAP_URL =
-    "https://thredds.met.no/thredds/dodsC/romshindcast/norkyst_v3/zdepth"
+using Oceananigans.Grids: x_domain, y_domain
+
+using ..NorKyst:
+    NORKYST_HINDCAST_CATALOG_URL,
+    NORKYST_HINDCAST_OPENDAP_URL,
+    NorKystSubset,
+    list_hindcast_files,
+    subset_ranges,
+    time_dimension,
+    define_output_file,
+    write_parameter_chunk!,
+    write_time_dependent_coordinates!
 
 # The record of each daily file to keep. The hindcast publishes 24 hourly instants per day where
 # the operational collection publishes one daily mean, and the interior forcing wants a daily
@@ -71,33 +79,6 @@ collection's name so the two can share one directory without colliding.
 """
 forcing_monthly_filename(config::NorKystHindcastConfig, year, month) =
     "Norkyst-v3_ZDEPTHS_$(year)$(lpad(month, 2, '0')).nc"
-
-"""
-    list_hindcast_files(catalog_url, year, month)
-
-The daily file names the hindcast publishes for one month, sorted. Walks that month's own THREDDS
-sub-catalog, since the hindcast has no flat catalog to filter. An absent month returns empty rather
-than raising: the collection's ends are ragged, and `process_month` reports the gap.
-"""
-function list_hindcast_files(catalog_url, year, month)
-    url = join((catalog_url, string(year), lpad(month, 2, '0'), "catalog.xml"), "/")
-
-    catalog = try
-        read(Downloads.download(url), String)
-    catch exception
-        exception isa InterruptException && rethrow()
-        @warn "Could not read the Norkyst-v3 catalog for $year-$(lpad(month, 2, '0'))" url exception
-        return String[]
-    end
-
-    files = String[]
-    for match in eachmatch(r"<dataset\b[^>]*\bname=\"([^\"]+\.nc)\""i, catalog)
-        push!(files, match.captures[1])
-    end
-
-    return sort!(unique!(files))
-end
-
 """
     hindcast_urls(config, year, month)
 
@@ -195,7 +176,8 @@ function process_hindcast_month(year, month, target_grid, config::NorKystHindcas
             return nothing
         end
 
-        spatial_subset = subset_ranges(first(datasets), target_grid, config)
+        longitude, latitude = x_domain(target_grid), y_domain(target_grid)
+        spatial_subset = subset_ranges(first(datasets), longitude, latitude, config.parameters)
         time_name = time_dimension(first(datasets))
 
         @info "  Writing output to: $output_path"

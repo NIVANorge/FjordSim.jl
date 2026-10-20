@@ -477,7 +477,7 @@ function write_prepared_forcing(
         defVar(ds, "time", dates, ("time",))
 
         for name in names
-            dimensions = FjordSim.Forcing.forcing_dimension_names(name)
+            dimensions = FjordSim.Regridding.forcing_dimension_names(name)
             shape = ntuple(index -> ds.dim[dimensions[index]], 3)
             values = defVar(ds, name, Float32, dimensions; attrib = ["_FillValue" => NaN32])
             lambdas =

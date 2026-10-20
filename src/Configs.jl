@@ -694,8 +694,8 @@ lists them.
 
 Stated here, beside `open_edges`, because every module that reasons about an edge is included after
 this one and none of them can see each other: `Bathymetry` clears land along the open ones, `Regridding`
-restores their velocity face rows, `Boundaries` regrids along them, and every `Val{edge}` dispatch in
-`BoundaryConditions` falls back to an `ArgumentError` naming this tuple. It has already been a
+restores their velocity face rows, `Boundaries` regrids along them, and every `Val{edge}` dispatch of
+its open boundary condition falls back to an `ArgumentError` naming this tuple. It has already been a
 per-module copy twice — with identical contents, an identical membership test and an identical error
 string each time — which is what settled the question of where it belongs.
 """

@@ -13,8 +13,17 @@
 # FjordSim now applies at its own edge: `zeta: Che` (Chapman), `ubar/vbar: Shc` (Flather-family),
 # `u/v/temp/salt: RadNud` (Orlanski radiation plus nudging).
 
-const NORKYST_HOURLY_CATALOG_URL = "https://thredds.met.no/thredds/catalog/fou-hi/norkyst800m-1h/catalog.xml"
-const NORKYST_HOURLY_OPENDAP_URL = "https://thredds.met.no/thredds/dodsC/fou-hi/norkyst800m-1h/"
+using ..Regridding: as_source_slab, rotate_to_east_north
+using ..NorKyst:
+    NORKYST_HOURLY_CATALOG_URL,
+    NORKYST_HOURLY_OPENDAP_URL,
+    norkyst_source_grid,
+    list_opendap_files,
+    subset_ranges,
+    time_length,
+    define_output_file,
+    write_parameter_chunk!,
+    write_time_dependent_coordinates!
 
 # NorKyst variable names and the FjordSim boundary names they become. `zeta`, `ubar` and `vbar` are
 # the three surface variables; the other four are full-depth.
@@ -191,28 +200,10 @@ end
 """
     boundary_source_grid(config::AbstractNorKystBoundariesConfig, filepath)
 
-Read the projected coordinates, depth levels and projection of a downloaded NorKyst boundary subset.
-Identical in shape to `forcing_source_grid(config::AbstractNorKystConfig, filepath)` — every NorKyst
-collection shares its grid, its projection variable and its depth axis.
+`norkyst_source_grid(filepath)`: every NorKyst collection shares its grid, its projection variable
+and its depth axis.
 """
-function boundary_source_grid(config::AbstractNorKystBoundariesConfig, filepath)
-    return NCDataset(filepath) do ds
-        x = Array{Float64}(ds["X"][:])
-        y = Array{Float64}(ds["Y"][:])
-        depths = Array{Float64}(ds["depth"][:])
-        proj4 = NCDatasets.variable(ds, NORKYST_PROJECTION_VARIABLE).attrib["proj4"]
-
-        length(x) >= 2 && length(y) >= 2 || error(
-            "NorKyst boundary subset in $filepath is too small to interpolate from: " *
-            "$(length(x))x$(length(y)). Raise the boundary config's `margin`.",
-        )
-        all(difference -> isapprox(difference, x[2] - x[1]), diff(x)) &&
-            all(difference -> isapprox(difference, y[2] - y[1]), diff(y)) ||
-            error("NorKyst boundary projected coordinates in $filepath are not regularly spaced.")
-
-        return ProjectedSourceGrid(x, y, depths, proj4)
-    end
-end
+boundary_source_grid(config::AbstractNorKystBoundariesConfig, filepath) = norkyst_source_grid(filepath)
 
 """
     boundary_source_slab(config::NorKystBoundariesConfig, reader, step, source_name)
@@ -291,38 +282,6 @@ function download_boundaries(target_grid, config::NorKystBoundariesConfig)
 end
 
 """
-    boundary_subset_ranges(ds, longitude, latitude, config::NorKystBoundariesConfig)
-
-The NorKyst index window covering the `longitude`/`latitude` band, as the same `NorKystSubset` the
-interior download uses — so `define_output_file`, `write_parameter_chunk!` and
-`write_time_dependent_coordinates!` are reused verbatim.
-
-The band is thin in geographic space but NorKyst's grid is rotated about 59 degrees from east here,
-so its bounding index box is not thin in either X or Y. It is still an order of magnitude smaller
-than the whole-domain box, which is the point.
-"""
-function boundary_subset_ranges(ds, longitude, latitude, config::NorKystBoundariesConfig)
-    latitude_variable = variable(ds, "lat")
-    longitude_variable = variable(ds, "lon")
-    source_latitude = Array(latitude_variable[ntuple(_ -> :, ndims(latitude_variable))...])
-    source_longitude = Array(longitude_variable[ntuple(_ -> :, ndims(longitude_variable))...])
-
-    mask = (source_latitude .>= latitude[1]) .&
-           (source_latitude .<= latitude[2]) .&
-           (source_longitude .>= longitude[1]) .&
-           (source_longitude .<= longitude[2])
-
-    ranges = Dict{String,UnitRange{Int}}()
-    for (index, dimension) in enumerate(dimnames(latitude_variable))
-        ranges[dimension] = bounding_range(mask, index)
-    end
-
-    spatial_dimensions = dimnames(latitude_variable)
-    subset_mask = mask[(ranges[dimension] for dimension in spatial_dimensions)...]
-    return NorKystSubset(ranges, subset_mask, spatial_dimensions, config.parameters)
-end
-
-"""
     process_boundary_month(year, month, longitude, latitude, config; files)
 
 Download one month of hourly NorKyst into a single NetCDF, subset to the boundary band.
@@ -359,7 +318,7 @@ function process_boundary_month(year, month, longitude, latitude, config::NorKys
             push!(datasets, NCDataset(url))
         end
 
-        subset = boundary_subset_ranges(first(datasets), longitude, latitude, config)
+        subset = subset_ranges(first(datasets), longitude, latitude, config.parameters)
         total_time = sum(time_length, datasets)
         @info "  Subset $(join(("$dimension=$(length(range))" for (dimension, range) in sort(collect(subset.ranges))), ", ")), $total_time records"
 

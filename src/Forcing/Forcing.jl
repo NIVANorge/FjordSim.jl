@@ -5,7 +5,6 @@ using Oceananigans.Units: Time
 using Oceananigans.OutputReaders: Cyclical, AbstractInMemoryBackend, FlavorOfFTS, time_indices
 using Oceananigans.Operators: Ax, Ay, volume
 using Oceananigans: fill_halo_regions!, nodes, interior
-using Oceananigans.Grids: x_domain, y_domain
 using Dates: DateTime, Day
 import Dates
 using Adapt
@@ -31,7 +30,6 @@ using ..Regridding:
     native_times_to_seconds,
     FORCING_DEFLATE_LEVEL,
     interpolation_architecture,
-    ProjectedSourceGrid,
     SourceRecord,
     PreparedVariable,
     uniform_time_steps,
@@ -46,7 +44,9 @@ using ..Regridding:
     interpolate_to_target!,
     SourceReader,
     blended_slab,
-    define_forcing_dimensions!
+    define_forcing_dimensions!,
+    data_location,
+    forcing_dimension_names
 
 export forcing_from_file,
     simulation_forcing,
@@ -58,26 +58,7 @@ export forcing_from_file,
     forcing_variable_names,
     forcing_monthly_filename,
     NorKystConfig,
-    NorKystHindcastConfig,
-    # NorKyst subsetting, shared with the NorKyst adapters in `InitialState` and `Boundaries`
-    NORKYST_PROJECTION_VARIABLE,
-    NorKystSubset,
-    NORKYST_VARIABLE_NAMES,
-    NORKYST_CATALOG_URL,
-    NORKYST_OPENDAP_URL,
-    norkyst_source_grid,
-    subset_ranges,
-    list_opendap_files,
-    list_hindcast_files,
-    bounding_range,
-    time_length,
-    define_output_file,
-    write_parameter_chunk!,
-    write_time_dependent_coordinates!,
-    decoded_attributes,
-    # the prepared file's staggering, shared with the initial state's
-    data_location,
-    forcing_dimension_names
+    NorKystHindcastConfig
 
 """ Custom backend for FieldTimeSeries """
 struct NetCDFBackend <: AbstractInMemoryBackend{Int}
@@ -92,16 +73,6 @@ Base.length(backend::NetCDFBackend) = backend.length
 Base.summary(backend::NetCDFBackend) = string("NetCDFBackend(", backend.start, ", ", backend.length, ")")
 
 const NetCDFFTS = FlavorOfFTS{<:Any,<:Any,<:Any,<:Any,<:NetCDFBackend}
-
-function data_location(variable::Symbol)
-    if variable in (:u,)
-        return (Face, Center, Center)
-    elseif variable in (:v,)
-        return (Center, Face, Center)
-    else
-        return (Center, Center, Center)
-    end
-end
 
 # Runtime generation of dictionaries based on forcing_variables_names
 function oceananigans_field_names(variables)
@@ -588,18 +559,6 @@ forcing.
 """
 daily_time_steps(records; max_gap = FORCING_MAX_GAP) =
     uniform_time_steps(records, Day(1); max_gap, unit = "day")
-
-"""
-    forcing_dimension_names(name)
-
-NetCDF dimension names for a forcing variable, staggered according to its Oceananigans
-location. Written in Julia (fastest-first) order, which yields the `(time, Nz, Ny, Nx)` layout
-in the file.
-"""
-function forcing_dimension_names(name)
-    LX, LY, _ = data_location(Symbol(name))
-    return (LX === Face ? "Nx_faces" : "Nx", LY === Face ? "Ny_faces" : "Ny", "Nz", "time")
-end
 
 """
     prepared_variable(source_name, target_grid, source, filepath, config, edges)

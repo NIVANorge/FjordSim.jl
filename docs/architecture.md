@@ -41,8 +41,8 @@ line and none can see a later one:
   is only useful if it is the first method anyone sees.
 - **The edge vocabulary** (`LATERAL_EDGES`, `validate_open_edge`, `lateral_edges`, `open_edges`):
   `Bathymetry` clears land along open edges, `Regridding` restores their velocity face rows,
-  `Boundaries` regrids along them, `BoundaryConditions` and `BoundarySponge` act on them. `Configs`
-  is the one module all of them can see.
+  `Boundaries` regrids along them, `OpenLateralBoundaryFromData` and `BoundarySponge` act on them.
+  `Configs` is the one module all of them can see.
 - **The path helpers** (`bathymetry_path`, `forcing_path`, …) are defined on the supertypes so a new
   source inherits them without loading the built-in source's module.
 
@@ -210,7 +210,38 @@ whose deepest source water reaches the sill — and deepens it. No land changes 
 deeper than the source. On `oslofjorden_validation`: 1467 cells, Svelvik 10.8 m, mean depth changed
 by under 0.1 m. It only deepens, so a connection the regrid made too *deep* is out of reach.
 
-## 5. Atmosphere (`src/Atmospheres/`)
+## 5. Regridding (`src/Regridding.jl`)
+
+The core `Forcing`, `InitialState` and `Boundaries` share; `Rivers` uses only the masks and the file
+layout, and `Atmospheres` only the source-grid rotation.
+
+- **The kernel runs where the config's `architecture` says** (`:auto`/`:cpu`/`:gpu`); `:auto` picks
+  the GPU, ~12x faster than one CPU thread, and `:gpu` errors rather than falling back. A `Symbol`
+  keeps config types concrete and configs loadable without a GPU. `target_grid` stays on the CPU
+  regardless: building the masks walks `peripheral_node` cell by cell.
+- **The land mask comes from `peripheral_node`** on the model grid, so it matches the model exactly,
+  including `PartialCellBottom` and the velocity-face wall convention; open edges get their velocity
+  face row restored.
+- **Two library functions are deliberately not used.** NumericalEarth's dataset path always builds a
+  `LatitudeLongitudeGrid`, but NorKyst's grid is rotated ~59° here, so the source is expressed as a
+  `RectilinearGrid` in projected metres (`ProjectedSourceGrid`). And `inpaint_mask!` cannot fill a
+  fully masked level — on this subset it never terminates or writes zeros — hence `SourceFill`.
+
+### Time-axis padding
+
+`pad_time_steps` extends an axis to both ends of the run window by replicating the nearest step.
+Needed because NorKyst's daily records sit at 12:00, so a run starting at 00:00 has no record for its
+first half-day, and every reader uses `Cyclical()` indexing, which wraps instead of failing.
+
+- It runs **after** `daily_time_steps`: a pad at the record level would break that function's
+  whole-day cadence test and silently disable gap-filling.
+- A pad reaches **at most one record spacing** past the data (`forcing_record_spacing`). Unbounded,
+  it would manufacture the coverage `validate_time_coverage` exists to verify. Overshooting is
+  reported as a missing download.
+- Padding changes `Cyclical`'s inferred period. That is harmless only because the loop resets the
+  clock and never leaves `[t¹, tᴺ]`, so the cycling branch is dead — **do not "fix" the period.**
+
+## 6. Atmosphere (`src/Atmospheres/`)
 
 The prepared file is a **contract fixed by the read side** (`MultiYearNORA3`): `Float32`
 `(lon, lat, time)`, uniform 1D axes (`compute_faces` infers spacing from the first difference),
@@ -247,38 +278,20 @@ carrying the prepared names, so `prepare_atmosphere` is a pure regrid and re-run
 - met.no's `nora3_subset_atmos` collections are unusable: no `specific_humidity_2m`, and only *net*
   radiation, which cannot be inverted to downwelling.
 
-## 6. Regridding (`src/Regridding.jl`)
+## 7. NorKyst (`src/DataSources/NorKyst.jl`)
 
-The core `Forcing`, `InitialState` and `Boundaries` share; `Rivers` uses only the masks and the file
-layout.
+**One module for the dataset, one adapter per pipeline.** The forcing, the initial state and the
+open boundaries all read NorKyst-800m, from four collections — the operational daily means and
+hourly instants, and the Norkyst-v3 hindcast's `zdepth` and `sdepth` — that share one
+polar-stereographic grid, projection variable and depth axis. What is the same for all of them
+lives here: the endpoints, the variable names, `norkyst_source_grid`, and the download of a
+longitude/latitude box (`subset_ranges`, `define_output_file`, `write_parameter_chunk!`). A config
+type and its hooks belong to the adapter in the directory of the pipeline that consumes it.
 
-- **The kernel runs where the config's `architecture` says** (`:auto`/`:cpu`/`:gpu`); `:auto` picks
-  the GPU, ~12x faster than one CPU thread, and `:gpu` errors rather than falling back. A `Symbol`
-  keeps config types concrete and configs loadable without a GPU. `target_grid` stays on the CPU
-  regardless: building the masks walks `peripheral_node` cell by cell.
-- **The land mask comes from `peripheral_node`** on the model grid, so it matches the model exactly,
-  including `PartialCellBottom` and the velocity-face wall convention; open edges get their velocity
-  face row restored.
-- **Two library functions are deliberately not used.** NumericalEarth's dataset path always builds a
-  `LatitudeLongitudeGrid`, but NorKyst's grid is rotated ~59° here, so the source is expressed as a
-  `RectilinearGrid` in projected metres (`ProjectedSourceGrid`). And `inpaint_mask!` cannot fill a
-  fully masked level — on this subset it never terminates or writes zeros — hence `SourceFill`.
+`src/DataSources/` holds only datasets more than one pipeline reads. NORA3 (atmosphere), NVE
+(rivers) and Geonorge (bathymetry) each feed one pipeline and stay in its directory.
 
-### Time-axis padding
-
-`pad_time_steps` extends an axis to both ends of the run window by replicating the nearest step.
-Needed because NorKyst's daily records sit at 12:00, so a run starting at 00:00 has no record for its
-first half-day, and every reader uses `Cyclical()` indexing, which wraps instead of failing.
-
-- It runs **after** `daily_time_steps`: a pad at the record level would break that function's
-  whole-day cadence test and silently disable gap-filling.
-- A pad reaches **at most one record spacing** past the data (`forcing_record_spacing`). Unbounded,
-  it would manufacture the coverage `validate_time_coverage` exists to verify. Overshooting is
-  reported as a missing download.
-- Padding changes `Cyclical`'s inferred period. That is harmless only because the loop resets the
-  clock and never leaves `[t¹, tᴺ]`, so the cycling branch is dead — **do not "fix" the period.**
-
-## 7. Forcing (`src/Forcing/`)
+## 8. Forcing (`src/Forcing/`)
 
 **There is no interior relaxation.** `prepare_forcing` writes `λ = 0` everywhere: the open boundary
 nudges towards hourly exterior data *at* the boundary, and a band relaxing the same variables a few
@@ -295,7 +308,7 @@ every variable, which with `λ = 0` costs a read of two series per variable each
 Norkyst-v3 hindcast (from 2012), keeping hour 12 of its 24 hourly records to match the operational
 12:00 stamp. Both share everything through `AbstractNorKystConfig`.
 
-## 8. Initial state (`src/InitialState/`)
+## 9. Initial state (`src/InitialState/`)
 
 **Why it is not the forcing.** The forcing file has to span the whole run window, because the run
 reads it as forcing terms at every step and `build_simulation` checks its coverage, and the NorKyst
@@ -312,11 +325,10 @@ config, two steps and a one-record file, and a setup starting from it needs no f
 - The file has the forcing file's layout (`define_forcing_dimensions!`, `forcing_dimension_names`,
   `NaN` on land) with one record and no `_lambda` twins, so it is read by the same `state_variables`
   as `FromForcing`. It regrids on the CPU: one record is cheap.
-- The NorKyst adapter reuses the forcing download's subsetting (`subset_ranges`,
-  `define_output_file`, `write_parameter_chunk!`) and `norkyst_source_grid`. Only the operational
-  collection (from 2017-02-20) has an adapter.
+- The NorKyst adapter downloads with the `NorKyst` module's subsetting, as the forcing's does. Only
+  the operational collection (from 2017-02-20) has an adapter.
 
-## 9. Rivers (`src/Rivers/`)
+## 10. Rivers (`src/Rivers/`)
 
 ### Rivers as a volume source
 
@@ -390,36 +402,6 @@ western arm missing.
   river on its catchment normal.
 - The caches record the domain they were fetched for, so a grid change re-downloads.
 
-## 10. Boundaries (`src/Boundaries/`)
-
-**A separate file because it is hourly.** A Flather boundary compares the model's `η` with an
-exterior one, and the daily-mean collection has no tide. Only the boundary rows need that cadence:
-a few hundred MB where an hourly interior file would be hundreds of GB.
-
-- **One file for every open edge**, variables named for their side (`south_T`), on one time axis,
-  with an `open_edge` attribute listing the sides; `validate_boundary_file_edges` tells a setup that
-  opened another edge to re-run the step.
-- **It reuses the forcing machinery on a one-cell-thick slab**: a south edge's mask is `(Nx, 1, Nz)`.
-  The three surface variables get a single-level source grid centred on `SURFACE_TARGET_DEPTH`.
-- **`fill_boundary_gaps!` fills dry boundary cells on read**: the schemes do arithmetic on the
-  values, and on a south edge the `u` faces at `i = 1` and `Nx + 1` are peripheral (holes in the file)
-  yet not immersed, so a `NaN` would be nudged into the halo.
-- **The read side returns reduced `FieldTimeSeries`** keyed by edge, then by bare name. Their
-  locations are exactly what `getbc` accepts, so `BoundaryConditions` passes them straight through.
-  `BoundaryBackend` is separate from the forcing backend to keep a rank branch out of that hot path.
-- **A large chunk cache.** The downloads' chunks span 180 hours, so under the default cache every
-  hourly slab decompressed ~106 MB again: 2.4 h for 640 days. `open_source_file` gives each variable
-  256 MB, bringing it to 0.7 h.
-- **The operational collection's `ubar`/`vbar` are grid-relative**, unlike its derotated
-  `u_eastward`/`v_northward`. With NorKyst rotated ~59°, `vbar` here is nearly *eastward*: unrotated,
-  `cor(vbar, depth-mean v)` was −0.034, and a run grew a ~0.5 m/s spurious band inside the southern
-  boundary. `boundary_source_slab` rotates the pair with NorKyst's `angle` **on the native grid
-  before interpolation** (afterwards the components sit on different rows under different masks).
-  It is a hook because the pipeline prepares one variable at a time and a rotation needs both. The
-  hindcast's `ubar_eastward`/`vbar_northward` are already rotated, so
-  `norkyst_hindcast_boundaries.jl` needs no such method; it reads the barotropic pair from the
-  `sdepth` files and everything else from `zdepth`.
-
 ## 11. Boundary conditions (`src/BoundaryConditions.jl`)
 
 A piece (`AbstractBoundaryConditionConfig`, hook `boundary_condition_sides`) says what one part of
@@ -440,6 +422,45 @@ the surface: a circulation near Horten ratcheted to a 2.84 m/s jet over four day
 accelerating after the wind dropped. `coupled_simulation` builds `HydrostaticFreeSurfaceModel`
 directly, so it inherits neither half from NumericalEarth's `ocean_simulation`. Immersed side walls
 stay free-slip.
+
+### Air-sea fluxes
+
+Only `T` and `S` get a top condition: NumericalEarth assembles heat and salt fluxes only, so a
+biogeochemical tracer's surface flux belongs in its own config. The two go through NumericalEarth's
+`build_tracer_top_bc` with a `FreshwaterExchange`, because `net_fluxes` reads the exchange back out of
+the condition — a bare flux condition is a `MethodError`. Its volume flux stays zero on a static-z
+grid.
+
+## 12. Boundaries (`src/Boundaries/`)
+
+**A separate file because it is hourly.** A Flather boundary compares the model's `η` with an
+exterior one, and the daily-mean collection has no tide. Only the boundary rows need that cadence:
+a few hundred MB where an hourly interior file would be hundreds of GB.
+
+- **One file for every open edge**, variables named for their side (`south_T`), on one time axis,
+  with an `open_edge` attribute listing the sides; `validate_boundary_file_edges` tells a setup that
+  opened another edge to re-run the step.
+- **It reuses the forcing machinery on a one-cell-thick slab**: a south edge's mask is `(Nx, 1, Nz)`.
+  The three surface variables get a single-level source grid centred on `SURFACE_TARGET_DEPTH`.
+- **`fill_boundary_gaps!` fills dry boundary cells on read**: the schemes do arithmetic on the
+  values, and on a south edge the `u` faces at `i = 1` and `Nx + 1` are peripheral (holes in the file)
+  yet not immersed, so a `NaN` would be nudged into the halo.
+- **The read side returns reduced `FieldTimeSeries`** keyed by edge, then by bare name. Their
+  locations are exactly what `getbc` accepts, so `OpenLateralBoundaryFromData` passes them straight
+  through. `BoundaryBackend` is separate from the forcing backend to keep a rank branch out of that
+  hot path.
+- **A large chunk cache.** The downloads' chunks span 180 hours, so under the default cache every
+  hourly slab decompressed ~106 MB again: 2.4 h for 640 days. `open_source_file` gives each variable
+  256 MB, bringing it to 0.7 h.
+- **The operational collection's `ubar`/`vbar` are grid-relative**, unlike its derotated
+  `u_eastward`/`v_northward`. With NorKyst rotated ~59°, `vbar` here is nearly *eastward*: unrotated,
+  `cor(vbar, depth-mean v)` was −0.034, and a run grew a ~0.5 m/s spurious band inside the southern
+  boundary. `boundary_source_slab` rotates the pair with NorKyst's `angle` **on the native grid
+  before interpolation** (afterwards the components sit on different rows under different masks).
+  It is a hook because the pipeline prepares one variable at a time and a rotation needs both. The
+  hindcast's `ubar_eastward`/`vbar_northward` are already rotated, so
+  `norkyst_hindcast_boundaries.jl` needs no such method; it reads the barotropic pair from the
+  `sdepth` files and everything else from `zdepth`.
 
 ### `OpenLateralBoundaryFromData`
 
@@ -467,15 +488,7 @@ opens the boundary. NorKyst's own attributes name the same set (`Che`, `Shc`, `R
   finite.
 - `inflow_timescale` and `outflow_timescale` are separate fields with no defaults.
 
-### Air-sea fluxes
-
-Only `T` and `S` get a top condition: NumericalEarth assembles heat and salt fluxes only, so a
-biogeochemical tracer's surface flux belongs in its own config. The two go through NumericalEarth's
-`build_tracer_top_bc` with a `FreshwaterExchange`, because `net_fluxes` reads the exchange back out of
-the condition — a bare flux condition is a `MethodError`. Its volume flux stays zero on a static-z
-grid.
-
-## 12. Grids (`src/Grids.jl`)
+## 13. Grids (`src/Grids.jl`)
 
 Two hooks because they are needed at different moments: `domain_grid` (bare geometry, for the prepare
 steps, which have no bathymetry file yet) and `simulation_grid` (with the bathymetry immersed). They
@@ -484,7 +497,7 @@ names state a result type a rectilinear or curvilinear config could not honour. 
 `target_grid`, which is a parameter name throughout the pipelines and would be shadowed. The loader
 still accepts legacy bathymetry files with positive depths or swapped axes.
 
-## 13. Simulations (`src/Simulations.jl`)
+## 14. Simulations (`src/Simulations.jl`)
 
 `coupled_simulation` lives here, not in `src/FjordSim.jl`, because a function defined after the
 `include` block cannot be imported by a module inside it.
@@ -612,7 +625,7 @@ MB per checkpoint on the Oslofjord grid, hence `cleanup = true`.
 - Snapshots *are* per launch, so a resumed run's file starts at the resume point.
 - `pickup` supersedes `initial_conditions`.
 
-## 14. Validation (`src/Validation/`)
+## 15. Validation (`src/Validation/`)
 
 The only module that runs after a simulation, built the same way as the others: an
 `AbstractObservationConfig` per source. Every stage is permissive about missing data — most
@@ -621,7 +634,7 @@ station-variable combinations in a sweep are empty, and each is a blank row, not
 `default_observations` builds its station list from the writers, and a mismatch shows up as "no model
 output", not an error.
 
-## 15. CLI (`src/CLI.jl`)
+## 16. CLI (`src/CLI.jl`)
 
 `parse_arguments` never `exit`s, so the help path is testable; exit codes are 0 success, 1 step
 failed, 2 bad arguments.
@@ -639,7 +652,7 @@ reproducible by re-running, and it is the only step guaranteed a `results_root`.
   to `{…}`. `STACKTRACE_WIDTH` below 120 changes nothing (`Base.type_depth_limit` floors it).
 - During a run `stdout` is a `Pipe`, so `displaysize` is 24x80 and wide `show` output may wrap.
 
-## 16. Top-level (`src/FjordSim.jl`)
+## 17. Top-level (`src/FjordSim.jl`)
 
 **It overrides one NumericalEarth method**, `update_net_ocean_fluxes!` on `NoSeaIceInterfaceModel`,
 with a copy of upstream's body. Without sea ice, NumericalEarth's zero fluxes are an untyped

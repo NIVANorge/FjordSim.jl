@@ -13,8 +13,6 @@ export download_initial_state,
     INITIAL_STATE_DATE_ATTRIBUTE
 
 using Oceananigans
-using Dates: Date, DateTime, @dateformat_str
-import Dates
 using NCDatasets
 
 using ..Configs:
@@ -40,20 +38,9 @@ using ..Regridding:
     set_source_field!,
     interpolate_to_target!,
     source_slab,
-    define_forcing_dimensions!
-using ..Forcing:
+    define_forcing_dimensions!,
     data_location,
-    forcing_dimension_names,
-    NORKYST_VARIABLE_NAMES,
-    NORKYST_CATALOG_URL,
-    NORKYST_OPENDAP_URL,
-    norkyst_source_grid,
-    subset_ranges,
-    list_opendap_files,
-    time_length,
-    define_output_file,
-    write_parameter_chunk!,
-    write_time_dependent_coordinates!
+    forcing_dimension_names
 
 """
 The global attribute holding the `start_date` a prepared initial-state file was prepared for, which

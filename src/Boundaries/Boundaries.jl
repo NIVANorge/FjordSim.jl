@@ -24,6 +24,7 @@ export download_boundaries,
     boundary_date_range,
     boundary_variable_name,
     boundary_source_slab,
+    OpenLateralBoundaryFromData,
     NorKystHindcastBoundariesConfig,
     NorKystBoundariesConfig
 
@@ -54,7 +55,6 @@ using ..Configs:
     validate_open_edge,
     lateral_edges
 using ..Plotting: plot_boundaries
-using ..Atmospheres: rotate_to_east_north
 using ..Regridding:
     Regridding,
     native_times_to_seconds,
@@ -68,7 +68,6 @@ using ..Regridding:
     projected_target_nodes,
     source_validity,
     read_last_dimension,
-    as_source_slab,
     source_fill,
     source_level_coordinate,
     source_field_grid,
@@ -77,17 +76,6 @@ using ..Regridding:
     SourceReader,
     blended_slab,
     define_forcing_dimensions!
-using ..Forcing:
-    NORKYST_PROJECTION_VARIABLE,
-    NorKystSubset,
-    list_opendap_files,
-    list_hindcast_files,
-    bounding_range,
-    time_length,
-    define_output_file,
-    write_parameter_chunk!,
-    write_time_dependent_coordinates!,
-    decoded_attributes
 
 const BOUNDARY_DEFLATE_LEVEL = 5
 # Longest run of missing hours interpolated without a separate warning.
@@ -1007,6 +995,7 @@ function reduced_series_size(grid, locations)
     end
 end
 
+include("open_boundary_conditions.jl")
 include("norkyst_boundaries.jl")
 include("norkyst_hindcast_boundaries.jl")
 

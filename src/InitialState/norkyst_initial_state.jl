@@ -1,6 +1,23 @@
 # NorKyst-800m adapter for the initial state: one daily mean from the collection `NorKystConfig`
-# reads, downloaded with the forcing download's own subsetting. Copy this file's shape to add a new
-# initial-state dataset — a config subtype, its download, and the three hooks.
+# reads, downloaded with the subsetting every NorKyst download shares
+# (`src/DataSources/NorKyst.jl`). Copy this file's shape to add a new initial-state dataset — a
+# config subtype, its download, and the three hooks.
+
+using Dates: Date, DateTime, @dateformat_str
+import Dates
+using Oceananigans.Grids: x_domain, y_domain
+
+using ..NorKyst:
+    NORKYST_CATALOG_URL,
+    NORKYST_OPENDAP_URL,
+    NORKYST_VARIABLE_NAMES,
+    norkyst_source_grid,
+    list_opendap_files,
+    subset_ranges,
+    time_length,
+    define_output_file,
+    write_parameter_chunk!,
+    write_time_dependent_coordinates!
 
 """
     NorKystInitialStateConfig
@@ -82,7 +99,7 @@ function download_initial_state(target_grid, config::NorKystInitialStateConfig, 
     @info "Downloading the NorKyst-800m daily mean for $(Date(date)) from $url"
 
     NCDataset(url) do ds
-        subset = subset_ranges(ds, target_grid, config.parameters)
+        subset = subset_ranges(ds, x_domain(target_grid), y_domain(target_grid), config.parameters)
         # Written under a temporary name and renamed once complete, so an interrupted download is
         # redone on the next run rather than skipped as already present.
         temporary_path = output_path * ".tmp"

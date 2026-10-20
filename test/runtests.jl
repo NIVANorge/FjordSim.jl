@@ -4100,7 +4100,7 @@ end
 
         # A lead is one DAP2 request: the constraint is zero-based and percent-encoded, and the
         # response's arrays come back in file order, not the requested one, with the fill as NaN.
-        subset = atmospheres.NORA3Subset(2:3, 5:7, zeros(2), zeros(3), zeros(2, 3), zeros(2, 3), zeros(2, 3), "")
+        subset = atmospheres.NORA3Subset(2:3, 5:7, zeros(2), zeros(3), zeros(2, 3), zeros(2, 3), zeros(2, 3))
         @test atmospheres.dods_constraint(["a"], subset) == "a.a%5B0%5D%5B0%5D%5B4:6%5D%5B1:2%5D"
         header =
             "Dataset {\n    Structure {\n        Float32 b[time = 1][height = 1][y = 3][x = 2];\n    } b;\n" *

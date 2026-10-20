@@ -10,6 +10,10 @@ using Downloads
 
 const NORA3_OPENDAP_URL = "https://thredds.met.no/thredds/dodsC/nora3"
 
+# NORA3's Lambert conformal conic projection. Files from 2024 on describe it by CF attributes only,
+# without a `proj4` string, so it is fixed here rather than read.
+const NORA3_PROJ4 = "+proj=lcc +lat_0=66.3 +lon_0=-42 +lat_1=66.3 +lat_2=66.3 +no_defs +R=6.371e+06"
+
 # NORA3 publishes one file per forecast lead hour of a 6-hourly run, each holding a single time
 # step. Leads 4..9 of one run supply six consecutive hours, so the four daily runs tile a day
 # exactly with no overlap and no dedup pass. Lead 3 is read only to de-accumulate lead 4.
@@ -304,7 +308,6 @@ grid.
 - `x`, `y`: Projected coordinate centers of the subset, in meters.
 - `longitude`, `latitude`: Geographic coordinates of the subset.
 - `angle`: `grid_rotation_angle` of the subset.
-- `proj4`: PROJ.4 definition of the NORA3 projection.
 """
 struct NORA3Subset
     x_range::UnitRange{Int}
@@ -314,7 +317,6 @@ struct NORA3Subset
     longitude::Matrix{Float64}
     latitude::Matrix{Float64}
     angle::Matrix{Float64}
-    proj4::String
 end
 
 """
@@ -352,7 +354,6 @@ function nora3_subset(longitude, latitude, reference_url)
 
         subset_longitude = source_longitude[x_range, y_range]
         subset_latitude = source_latitude[x_range, y_range]
-        proj4 = variable(ds, "projection_lambert").attrib["proj4"]
 
         return NORA3Subset(
             x_range,
@@ -362,7 +363,6 @@ function nora3_subset(longitude, latitude, reference_url)
             subset_longitude,
             subset_latitude,
             grid_rotation_angle(subset_longitude, subset_latitude),
-            proj4,
         )
     end
 end
@@ -513,7 +513,7 @@ function define_monthly_file!(ds, subset::NORA3Subset, dates)
         "projection_lambert",
         Int32,
         ();
-        attrib = ["grid_mapping_name" => "lambert_conformal_conic", "proj4" => subset.proj4],
+        attrib = ["grid_mapping_name" => "lambert_conformal_conic", "proj4" => NORA3_PROJ4],
     )
 
     for variable in ATMOSPHERE_VARIABLES

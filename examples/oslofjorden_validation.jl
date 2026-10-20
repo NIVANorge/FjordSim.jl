@@ -72,6 +72,13 @@
 # because the 9 April 2014 NIVA casts are more stratified than the run was at 7e-6. The measurement
 # is beside `closure` below.
 #
+# **The deep levels.** Eighteen 5.06 m levels between 41 and 132 m in place of `oslofjorden()`'s five
+# 11-27 m ones, because WENO's implicit vertical diffusion on those thick levels, not CATKE, is what
+# freshened the sill basins. The measurement is beside `z_faces` below.
+#
+# **No horizontal tracer diffusion.** The biharmonic κ at 0, ν kept, because κ only made negative
+# salinity. The measurement is beside `closure` below.
+#
 # **The boundary tide.** Norkyst-v3's tide is corrected to Viker, constituent by constituent, because
 # its M2 is 40 % too large and its S2 half the observed. The measurement is under "The boundary
 # tide" below. It is applied to the prepared file, so it takes effect only once `prepare_boundaries`
@@ -82,9 +89,9 @@
 # what they start with. The measurement is beside `initial_conditions` below.
 #
 # **The writers.** A 640-day run cannot afford `oslofjorden()`'s three-hourly full-domain snapshots —
-# at 4.4 M cells a record is 89 MB, so that is roughly 450 GB — and a validation does not need them:
-# what it needs is high cadence at a few dozen points. So the 3D fields drop to daily (57 GB) for maps
-# and sections, and four station writers carry the time resolution at about 150 MB total.
+# at 7.5 M cells a record is 155 MB, so that is roughly 790 GB — and a validation does not need them:
+# what it needs is high cadence at a few dozen points. So the 3D fields drop to daily (99 GB) for maps
+# and sections, and five station writers carry the time resolution at about 1 GB total.
 #
 # **The data root.** Only the Geonorge FileGDB is shared with `oslofjorden()`, by absolute path,
 # because the 4.5 GB national download is the same for any Norwegian domain. Everything else is a
@@ -96,8 +103,8 @@
 # in force; the reasoning is beside each value below. A change to the box or to any bathymetry knob
 # reopens both.
 #
-# 1. **`z_faces`.** `oslofjorden()`'s own, to -467 m. The deepest sounding is 470.0 m, but one more
-#    layer would hold no water: see the reasoning beside the value.
+# 1. **`z_faces`.** `oslofjorden()`'s own, to -467 m, refined between 41 and 132 m. The deepest
+#    sounding is 470.0 m, but one more layer would hold no water: see the reasoning beside the value.
 # 2. **`open_edges`.** `:south` alone: the only long wet wall.
 #
 # # What it can and cannot be expected to show
@@ -148,7 +155,7 @@ using FjordSim: AbstractBoundaryDataConfig, Configs, Forcing
 using FjordSim.Validation: TIDAL_CONSTITUENTS
 using LinearAlgebra: qr
 using NCDatasets: NCDataset
-using Oceananigans: WENO, CATKEVerticalDiffusivity
+using Oceananigans: WENO, CATKEVerticalDiffusivity, HorizontalScalarBiharmonicDiffusivity
 using Oceananigans.Units
 using Dates: DateTime, Dates
 
@@ -218,6 +225,95 @@ const OSLOFJORD_CTD_STATIONS = [
 const INNER_OSLOFJORD_STATIONS = [
     Station(name = "Dk1", longitude = 10.569384, latitude = 59.814999),  # Steilene,     cast to 99 m
     Station(name = "Ep1", longitude = 10.723783, latitude = 59.786301),  # Bunnefjorden, cast to 149 m
+]
+
+# A section along the Drammensfjord's deepest water, from the Drammenselva mouth (the river's own
+# cell in `rivers_nve.nc`) through the basin, over the Svelvik sill and down Sandebukta to the head of
+# Breiangen. Not an observation programme: it is there to show the basin's vertical mixing and its
+# renewal over the sill, the deep freshening `docs/setups.md` calls the main open problem. The
+# positions are cell centres of the deepest path through this run's 39-level `bathymetry.nc`, found
+# by Dijkstra over wet cells with a step cost of distance / depth² (`thalweg.jl` in
+# `gs://fjordsim/analysis/oslofjorden_validation_dz5_kappah0/`), every second cell of its 150 plus
+# the last and the sill's shallowest. So they snap to themselves, and a change to the bathymetry
+# moves the path. The comments give distance along the path and model depth.
+const DRAMMENSFJORD_SECTION = [
+    Station(name = "DS-00", longitude = 10.21026, latitude = 59.73954),  #  0.00 km,   5.0 m
+    Station(name = "DS-01", longitude = 10.21709, latitude = 59.73597),  #  0.55 km,   4.3 m
+    Station(name = "DS-02", longitude = 10.22393, latitude = 59.73418),  #  1.02 km,  13.0 m
+    Station(name = "DS-03", longitude = 10.23077, latitude = 59.73239),  #  1.49 km,   6.2 m
+    Station(name = "DS-04", longitude = 10.23761, latitude = 59.73239),  #  1.88 km,   7.0 m
+    Station(name = "DS-05", longitude = 10.24444, latitude = 59.73418),  #  2.35 km,  35.7 m
+    Station(name = "DS-06", longitude = 10.25128, latitude = 59.73418),  #  2.73 km,  44.1 m
+    Station(name = "DS-07", longitude = 10.25812, latitude = 59.73239),  #  3.20 km,  52.8 m
+    Station(name = "DS-08", longitude = 10.26496, latitude = 59.72881),  #  3.76 km,  64.0 m
+    Station(name = "DS-09", longitude = 10.27179, latitude = 59.72524),  #  4.31 km,  70.1 m
+    Station(name = "DS-10", longitude = 10.27863, latitude = 59.72166),  #  4.86 km,  76.4 m
+    Station(name = "DS-11", longitude = 10.28547, latitude = 59.71808),  #  5.42 km,  79.6 m
+    Station(name = "DS-12", longitude = 10.29231, latitude = 59.71451),  #  5.97 km,  83.2 m
+    Station(name = "DS-13", longitude = 10.29915, latitude = 59.71093),  #  6.53 km,  86.5 m
+    Station(name = "DS-14", longitude = 10.30598, latitude = 59.70735),  #  7.08 km,  94.6 m
+    Station(name = "DS-15", longitude = 10.31282, latitude = 59.70735),  #  7.47 km,  96.6 m
+    Station(name = "DS-16", longitude = 10.31966, latitude = 59.70557),  #  7.94 km,  98.4 m
+    Station(name = "DS-17", longitude = 10.32650, latitude = 59.70557),  #  8.32 km,  99.4 m
+    Station(name = "DS-18", longitude = 10.33333, latitude = 59.70378),  #  8.79 km, 102.8 m
+    Station(name = "DS-19", longitude = 10.34017, latitude = 59.70378),  #  9.18 km,  95.6 m
+    Station(name = "DS-20", longitude = 10.34701, latitude = 59.70378),  #  9.56 km,  64.4 m
+    Station(name = "DS-21", longitude = 10.35385, latitude = 59.70378),  #  9.95 km,  90.8 m
+    Station(name = "DS-22", longitude = 10.36068, latitude = 59.70020),  # 10.50 km, 108.8 m
+    Station(name = "DS-23", longitude = 10.36752, latitude = 59.69662),  # 11.05 km, 110.9 m
+    Station(name = "DS-24", longitude = 10.37436, latitude = 59.69305),  # 11.61 km, 113.4 m
+    Station(name = "DS-25", longitude = 10.38120, latitude = 59.68947),  # 12.16 km, 114.3 m
+    Station(name = "DS-26", longitude = 10.38803, latitude = 59.68589),  # 12.72 km, 114.1 m
+    Station(name = "DS-27", longitude = 10.38803, latitude = 59.68232),  # 13.11 km, 114.0 m
+    Station(name = "DS-28", longitude = 10.39145, latitude = 59.67874),  # 13.59 km, 114.0 m
+    Station(name = "DS-29", longitude = 10.39829, latitude = 59.67516),  # 14.14 km, 114.7 m
+    Station(name = "DS-30", longitude = 10.39829, latitude = 59.67159),  # 14.54 km, 114.0 m
+    Station(name = "DS-31", longitude = 10.40171, latitude = 59.66801),  # 15.02 km, 114.0 m
+    Station(name = "DS-32", longitude = 10.40855, latitude = 59.66443),  # 15.57 km, 118.3 m
+    Station(name = "DS-33", longitude = 10.41197, latitude = 59.66086),  # 16.05 km, 119.9 m
+    Station(name = "DS-34", longitude = 10.41197, latitude = 59.65728),  # 16.45 km, 120.8 m
+    Station(name = "DS-35", longitude = 10.41197, latitude = 59.65370),  # 16.84 km, 121.1 m
+    Station(name = "DS-36", longitude = 10.41197, latitude = 59.65013),  # 17.24 km, 121.6 m
+    Station(name = "DS-37", longitude = 10.41197, latitude = 59.64655),  # 17.64 km, 121.9 m
+    Station(name = "DS-38", longitude = 10.41197, latitude = 59.64297),  # 18.04 km, 121.9 m
+    Station(name = "DS-39", longitude = 10.41538, latitude = 59.63940),  # 18.51 km, 121.9 m
+    Station(name = "DS-40", longitude = 10.41880, latitude = 59.63582),  # 18.99 km, 121.9 m
+    Station(name = "DS-41", longitude = 10.42222, latitude = 59.63224),  # 19.47 km, 116.8 m
+    Station(name = "DS-42", longitude = 10.42222, latitude = 59.62867),  # 19.86 km, 116.8 m
+    Station(name = "DS-43", longitude = 10.42222, latitude = 59.62509),  # 20.26 km, 114.8 m
+    Station(name = "DS-44", longitude = 10.41538, latitude = 59.62151),  # 20.82 km,  85.0 m
+    Station(name = "DS-45", longitude = 10.41197, latitude = 59.61973),  # 21.21 km,  33.9 m
+    Station(name = "DS-46", longitude = 10.41197, latitude = 59.61615),  # 21.61 km,  13.5 m
+    Station(name = "DS-47", longitude = 10.41197, latitude = 59.61257),  # 22.00 km,  11.6 m
+    Station(name = "DS-48", longitude = 10.41197, latitude = 59.60900),  # 22.40 km,  11.6 m
+    Station(name = "DS-49", longitude = 10.41538, latitude = 59.60542),  # 22.88 km,  11.6 m
+    Station(name = "DS-50", longitude = 10.41880, latitude = 59.60184),  # 23.36 km,  12.4 m
+    Station(name = "DS-51", longitude = 10.42222, latitude = 59.59827),  # 23.83 km,  12.2 m
+    Station(name = "DS-52", longitude = 10.42564, latitude = 59.59469),  # 24.31 km,  12.5 m
+    Station(name = "DS-53", longitude = 10.42564, latitude = 59.59290),  # 24.51 km,  10.8 m, Svelvik sill
+    Station(name = "DS-54", longitude = 10.42564, latitude = 59.59111),  # 24.71 km,  12.3 m
+    Station(name = "DS-55", longitude = 10.42222, latitude = 59.58754),  # 25.18 km,  14.4 m
+    Station(name = "DS-56", longitude = 10.42222, latitude = 59.58396),  # 25.58 km,  17.0 m
+    Station(name = "DS-57", longitude = 10.42222, latitude = 59.58038),  # 25.98 km,  18.1 m
+    Station(name = "DS-58", longitude = 10.42222, latitude = 59.57681),  # 26.38 km,  19.0 m
+    Station(name = "DS-59", longitude = 10.42222, latitude = 59.57323),  # 26.77 km,  22.5 m
+    Station(name = "DS-60", longitude = 10.41880, latitude = 59.56965),  # 27.25 km,  27.7 m
+    Station(name = "DS-61", longitude = 10.41197, latitude = 59.56608),  # 27.80 km,  35.7 m
+    Station(name = "DS-62", longitude = 10.41197, latitude = 59.56250),  # 28.20 km,  25.0 m
+    Station(name = "DS-63", longitude = 10.41197, latitude = 59.55892),  # 28.60 km,  22.7 m
+    Station(name = "DS-64", longitude = 10.41197, latitude = 59.55535),  # 29.00 km,  22.7 m
+    Station(name = "DS-65", longitude = 10.41197, latitude = 59.55177),  # 29.40 km,  23.9 m
+    Station(name = "DS-66", longitude = 10.41197, latitude = 59.54819),  # 29.79 km,  27.6 m
+    Station(name = "DS-67", longitude = 10.40855, latitude = 59.54462),  # 30.27 km,  32.0 m
+    Station(name = "DS-68", longitude = 10.40855, latitude = 59.54104),  # 30.67 km,  37.4 m
+    Station(name = "DS-69", longitude = 10.40513, latitude = 59.53746),  # 31.15 km,  56.0 m
+    Station(name = "DS-70", longitude = 10.40513, latitude = 59.53389),  # 31.54 km,  73.6 m
+    Station(name = "DS-71", longitude = 10.40171, latitude = 59.53031),  # 32.02 km,  88.9 m
+    Station(name = "DS-72", longitude = 10.40171, latitude = 59.52673),  # 32.42 km, 111.0 m
+    Station(name = "DS-73", longitude = 10.40171, latitude = 59.52316),  # 32.82 km, 125.6 m
+    Station(name = "DS-74", longitude = 10.40513, latitude = 59.51958),  # 33.29 km, 157.2 m
+    Station(name = "DS-75", longitude = 10.40513, latitude = 59.51600),  # 33.69 km, 156.0 m
+    Station(name = "DS-76", longitude = 10.40513, latitude = 59.51422),  # 33.89 km, 153.4 m
 ]
 
 # Fixed-point temperature sites, METreport 11/2017 §3.4 and Figs. 3-4. All APPROXIMATE: the Scanmar
@@ -415,6 +511,11 @@ end
 
 base = oslofjorden()
 data_root = fjord_data_root("oslofjorden_validation")
+# `oslofjorden()`'s faces with 41-132 m split into eighteen equal levels; see beside `z_faces` below.
+z_faces = let faces = base.grid_config.z_faces
+    vcat(filter(z -> z <= -132, faces), collect(range(-132.0, -41.0; length = 19))[2:end-1],
+         filter(z -> z >= -41, faces))
+end
 years = [2014, 2015]
 
 # The three configs below are `oslofjorden()`'s own instances with only their location and period
@@ -498,11 +599,18 @@ scheme = simulation.model.tracer_advection
 # the 1 m salinity at Ep1 22.9 against 24.7 at 7e-6 and 20.1 observed. Over 26 days the two differed
 # by about 0.1 in the 50 m salinity trend at D-2 and Ep1. See TODO.md › "Vertical mixing is too
 # strong".
+#
+# The biharmonic tracer diffusivity κ is 0, its viscosity ν kept. Over this run's first 60 days
+# (`gs://fjordsim/analysis/mixing-tests-2026-10-18/`, on the 26 levels), κ = 2e3 against 0 left the
+# deep-basin salt budgets unchanged — Drammensfjord K_S below 41-105 m 4.5e-5 to 3.8e-4 in both —
+# and the stations within 0.05 g/kg; what κ did do is overshoot at fronts, leaving 169 wet cells
+# below 0 g/kg (minimum -0.43) at day 60, against none at κ = 0. The one systematic difference left
+# is 0.04-0.10 °C colder bottom water at D-2, Ep1 and Dk1 at κ = 0, not yet explained.
 sponge = simulation.model.closure
 closure = BoundarySponge(
     base        = (
         CATKEVerticalDiffusivity(base.grid_config.float_type; minimum_tke = 7e-7),
-        sponge.base[2:end]...,
+        HorizontalScalarBiharmonicDiffusivity(base.grid_config.float_type; ν = sponge.base[2].ν, κ = 0),
     ),
     width_cells = sponge.width_cells,
     viscosity   = sponge.viscosity,
@@ -529,12 +637,22 @@ FjordConfig(
         # or Δx⁴ carries over only if Δx does: the biharmonic coefficients are justified by a damping
         # rate that goes as ν₄·16/Δx⁴, and changing the resolution without re-deriving them would
         # silently invalidate the one number in that setup that was measured rather than chosen.
-        # 5.00 M cells against Oslofjord's 3.24 M.
-        size      = (351, 548, 26),
+        # 7.50 M cells against Oslofjord's 3.24 M.
+        size      = (351, 548, length(z_faces) - 1),
         halo      = base.grid_config.halo,
         longitude = (10.00, 11.20),
         latitude  = (58.95, 59.93),
-        # `oslofjorden()`'s 26 levels, to -467 m. They clear that domain's deepest sounding of
+        # `oslofjorden()`'s 26 levels, to -467 m, with the five between 41 and 132 m replaced by
+        # eighteen of 5.06 m: 39 in all. Those five were 11-27 m thick, and on them WENO's implicit
+        # vertical diffusion, ~|w|Δz with the basins' 1-4e-4 m/s grid-scale w, mixed the sill
+        # basins at 5-10x CATKE's κ there. Over this run's first 60 days
+        # (`gs://fjordsim/analysis/mixing-tests-2026-10-18/`) the refinement cut the Drammensfjord
+        # salt-budget diffusivity below 41, 52, 66, 83 and 105 m from 4.5e-5, 9.7e-5, 2.0e-4, 3.3e-4
+        # and 3.8e-4 m²/s to 1.7e-5, 2.0e-5, 3.2e-5, 4.3e-5 and 7.0e-5, and the Inner Oslofjord's
+        # 1.4-5x below 41 m. It cost no wet columns, and moved 30 columns domain-wide by more than
+        # 6 m.
+        #
+        # The 26 levels clear that domain's deepest sounding of
         # 463.0 m. This box extends into the Skagerrak and takes in more of the Hvalerdjupet, which
         # METreport 4/2016 §1.1 describes as "a 400 m deep basin extending northeastward from the
         # Skagerrak", and its deepest sounding is 470.0 m. `oslofjorden()`'s rule — a geometric
@@ -552,7 +670,7 @@ FjordConfig(
         # `SplitExplicitFreeSurface`, buying a shorter barotropic substep for water that is not
         # there. `z_faces` is written into `bathymetry.nc` and `simulation_grid` reads the file, not
         # this config, so a change here needs `prepare_bathymetry` re-run.
-        z_faces   = base.grid_config.z_faces,
+        z_faces   = z_faces,
         # `oslofjorden()`'s, since the model below is built in it.
         float_type = base.grid_config.float_type,
     ),
@@ -610,7 +728,7 @@ FjordConfig(
         boundary_conditions = simulation.boundary_conditions,
         writers = (
             # Daily, not `oslofjorden()`'s three-hourly. One record of five fields on this grid is
-            # 89 MB, so three-hourly over 640 days is about 450 GB against 57 GB daily. The full
+            # 155 MB, so three-hourly over 640 days is about 790 GB against 99 GB daily. The full
             # fields are here for maps, for the two Statnett transect sections and for the M2
             # amplitude and phase maps, none of which needs sub-daily sampling — everything that
             # does is a station below.
@@ -667,6 +785,17 @@ FjordConfig(
                 output_file        = "stations_hydrography.nc",
                 variables          = (:T, :S, :e),
                 stations           = vcat(OSLOFJORD_CTD_STATIONS, INNER_OSLOFJORD_STATIONS),
+                interval           = 1hour,
+                overwrite_existing = true,
+            ),
+            # Hourly whole-column profiles along the Drammensfjord section: T and S for the
+            # mixing and renewal, `e` for the TKE, and u, v for the exchange over the sill. About
+            # 12 MB a station over 640 days, 0.9 GB for the 77.
+            StationWriter(
+                name               = :section,
+                output_file        = "stations_section.nc",
+                variables          = (:T, :S, :e, :u, :v),
+                stations           = DRAMMENSFJORD_SECTION,
                 interval           = 1hour,
                 overwrite_existing = true,
             ),

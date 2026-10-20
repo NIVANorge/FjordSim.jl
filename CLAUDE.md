@@ -188,19 +188,24 @@ read it before changing any of these:
 5. **Bathymetry** (`src/Bathymetry/`) — `prepare_bathymetry` and the eight-stage
    `smooth_bathymetry_gaps!` pipeline (order is forced; see the doc before reordering).
 6. **Atmosphere** (`src/Atmospheres/`) — `prepare_atmosphere`, NORA3 read/download.
-7. **Forcing** (`src/Forcing/`) — interior forcing, rivers, and open-boundary data pipelines
-   (`prepare_forcing`, `add_rivers`, `prepare_boundaries`).
-8. **Boundary conditions** (`src/BoundaryConditions.jl`) — `AirSeaFluxes`, `QuadraticBottomDrag`,
-   `OpenLateralBoundaryFromData`.
-9. **Grids** (`src/Grids.jl`) — `EvenGrid`, the `domain_grid`/`simulation_grid` hooks.
-10. **Simulations** (`src/Simulations.jl`) — `SimulationConfig`, `build_simulation`/`run_simulation`,
+7. **Regridding** (`src/Regridding.jl`) — the core `Forcing` and `Boundaries` share: source
+   records and time axes, water masks, the projected source grid and the interpolation kernel.
+8. **Forcing** (`src/Forcing/`) — the interior forcing pipeline (`prepare_forcing`,
+   `download_forcing`) and its NorKyst adapters.
+9. **Rivers** (`src/Rivers/`) — the river pipeline (`add_rivers`) and its NVE adapter.
+10. **Boundaries** (`src/Boundaries/`) — the open-boundary data pipeline (`download_boundaries`,
+    `prepare_boundaries`, `boundary_series`) and its NorKyst adapters.
+11. **Boundary conditions** (`src/BoundaryConditions.jl`) — `AirSeaFluxes`, `QuadraticBottomDrag`,
+    `OpenLateralBoundaryFromData`.
+12. **Grids** (`src/Grids.jl`) — `EvenGrid`, the `domain_grid`/`simulation_grid` hooks.
+13. **Simulations** (`src/Simulations.jl`) — `SimulationConfig`, `build_simulation`/`run_simulation`,
     writers, callbacks, looping, checkpointing, initial conditions.
-11. **Setups** (`src/Setups/`) — the built-in fjords; see `docs/setups.md`.
-12. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
+14. **Setups** (`src/Setups/`) — the built-in fjords; see `docs/setups.md`.
+15. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
     observation sources, skill and tidal statistics, and the comparison figures. `StationWriter`
     (in `Simulations`) is what a run writes for it.
-13. **CLI** (`src/CLI.jl`) — subcommand dispatch, logging.
-14. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
+16. **CLI** (`src/CLI.jl`) — subcommand dispatch, logging.
+17. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
 
 ## Setups
 
@@ -303,7 +308,7 @@ forcings.
   being an `Int` already. `SimulationConfig` is now the **only** config the rule reaches: every other
   one is either non-parametric, or — like `SnapshotWriter`, `ProgressCallback` and
   `CoupledHydrostaticSimulation`, all of which *are* parametric — has a hand-written keyword
-  constructor that converts. `Forcing.PreparedVariable` is the one internal type the rule reaches
+  constructor that converts. `Regridding.PreparedVariable` is the one internal type the rule reaches
   too, for the same reason.
 
 ## Key conventions

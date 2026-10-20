@@ -5,8 +5,8 @@
 
 Every pipeline is a generic function on the config supertype plus a small set of hooks. Add a
 source by subtyping and overloading the hooks — never by editing the generic function. The
-adapter files (`src/Bathymetry/geonorge.jl`, `src/Forcing/norkyst.jl`, `src/Forcing/nve_rivers.jl`)
-are the templates.
+adapter files (`src/Bathymetry/geonorge.jl`, `src/Forcing/norkyst.jl`, `src/Rivers/nve_rivers.jl`,
+`src/Boundaries/norkyst_boundaries.jl`) are the templates.
 
 Grid — `AbstractGridConfig`:
 
@@ -15,8 +15,8 @@ Grid — `AbstractGridConfig`:
 | `domain_grid(config, architecture)` → the bare grid, no bathymetry | yes |
 | `simulation_grid(config, bathymetry_file, architecture)` → the grid the simulation runs on | yes |
 
-Both are declared in `Configs`, since `Bathymetry`, `Atmospheres` and `Forcing` all call
-`domain_grid` and are included before `Grids`. Neither names a result type, so a grid that is not a
+Both are declared in `Configs`, since `Bathymetry`, `Atmospheres`, `Forcing`, `Rivers` and
+`Boundaries` all call `domain_grid` and are included before `Grids`. Neither names a result type, so a grid that is not a
 `LatitudeLongitudeGrid` can implement them.
 
 Bathymetry — `AbstractBathymetryConfig`, consumed by `prepare_bathymetry`:
@@ -58,7 +58,7 @@ A river is a volume of water: `add_rivers` snaps each mouth to a coastal cell, g
 connected surface columns as its peak discharge needs to enter no faster than
 `maximum_inflow_velocity`, and writes the result — inflow speed and river values per column, on a
 daily axis over the run window — to a river file of its own. The run reads it as a free-surface source
-and a top-cell tracer source; see "Rivers as a volume source" in `docs/architecture.md` (Forcing
+and a top-cell tracer source; see "Rivers as a volume source" in `docs/architecture.md` (Rivers
 section) for why that pair, and why the columns are spread. The speed bound is a vertical Courant
 number on the top cell, so it has no default: it belongs to the setup's grid and time step.
 
@@ -93,7 +93,7 @@ disagreeing; `prepare_forcing` takes them as an `edges` keyword, since a forcing
 business naming them, and `nothing` there means a closed domain. Not to be
 confused with `AbstractBoundaryConditionConfig`, which is the scheme rather than the data.
 
-`prepare_boundaries` reuses the forcing core on a one-cell-thick target slab, so a boundary source on
+`prepare_boundaries` reuses the `Regridding` core on a one-cell-thick target slab, so a boundary source on
 a regular projected grid inherits `source_field_grid`, `projected_target_nodes`, `SourceFill` and the
 interpolation kernel unchanged, exactly as a forcing source does. It loops the whole per-variable build
 over the config's edges and writes them all into one file, so neither hook above becomes per-edge — the
@@ -219,7 +219,7 @@ station and variable it might hold:
   owners and want a reader, not a client.
 
 Every source returns the same `ObservationSeries` — `(station, variable, times, depths, values,
-units, source)`, with `values` shaped `(time, depth)` — which is what lets `Metrics.jl` stay ignorant
+units, source)`, with `values` shaped `(time, depth)` — which is what lets `metrics.jl` stay ignorant
 of where a number came from. Profiles are interpolated onto one depth axis at read time, since no
 instrument samples the same depths twice and a Hovmøller diagram needs a rectangular array;
 `interpolate_to_depths` does not extrapolate, so a shallow cast cannot invent deep water.

@@ -1,5 +1,5 @@
 # Validation figures. Every function takes series and metrics rather than configs or paths, for the
-# same reason `Metrics.jl` does: the figure that compares a tide gauge is the figure that compares a
+# same reason `metrics.jl` does: the figure that compares a tide gauge is the figure that compares a
 # thermistor, and neither needs to know which.
 #
 # Where a figure has a counterpart in METreport 11/2017 the docstring names it, so a FjordSim figure

@@ -151,7 +151,7 @@
 # scope: FjordSim has no particle tracking.
 
 using FjordSim
-using FjordSim: AbstractBoundaryDataConfig, Configs, Forcing
+using FjordSim: AbstractBoundaryDataConfig, Boundaries, Configs
 using FjordSim.Validation: TIDAL_CONSTITUENTS
 using LinearAlgebra: qr
 using NCDatasets: NCDataset
@@ -393,17 +393,17 @@ Configs.boundary_data_directory(config::TideCorrectedBoundaries) =
     Configs.boundary_data_directory(config.source)
 Configs.plot_path(config::TideCorrectedBoundaries) = Configs.plot_path(config.source)
 Configs.open_edges(config::TideCorrectedBoundaries) = Configs.open_edges(config.source)
-Forcing.boundary_variable_names(config::TideCorrectedBoundaries) =
-    Forcing.boundary_variable_names(config.source)
-Forcing.download_boundaries(target_grid, config::TideCorrectedBoundaries) =
-    Forcing.download_boundaries(target_grid, config.source)
+Boundaries.boundary_variable_names(config::TideCorrectedBoundaries) =
+    Boundaries.boundary_variable_names(config.source)
+Boundaries.download_boundaries(target_grid, config::TideCorrectedBoundaries) =
+    Boundaries.download_boundaries(target_grid, config.source)
 
-function Forcing.prepare_boundaries(
+function Boundaries.prepare_boundaries(
     target_grid,
     config::TideCorrectedBoundaries;
     coverage = nothing,
 )
-    result = Forcing.prepare_boundaries(target_grid, config.source; coverage)
+    result = Boundaries.prepare_boundaries(target_grid, config.source; coverage)
     correct_boundary_tide!(result.output_file, Configs.open_edges(config), config.gains)
     return result
 end

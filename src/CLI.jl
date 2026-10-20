@@ -6,8 +6,9 @@ using ..Configs: AbstractSimulationConfig, run_tag
 using ..Setups: fjord_config, setup_names
 using ..Bathymetry: prepare_bathymetry
 using ..Atmospheres: prepare_atmosphere, download_atmosphere
-using ..Forcing:
-    prepare_forcing, download_forcing, add_rivers, download_boundaries, prepare_boundaries
+using ..Forcing: prepare_forcing, download_forcing
+using ..Rivers: add_rivers
+using ..Boundaries: download_boundaries, prepare_boundaries
 using ..Simulations: run_simulation
 using ..Validation: validate_simulation
 

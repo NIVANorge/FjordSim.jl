@@ -19,7 +19,9 @@ using ..Utils: progress
 using ..Grids: EvenGrid
 using ..Bathymetry: DybdedataConfig, GEONORGE_DYBDEDATA_GDB
 using ..Atmospheres: NORA3Config
-using ..Forcing: NorKystConfig, NVERiversConfig, NVERiver, NorKystBoundariesConfig
+using ..Forcing: NorKystConfig
+using ..Rivers: NVERiversConfig, NVERiver
+using ..Boundaries: NorKystBoundariesConfig
 using ..BoundaryConditions:
     AirSeaFluxes, QuadraticBottomDrag, OpenLateralBoundaryFromData, MergedBoundaryConditions
 using ..Simulations:

@@ -112,7 +112,7 @@ across fjords.
   every open-boundary scheme is derived for.
 
   The price is that the newly wet cells have no exterior profile of their own and are filled along
-  the boundary by `FjordSim.Forcing.fill_boundary_gaps!`, so keep this small — a few cells, not a
+  the boundary by `FjordSim.Boundaries.fill_boundary_gaps!`, so keep this small — a few cells, not a
   few tens. On `oslofjorden` the southern band is nearly clear already and `5` moves nine cells,
   none of them in the boundary row itself.
 - `max_island_cells`: `fill_small_islands` threshold — every 4-connected patch of land of at most

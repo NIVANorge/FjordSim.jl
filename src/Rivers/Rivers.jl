@@ -1,11 +1,59 @@
+module Rivers
+
 # Rivers: the generic half of the river pipeline. `add_rivers` writes every river as a volume inflow
 # into a set of surface columns near its mouth, in a river file of its own on its own daily axis.
 # Only the four hooks `river_locations`, `river_series`, `river_discharge` and `download_rivers` are
-# dataset-specific — `src/Forcing/nve_rivers.jl` is the template to copy for a new river dataset.
+# dataset-specific — `nve_rivers.jl` is the template to copy for a new river dataset.
 #
 # The run reads that file back through `river_forcing`, at the bottom of this file: the inflow
 # becomes the free-surface source `forcing.η = Q / A`, and each river variable a source in the top
 # cell of the same columns. `RiverTracerSource` says why that pair is what makes the budgets close.
+
+export add_rivers,
+    download_rivers,
+    river_locations,
+    river_series,
+    river_discharge,
+    river_search_radius,
+    river_maximum_inflow_velocity,
+    river_forcing,
+    river_date_range,
+    read_river_columns,
+    combine_forcing,
+    RiverLocation,
+    NVERiversConfig,
+    NVERiver
+
+using Oceananigans
+using Oceananigans.Units: Time
+using Oceananigans.OutputReaders: Cyclical, AbstractInMemoryBackend, FlavorOfFTS, time_indices
+using Oceananigans.Operators: Az, volume
+using Oceananigans: fill_halo_regions!, interior
+using Oceananigans.Grids: x_domain, y_domain
+using Dates: Date, DateTime, Day
+using Adapt
+using NCDatasets
+
+import Oceananigans: on_architecture
+import Oceananigans.Fields: set!
+import Oceananigans.OutputReaders: new_backend
+
+using ..Configs:
+    AbstractForcingConfig,
+    AbstractRiverConfig,
+    FjordConfig,
+    bathymetry_path,
+    forcing_path,
+    river_forcing_path,
+    coverage_window,
+    domain_grid,
+    simulation_grid
+using ..Plotting: plot_rivers
+using ..Regridding:
+    native_times_to_seconds,
+    FORCING_DEFLATE_LEVEL,
+    column_wet_levels,
+    define_forcing_dimensions!
 
 const RIVER_NEIGHBOUR_OFFSETS = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
 
@@ -120,22 +168,6 @@ Courant number of 2. `add_rivers` therefore spreads each river over as many colu
 discharge needs to stay below this speed — see `grow_river_columns`.
 """
 river_maximum_inflow_velocity(config::AbstractRiverConfig) = config.maximum_inflow_velocity
-
-"""
-    column_wet_levels(target_grid)
-
-`(surface, levels)`: the surface-level water mask of `target_grid` as an `(i, j)` matrix, and the
-number of wet cells in each column. Both come from the same `water_mask` that `prepare_forcing`
-uses, so "wet" means exactly what it means when the forcing file is written, including
-`PartialCellBottom` cells. A column's wet cells are contiguous and end at the surface, so
-`levels[i, j]` also names where they start: `Nz - levels + 1`.
-"""
-function column_wet_levels(target_grid)
-    mask = water_mask(target_grid, Center, Center, nothing)
-    surface = mask[:, :, size(mask, 3)]
-    levels = dropdims(sum(mask; dims = 3); dims = 3)
-    return surface, levels
-end
 
 """
     column_areas(target_grid)
@@ -901,3 +933,7 @@ function combine_forcing(a::NamedTuple, b::NamedTuple)
     shared = (name => (a[name], b[name]) for name in keys(a) if haskey(b, name))
     return merge(a, b, (; shared...))
 end
+
+include("nve_rivers.jl")
+
+end # module

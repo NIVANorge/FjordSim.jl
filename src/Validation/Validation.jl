@@ -13,10 +13,10 @@ its hooks.
 
 Four files below it:
 
-- `Observations.jl` — the sources, and one common record type they all return.
-- `Metrics.jl` — the statistics, over bare vectors. Knows nothing about fjords or files.
-- `Results.jl` — reading a run's station output back, as the inverse of `StationWriter`.
-- `Plots.jl` — the figures, one per report figure where there is a counterpart.
+- `observations.jl` — the sources, and one common record type they all return.
+- `metrics.jl` — the statistics, over bare vectors. Knows nothing about fjords or files.
+- `results.jl` — reading a run's station output back, as the inverse of `StationWriter`.
+- `plots.jl` — the figures, one per report figure where there is a counterpart.
 """
 module Validation
 
@@ -83,10 +83,10 @@ using ..Simulations:
     station_tag,
     RESULTS_START_DATE_ATTRIBUTE
 
-include("Observations.jl")
-include("Metrics.jl")
-include("Results.jl")
-include("Plots.jl")
+include("observations.jl")
+include("metrics.jl")
+include("results.jl")
+include("plots.jl")
 
 """
     validation_directory(config)

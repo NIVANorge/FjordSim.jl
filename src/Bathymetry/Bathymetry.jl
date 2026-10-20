@@ -408,7 +408,7 @@ open edge a clean, uninterrupted channel, which is the geometry every open-bound
 for.
 
 The cost is that the newly wet cells have no exterior profile of their own — the prepared boundary
-file marks them dry, and `FjordSim.Forcing.fill_boundary_gaps!` fills them from the nearest wet cell
+file marks them dry, and `FjordSim.Boundaries.fill_boundary_gaps!` fills them from the nearest wet cell
 along the boundary. That is the same treatment a boundary column already gets wherever the model and
 the source disagree about the coastline, so the trade is a few laterally interpolated columns against
 a headland in the boundary row. Keep `cells` small enough that it stays a few.

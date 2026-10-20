@@ -88,8 +88,8 @@ Named for the role rather than for a result type — it replaced a method on
 or curvilinear grid could not have implemented the hook without lying about what it returns.
 
 Declared here rather than in `Grids`, which is where its `EvenGrid` method lives: `Bathymetry`,
-`Atmospheres` and `Forcing` all call it and are all included *before* `Grids`, so the generic has to
-exist in a module they can already see.
+`Atmospheres`, `Forcing`, `Rivers` and `Boundaries` all call it and are all included *before*
+`Grids`, so the generic has to exist in a module they can already see.
 """
 function domain_grid end
 
@@ -209,9 +209,9 @@ entirely.
 - `river_maximum_inflow_velocity(config)`: in m/s. Optional, defaults to
   `config.maximum_inflow_velocity`.
 
-`FjordSim.Forcing.NVERiversConfig` is the built-in implementation: it discovers river mouths from
+`FjordSim.Rivers.NVERiversConfig` is the built-in implementation: it discovers river mouths from
 NVE's map services and reads observed discharge and water temperature from NVE's HydAPI, which needs
-an API key. `src/Forcing/nve_rivers.jl` is the template to copy for a new dataset.
+an API key. `src/Rivers/nve_rivers.jl` is the template to copy for a new dataset.
 """
 abstract type AbstractRiverConfig end
 
@@ -270,8 +270,8 @@ edge is a set of new variables in the same file rather than a new file or a form
   variable that must be *derived* from more than one of the source's own — which a velocity component
   is, when the source states it along its own grid axes rather than eastward/northward.
 
-`FjordSim.Forcing.NorKystBoundariesConfig` is the built-in implementation, for MET Norway's hourly
-NorKyst-800m collection; `src/Forcing/norkyst_boundaries.jl` is the template to copy for a new
+`FjordSim.Boundaries.NorKystBoundariesConfig` is the built-in implementation, for MET Norway's hourly
+NorKyst-800m collection; `src/Boundaries/norkyst_boundaries.jl` is the template to copy for a new
 dataset.
 """
 abstract type AbstractBoundaryDataConfig end
@@ -456,7 +456,7 @@ returns the *nested named tuple* shape (`(u = (top = …, bottom = …), T = (to
 - `boundary_condition_sides(config, grid, forcing, boundary_config, tracers[, boundaries])`: the
   nested named tuple this piece contributes, keyed by field and then by side. Required. Implement the
   six-argument form only if the piece reads the prepared open-boundary state (`boundaries`, from
-  `FjordSim.Forcing.boundary_series`, or `nothing`); the five-argument form is reached through a
+  `FjordSim.Boundaries.boundary_series`, or `nothing`); the five-argument form is reached through a
   forwarding fallback, which is what lets a piece that carries its own exterior state ignore it.
 
 `FjordSim.BoundaryConditions.AirSeaFluxes`, `FjordSim.BoundaryConditions.QuadraticBottomDrag` and
@@ -644,8 +644,8 @@ The four lateral boundaries a regional domain can be open on, in the order every
 lists them.
 
 Stated here, beside `open_edges`, because every module that reasons about an edge is included after
-this one and none of them can see each other: `Bathymetry` clears land along the open ones, `Forcing`
-restores their velocity face rows and regrids along them, and every `Val{edge}` dispatch in
+this one and none of them can see each other: `Bathymetry` clears land along the open ones, `Regridding`
+restores their velocity face rows, `Boundaries` regrids along them, and every `Val{edge}` dispatch in
 `BoundaryConditions` falls back to an `ArgumentError` naming this tuple. It has already been a
 per-module copy twice — with identical contents, an identical membership test and an identical error
 string each time — which is what settled the question of where it belongs.
@@ -698,7 +698,7 @@ Always a collection, never a bare `Symbol`, so a domain open on one edge, on all
 one code path in every consumer rather than a scalar case and a plural one. A built-in config's
 keyword constructor accepts either shape and normalizes with `lateral_edges`.
 
-Declared here rather than beside the pipelines that read it because all of them do: `Forcing` needs
+Declared here rather than beside the pipelines that read it because all of them do: `Regridding` needs
 it for `water_mask` and is included first, both boundary steps regrid and subset along the edges, and
 the open lateral boundary condition puts its schemes on each. Each of them reads it through this
 accessor, so the edges are stated in exactly one place — the config that describes the boundary.

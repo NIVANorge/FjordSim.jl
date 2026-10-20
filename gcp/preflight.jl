@@ -1,7 +1,7 @@
 # Fail fast when the GPU a job asked for is not actually usable inside the container.
 #
 # Without this, `architecture = :auto` silently resolves to `CPU()` (see
-# `interpolation_architecture(::Val{:auto})` in src/Forcing/Forcing.jl) and the run proceeds —
+# `interpolation_architecture(::Val{:auto})` in src/Regridding.jl) and the run proceeds —
 # billing a GPU VM for a simulation that is hundreds of times too slow to finish, and looking
 # healthy the whole time. The usual cause is the host NVIDIA driver not being injected into the
 # container, which `CUDA.functional()` reports and `nvidia-smi` on the host does not.

@@ -209,7 +209,10 @@ include("Utils.jl")
 include("Plotting.jl")
 include("Bathymetry/Bathymetry.jl")
 include("Atmospheres/Atmospheres.jl")
+include("Regridding.jl")
 include("Forcing/Forcing.jl")
+include("Rivers/Rivers.jl")
+include("Boundaries/Boundaries.jl")
 include("BoundaryConditions.jl")
 include("Grids.jl")
 # Simulations reads the grid back from the processed bathymetry, so it comes after Grids, and
@@ -227,7 +230,10 @@ using .Utils
 using .Plotting
 using .Bathymetry
 using .Atmospheres
+using .Regridding
 using .Forcing
+using .Rivers
+using .Boundaries
 using .BoundaryConditions
 using .Grids
 using .Simulations

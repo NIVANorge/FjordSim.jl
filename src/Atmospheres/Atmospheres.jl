@@ -260,7 +260,7 @@ end
 
 The prepared grid's nodes projected into the source projection, as
 `(length(longitude), length(latitude))`-shaped matrices. The whole point cloud is transformed in
-a single GDAL call, as in `FjordSim.Forcing.projected_target_nodes`.
+a single GDAL call, as in `FjordSim.Regridding.projected_target_nodes`.
 """
 function projected_atmosphere_nodes(longitude, latitude, source::ProjectedAtmosphereGrid)
     point_count = length(longitude) * length(latitude)
@@ -316,7 +316,7 @@ Bilinearly interpolate one source slab onto the projected target nodes `x`, `y`.
 
 The source is regular in projected meters, so a target node's fractional source index is
 arithmetic and no search is needed. This is deliberately not
-`FjordSim.Forcing.interpolate_to_target!`: that one is trilinear and mask-driven, built for 3D
+`FjordSim.Regridding.interpolate_to_target!`: that one is trilinear and mask-driven, built for 3D
 ocean fields on a `RectilinearGrid` with land to exclude, whereas atmospheric fields are 2D and
 defined everywhere, including over land. The target grid here is also small enough (order
 50 x 60) that there is nothing worth moving to a GPU.
@@ -545,7 +545,7 @@ downloaded axis.
 
 A pad points at the same file and index as the record it copies, so the written field is identical
 to its neighbour and `validate_source_consistency`, which walks the records' distinct files, sees
-nothing new. See `FjordSim.Forcing.pad_time_steps` for why both prepared files are padded rather
+nothing new. See `FjordSim.Regridding.pad_time_steps` for why both prepared files are padded rather
 than the readers being made tolerant: both read with `Cyclical()` time indexing, which fills a
 shortfall by wrapping to the far end of the year instead of failing.
 

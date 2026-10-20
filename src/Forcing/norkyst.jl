@@ -2,7 +2,7 @@
 # shape to add a new forcing dataset — it owns a config subtype, its own download, and the
 # three hook methods `forcing_time_steps`, `forcing_source_grid` and `forcing_variable_names`
 # (plus `download_forcing` if it fetches data). Everything else comes from the generic core
-# in Forcing.jl.
+# in `Forcing.jl` and `Regridding.jl`.
 
 using Downloads
 

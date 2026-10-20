@@ -1,7 +1,7 @@
 # Hourly NorKyst-800m adapter: the source-specific half of the open-boundary pipeline. Copy this
 # file's shape to add a new boundary dataset — it owns a config subtype, its own download, and the
 # three hook methods `boundary_time_steps`, `boundary_source_grid` and `boundary_variable_names`.
-# Everything else comes from the generic core in `boundaries.jl`.
+# Everything else comes from the generic core in `Boundaries.jl`.
 #
 # A *different* NorKyst collection from `norkyst.jl`'s. That one reads `fou-hi/norkyst800m`,
 # whose files are `..._avg.an.*` — daily averages, one record each. This one reads

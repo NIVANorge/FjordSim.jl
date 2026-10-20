@@ -2,7 +2,7 @@
 # config supertype, one subtype per source, and hooks dispatching on it — so adding a programme is a
 # new subtype and its methods, never an edit to the scoring code.
 #
-# Every source returns the same `ObservationSeries`, which is what lets `Metrics.jl` stay ignorant of
+# Every source returns the same `ObservationSeries`, which is what lets `metrics.jl` stay ignorant of
 # where a number came from.
 
 """

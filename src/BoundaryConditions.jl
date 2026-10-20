@@ -172,7 +172,7 @@ boundary_radiation_scheme(config) = NormalRadiation(;
 ##### One function per edge rather than one function branching on an index: the boundary node is a
 ##### different index of a different operator on each side.
 #####
-##### No land guard: `FjordSim.Forcing.fill_boundary_gaps!` has already filled every dry boundary
+##### No land guard: `FjordSim.Boundaries.fill_boundary_gaps!` has already filled every dry boundary
 ##### cell from its nearest wet neighbour, so a boundary series is finite everywhere. That is the
 ##### one place the fill can live — see that function for why a sentinel reaching a scheme is not
 ##### hypothetical.
@@ -246,7 +246,7 @@ end
 ##### The four groups, one method per edge each
 #####
 ##### Each takes *one* edge's series — the `(; T, S, u, v, eta, ubar, vbar)` group
-##### `FjordSim.Forcing.boundary_series` returns under that edge's key, not the whole per-edge
+##### `FjordSim.Boundaries.boundary_series` returns under that edge's key, not the whole per-edge
 ##### collection. `open_edge_boundary_conditions` is what unwraps a group per edge and merges the
 ##### four; these functions never see a second side.
 
@@ -414,7 +414,7 @@ off that one; the arity is unchanged, so an out-of-tree piece that ignores this 
 built-in pieces below do, is unaffected. One that reads it now receives the boundary config.
 
 `boundaries` is the prepared open-boundary state — the `NamedTuple` of reduced `FieldTimeSeries`
-`FjordSim.Forcing.boundary_series` returns, or `nothing` for a setup with no boundary data. Passed
+`FjordSim.Boundaries.boundary_series` returns, or `nothing` for a setup with no boundary data. Passed
 in rather than read here for the same reason `forcing` is: `build_simulation` is where the
 `start_date` every time axis is zeroed at is known, and a config that read the file itself would
 have to be told that instant a second time.
@@ -486,7 +486,7 @@ first version of this config, `OpenLateralBoundary`, put `NormalFlowBoundaryCond
 normal velocity, which is a closed wall, so only the tracers there were ever open.
 
 The values come from the boundary data config a setup names on its `FjordConfig`, read by
-`FjordSim.Forcing.boundary_series` and handed in by `build_simulation` — hourly NorKyst for the
+`FjordSim.Boundaries.boundary_series` and handed in by `build_simulation` — hourly NorKyst for the
 built-in setups, because a Flather boundary without a tide is not worth prescribing and the interior
 forcing is daily means.
 

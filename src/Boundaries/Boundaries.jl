@@ -1,7 +1,9 @@
+module Boundaries
+
 # Open-boundary data: the generic half of the boundary pipeline. A dataset adapter subtypes
 # `AbstractBoundaryDataConfig` and implements `boundary_time_steps`, `boundary_source_grid` and
 # `boundary_variable_names` (plus `download_boundaries` if it fetches data); everything below is
-# shared. `src/Forcing/norkyst_boundaries.jl` is the template to copy.
+# shared. `norkyst_boundaries.jl` is the template to copy.
 #
 # What this exists for: an open lateral boundary needs the exterior state *at* the boundary —
 # elevation and barotropic transport for the Flather condition, velocity and tracers for the
@@ -13,9 +15,86 @@
 # edge is a set of new variables in the same file rather than a new file or a format change. The
 # edge is a `Val` everywhere it decides anything.
 
+export download_boundaries,
+    prepare_boundaries,
+    boundary_series,
+    boundary_time_steps,
+    boundary_source_grid,
+    boundary_variable_names,
+    boundary_date_range,
+    boundary_variable_name,
+    boundary_source_slab,
+    NorKystHindcastBoundariesConfig,
+    NorKystBoundariesConfig
+
+using Oceananigans
+using Oceananigans.Units: Time
+using Oceananigans.Architectures: architecture, on_architecture
+using Oceananigans.OutputReaders: Cyclical, AbstractInMemoryBackend, FlavorOfFTS, time_indices,
+    cpu_interpolating_time_indices
+using Oceananigans: fill_halo_regions!, interior
+using Oceananigans.Grids: x_domain, y_domain
+using Dates: DateTime, Hour
+using NCDatasets
+
+import Oceananigans.Fields: set!
+import Oceananigans.OutputReaders: new_backend
+
+using ..Configs:
+    AbstractBoundaryDataConfig,
+    FjordConfig,
+    bathymetry_path,
+    boundary_data_path,
+    boundary_data_directory,
+    coverage_window,
+    domain_grid,
+    open_edges,
+    simulation_grid,
+    LATERAL_EDGES,
+    validate_open_edge,
+    lateral_edges
+using ..Plotting: plot_boundaries
+using ..Atmospheres: rotate_to_east_north
+using ..Regridding:
+    Regridding,
+    native_times_to_seconds,
+    interpolation_architecture,
+    ProjectedSourceGrid,
+    SourceRecord,
+    PreparedVariable,
+    uniform_time_steps,
+    pad_time_steps,
+    water_mask,
+    projected_target_nodes,
+    source_validity,
+    read_last_dimension,
+    as_source_slab,
+    source_fill,
+    source_level_coordinate,
+    source_field_grid,
+    set_source_field!,
+    interpolate_to_target!,
+    SourceReader,
+    blended_slab,
+    define_forcing_dimensions!
+using ..Forcing:
+    NORKYST_PROJECTION_VARIABLE,
+    NorKystSubset,
+    list_opendap_files,
+    list_hindcast_files,
+    bounding_range,
+    time_length,
+    define_output_file,
+    write_parameter_chunk!,
+    write_time_dependent_coordinates!,
+    decoded_attributes
+
 const BOUNDARY_DEFLATE_LEVEL = 5
 # Longest run of missing hours interpolated without a separate warning.
 const BOUNDARY_MAX_GAP = 6
+
+Regridding.interpolation_architecture(config::AbstractBoundaryDataConfig) =
+    interpolation_architecture(Val(config.architecture))
 
 """
 Prepared boundary variables with no depth axis: the free-surface elevation and the two barotropic
@@ -927,3 +1006,8 @@ function reduced_series_size(grid, locations)
         location === Nothing ? 1 : (location === Face ? interior_count + 1 : interior_count)
     end
 end
+
+include("norkyst_boundaries.jl")
+include("norkyst_hindcast_boundaries.jl")
+
+end # module

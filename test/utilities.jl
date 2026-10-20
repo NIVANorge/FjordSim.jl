@@ -96,7 +96,7 @@ struct StubRivers <: AbstractRiverConfig
     plot_file::String
     search_radius::Int
     maximum_inflow_velocity::Float64
-    locations::Vector{FjordSim.Forcing.RiverLocation}
+    locations::Vector{FjordSim.Rivers.RiverLocation}
     discharge::Matrix{Float64}
     series::Dict{String,Matrix{Float32}}
 end
@@ -116,9 +116,9 @@ StubRivers(
     maximum_inflow_velocity, locations, discharge, series,
 )
 
-FjordSim.Forcing.river_locations(config::StubRivers) = config.locations
-FjordSim.Forcing.river_discharge(config::StubRivers, times) = config.discharge
-FjordSim.Forcing.river_series(config::StubRivers, times) = config.series
+FjordSim.Rivers.river_locations(config::StubRivers) = config.locations
+FjordSim.Rivers.river_discharge(config::StubRivers, times) = config.discharge
+FjordSim.Rivers.river_series(config::StubRivers, times) = config.series
 
 # New behavior for a new grid config, added without touching Grids.jl. `domain_grid` is overloaded
 # and `simulation_grid` deliberately is not, so the extensibility testset can assert both halves of
@@ -510,7 +510,7 @@ forcing file defines, one `Float32` variable per name *prefixed with its edge* f
 open all round is `edges = (:south, :north, :west, :east)` — one file with four sides in it, which is
 what the real writer produces.
 
-The staggering and rank come from `Forcing.boundary_dimension_names`, the same function
+The staggering and rank come from `Boundaries.boundary_dimension_names`, the same function
 `prepare_boundaries` writes with, so a change to the layout earns a failing read rather than a
 passing test against a file the model cannot use.
 
@@ -542,9 +542,9 @@ function write_prepared_boundaries(
         ds.attrib["open_edge"] = join(open_edges, ",")
 
         for edge in open_edges, name in names
-            dimensions = FjordSim.Forcing.boundary_dimension_names(Val(edge), name)
+            dimensions = FjordSim.Boundaries.boundary_dimension_names(Val(edge), name)
             shape = ntuple(index -> ds.dim[dimensions[index]], Base.length(dimensions) - 1)
-            variable = defVar(ds, FjordSim.Forcing.boundary_variable_name(edge, name), Float32,
+            variable = defVar(ds, FjordSim.Boundaries.boundary_variable_name(edge, name), Float32,
                               dimensions; attrib = ["_FillValue" => NaN32])
 
             for index in eachindex(dates)
@@ -598,8 +598,8 @@ function write_hourly_source_stub(
         defDim(ds, "depth", length(depths))
         defDim(ds, "time", length(dates))
 
-        probe = FjordSim.Forcing.ProjectedSourceGrid([0.0], [0.0], [0.0], NORKYST_STUB_PROJ4)
-        x, y = FjordSim.Forcing.projected_target_nodes(
+        probe = FjordSim.Regridding.ProjectedSourceGrid([0.0], [0.0], [0.0], NORKYST_STUB_PROJ4)
+        x, y = FjordSim.Regridding.projected_target_nodes(
             collect(longitude), collect(latitude), probe,
         )
         defVar(ds, "X", Float64, ("X",))[:] =

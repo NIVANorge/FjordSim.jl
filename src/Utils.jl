@@ -19,6 +19,10 @@ using Printf: @sprintf
 
 cell_advection_timescale_coupled_model(coupled_model) = cell_advection_timescale(coupled_model.ocean.model)
 
+# Generic Base.getindex for any variable using Val types
+# fields[:VARIABLE] doesn't work in CUDA kernels
+@inline Base.getindex(fields, i, j, k, ::Val{name}) where {name} = @inbounds getfield(fields, name)[i, j, k]
+
 function compute_faces(centers)
     spacing = diff(centers)[1]  # Assuming uniform spacing
     faces = vcat([centers[1] - spacing / 2], (centers[1:end-1] .+ centers[2:end]) / 2, [centers[end] + spacing / 2])

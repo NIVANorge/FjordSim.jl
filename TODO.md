@@ -9,7 +9,7 @@ and scripts are in `~/FjordSim_results/oslofjorden_validation/validation/report_
 ## Rivers as a mass source, not a relaxation
 
 `add_rivers` writes rivers as a relaxation of T and S towards the river values over the plume
-levels, with `λ = Q / V` (`src/Forcing/rivers.jl`). The tracer dilution is right, but no volume
+levels, with `λ = Q / V` (`src/Rivers/Rivers.jl`). The tracer dilution is right, but no volume
 enters the domain:
 
 - the river adds no volume, so sea level does not rise and there is no outflow driven by the river
@@ -216,7 +216,7 @@ Ways to correct it, in order of preference:
      leave the two inconsistent and set the wrong incoming wave.
    - Gains from this run, observed/model at Viker: M2 ×0.71 (+3°), S2 ×2.1 (−34°), N2 ×0.91,
      O1 ×1.5, K1 ×0.4. State them in the setup as constants.
-   - `harmonic_fit` lives in `Validation`, which is included after `Forcing`, so it has to move
+   - `harmonic_fit` lives in `Validation`, which is included after `Boundaries`, so it has to move
      down (to `Utils`) for the prepare step to use it.
    - Cost: the code plus a re-run of `prepare_boundaries`; no new download. The gains belong to
      the NorKyst v3 hindcast in 2014–15. The operational archive `oslofjorden()` reads needs its

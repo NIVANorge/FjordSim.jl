@@ -154,7 +154,7 @@ six comments:
   values that added no water; see "Rivers as a volume source" in `docs/architecture.md`.
 - **`minimum_discharge = 0.5`, and no stated coordinate anywhere** — the nine outlets this setup
   first carried were OF800's, and several were kilometres from their rivers; see "Outlet discovery"
-  in `docs/architecture.md` (Forcing section) for the measurements. Discovery gives 21 mouths,
+  in `docs/architecture.md` (Rivers section) for the measurements. Discovery gives 21 mouths,
   including both of Glomma's, sized from their own REGINE catchments. Eight overrides add the gauges
   that survive inspection; the other thirteen enter at their catchment normal, which is what
   `river_discharge`'s catchment-normal rule is for. Only four of the 21 carry water temperature — the

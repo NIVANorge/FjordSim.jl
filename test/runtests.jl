@@ -4093,6 +4093,27 @@ end
               "https://thredds.met.no/thredds/dodsC/nora3/2020/01/01/00/fc2020010100_004_fp.nc"
         @test atmospheres.nora3_monthly_filename(config, 2020, 3) == "NORA3_202003.nc"
 
+        # A lead is one DAP2 request: the constraint is zero-based and percent-encoded, and the
+        # response's arrays come back in file order, not the requested one, with the fill as NaN.
+        subset = atmospheres.NORA3Subset(2:3, 5:7, zeros(2), zeros(3), zeros(2, 3), zeros(2, 3), zeros(2, 3), "")
+        @test atmospheres.dods_constraint(["a"], subset) == "a.a%5B0%5D%5B0%5D%5B4:6%5D%5B1:2%5D"
+        header =
+            "Dataset {\n    Structure {\n        Float32 b[time = 1][height = 1][y = 3][x = 2];\n    } b;\n" *
+            "    Structure {\n        Float32 a[time = 1][height = 1][y = 3][x = 2];\n    } a;\n} f.nc;\n\nData:\n"
+        a = Float32.(reshape(1:6, 2, 3))
+        b = a .+ 10
+        b[2, 3] = NCDatasets.fillvalue(Float32)
+        encode(slab) = vcat(
+            reinterpret(UInt8, hton.(UInt32[length(slab), length(slab)])),
+            reinterpret(UInt8, hton.(vec(slab))),
+        )
+        response = vcat(Vector{UInt8}(header), encode(b), encode(a))
+        slabs = atmospheres.parse_dods(response, ["a", "b"], subset)
+        @test slabs["a"] == a
+        @test slabs["b"][1, 1] == 11
+        @test isnan(slabs["b"][2, 3])
+        @test_throws ErrorException atmospheres.parse_dods(response, ["a", "c"], subset)
+
         # The rotation angle is measured from east to the source grid's local x axis.
         east_aligned_longitude = [10.0 10.0; 10.1 10.1; 10.2 10.2]
         east_aligned_latitude = [59.0 59.5; 59.0 59.5; 59.0 59.5]

@@ -6,6 +6,7 @@
 
 using Dates: Date, Day, lastdayofmonth
 import Dates
+using Downloads
 
 const NORA3_OPENDAP_URL = "https://thredds.met.no/thredds/dodsC/nora3"
 
@@ -23,6 +24,11 @@ const NORA3_SUBSET_MARGIN_CELLS = 2
 
 const NORA3_OPEN_RETRIES = 4
 const NORA3_RETRY_BACKOFF_SECONDS = 5
+
+# thredds.met.no answers `429 Too Many Requests` to more than about six rapid requests on one
+# connection. Each lead is one request, spaced by this.
+const NORA3_REQUEST_INTERVAL_SECONDS = 0.25
+const NORA3_LAST_REQUEST = Ref(0.0)
 
 # Prepared name => source variable, for the fields taken straight from the file.
 #
@@ -384,19 +390,21 @@ grown_range(range, limit) =
 """
     retry_open(body, url)
 
-Open an OPeNDAP dataset, run `body` on it and close it, retrying `NORA3_OPEN_RETRIES` times with
-exponential backoff. The THREDDS server intermittently refuses connections under load, and a
-year's download is thousands of opens, so a single transient failure must not lose a month.
+Open an OPeNDAP dataset, run `body` on it and close it, retrying as `with_retries` does.
 """
-function retry_open(body, url)
+retry_open(body, url) = with_retries(() -> NCDataset(body, url), url)
+
+"""
+    with_retries(body, url)
+
+Run `body()`, retrying `NORA3_OPEN_RETRIES` times with exponential backoff. The THREDDS server
+intermittently refuses connections under load, and a year's download is thousands of requests, so
+a single transient failure must not lose a month.
+"""
+function with_retries(body, url)
     for attempt = 1:NORA3_OPEN_RETRIES
         try
-            ds = NCDataset(url)
-            try
-                return body(ds)
-            finally
-                close(ds)
-            end
+            return body()
         catch exception
             attempt == NORA3_OPEN_RETRIES && rethrow()
             wait_seconds = NORA3_RETRY_BACKOFF_SECONDS * 2^(attempt - 1)
@@ -405,7 +413,7 @@ function retry_open(body, url)
         end
     end
 
-    error("Unreachable: retry_open exhausted its attempts without returning or rethrowing")
+    error("Unreachable: with_retries exhausted its attempts without returning or rethrowing")
 end
 
 """
@@ -560,42 +568,83 @@ end
 """
     read_lead(url, subset::NORA3Subset; instantaneous = true)
 
-One forecast lead's slabs over the subset, as source variable name => `Float32` matrix.
+One forecast lead's slabs over the subset, as source variable name => `Float32` matrix, fetched in
+a single DAP2 request rather than NetCDF's one per variable plus metadata.
 
 `instantaneous = false` reads only the accumulated fluxes, which is all that is needed of a lead
 whose own hour lies outside the month being written.
 """
 function read_lead(url, subset::NORA3Subset; instantaneous = true)
-    return retry_open(url) do ds
-        slabs = Dict{String,Matrix{Float32}}()
+    names = collect(values(NORA3_ACCUMULATED_VARIABLES))
+    instantaneous && append!(
+        names,
+        values(NORA3_INSTANTANEOUS_VARIABLES),
+        (NORA3_EASTWARD_SOURCE, NORA3_NORTHWARD_SOURCE),
+    )
+    request = string(url, ".dods?", dods_constraint(names, subset))
 
-        for source_name in values(NORA3_ACCUMULATED_VARIABLES)
-            slabs[source_name] = read_slab(ds, source_name, subset)
-        end
-
-        if instantaneous
-            for source_name in values(NORA3_INSTANTANEOUS_VARIABLES)
-                slabs[source_name] = read_slab(ds, source_name, subset)
-            end
-            slabs[NORA3_EASTWARD_SOURCE] = read_slab(ds, NORA3_EASTWARD_SOURCE, subset)
-            slabs[NORA3_NORTHWARD_SOURCE] = read_slab(ds, NORA3_NORTHWARD_SOURCE, subset)
-        end
-
-        return slabs
+    return with_retries(url) do
+        parse_dods(paced_download(request), names, subset)
     end
 end
 
 """
-    read_slab(ds, source_name, subset::NORA3Subset)
+    dods_constraint(names, subset::NORA3Subset)
 
-One horizontal slab of `source_name`, squeezing out the singleton height and time dimensions.
-Every NORA3 surface variable is dimensioned `(x, y, height, time)` in Julia order, whatever its
-height coordinate is called.
+The DAP2 constraint selecting the subset of every variable in `names`. `name.name` takes the array
+without its coordinate maps; indices are zero-based, in file order `[time][height][y][x]`, and the
+brackets are percent-encoded, which the server requires.
 """
-function read_slab(ds, source_name, subset::NORA3Subset)
-    data = ds[source_name][subset.x_range, subset.y_range, 1, 1]
+function dods_constraint(names, subset::NORA3Subset)
+    y = string(first(subset.y_range) - 1, ":", last(subset.y_range) - 1)
+    x = string(first(subset.x_range) - 1, ":", last(subset.x_range) - 1)
 
-    return Float32.(coalesce.(data, NaN32))
+    return join((string(name, ".", name, "%5B0%5D%5B0%5D%5B", y, "%5D%5B", x, "%5D") for name in names), ",")
+end
+
+"""
+    paced_download(url)
+
+The body of `url`, requested no sooner than `NORA3_REQUEST_INTERVAL_SECONDS` after the previous
+request. An error status throws.
+"""
+function paced_download(url)
+    wait_seconds = NORA3_LAST_REQUEST[] + NORA3_REQUEST_INTERVAL_SECONDS - time()
+    wait_seconds > 0 && sleep(wait_seconds)
+    NORA3_LAST_REQUEST[] = time()
+
+    return take!(Downloads.download(url, IOBuffer()))
+end
+
+"""
+    parse_dods(bytes, names, subset::NORA3Subset)
+
+The slabs in a DAP2 binary response, as source variable name => `Float32` matrix.
+
+The response is the DDS text up to `Data:`, then each array as its length twice (big-endian
+`UInt32`) and its big-endian `Float32` values, `x` fastest. The arrays come in file order, not
+the requested one, so their names are read from the DDS. NetCDF's default fill becomes `NaN32`.
+"""
+function parse_dods(bytes, names, subset::NORA3Subset)
+    marker = findfirst(codeunits("\nData:\n"), bytes)
+    isnothing(marker) && error("Not a DAP2 data response: $(String(bytes[1:min(end, 300)]))")
+    received = [match.captures[1] for match in eachmatch(r"Float32 (\w+)\[", String(bytes[1:first(marker)-1]))]
+    sort(received) == sort(names) || error("Requested $(sort(names)), received $received")
+
+    Nx = length(subset.x_range)
+    Ny = length(subset.y_range)
+    io = IOBuffer(bytes[last(marker)+1:end])
+    slabs = Dict{String,Matrix{Float32}}()
+
+    for name in received
+        count = ntoh(read(io, UInt32))
+        read(io, UInt32)
+        count == Nx * Ny || error("$name holds $count values, expected $(Nx * Ny)")
+        values = ntoh.(read!(io, Vector{Float32}(undef, count)))
+        slabs[name] = reshape(replace(values, NCDatasets.fillvalue(Float32) => NaN32), Nx, Ny)
+    end
+
+    return slabs
 end
 
 """

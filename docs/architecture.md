@@ -514,6 +514,11 @@ modules, in `include` order from `src/FjordSim.jl`:
    the reference Python pipeline this ports labels them at the midpoint and so needs a second
    `time_acc` axis, which `MultiYearNORA3` cannot read.
 
+   Each lead is fetched as one DAP2 `.dods` request for all its variables (`read_lead`), parsed by
+   `parse_dods`, with requests spaced by `NORA3_REQUEST_INTERVAL_SECONDS`. NetCDF's own OPeNDAP
+   reader makes about twelve requests per lead on one connection, and thredds.met.no answers
+   `429 Too Many Requests` after about six rapid ones.
+
    Winds arrive relative to the Lambert grid axes and are rotated on the native grid before
    anything is interpolated. `grid_rotation_angle` derives the angle by finite differences of the 2D
    longitude/latitude fields, so it carries over to any curvilinear source that publishes them; the

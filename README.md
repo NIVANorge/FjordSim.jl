@@ -5,7 +5,7 @@ A framework for regional ocean simulations built on top of
 [NumericalEarth](https://github.com/NumericalEarth/NumericalEarth.jl).
 
 A simulation is completely defined in a config file, for example
-[`src/Setups/oslofjorden.jl`](src/Setups/oslofjorden.jl).
+[`examples/oslofjorden.jl`](examples/oslofjorden.jl).
 It contains the simulation parameters and the programming objects that define the logic of a simulation.
 It is done using Julia's main feature/paradigm — multiple dispatch.
 Providing new structs and overloading existing/new methods on them, a user can change anything.
@@ -35,7 +35,7 @@ Set `FJORDSIM_DATA_ROOT` or `FJORDSIM_RESULTS_ROOT` to change the default direct
 
 ## Quick start: Oslofjorden
 
-`oslofjorden()` in `src/Setups/oslofjorden.jl` is the reference setup: Geonorge bathymetry,
+[`examples/oslofjorden.jl`](examples/oslofjorden.jl) is the reference setup: Geonorge bathymetry,
 NorKyst-800m forcing with NVE rivers, hourly NorKyst open-boundary data along the southern edge,
 and NORA3 atmosphere.
 Please note: It may take several hours to download the data.
@@ -46,22 +46,22 @@ as `NVE_API_KEY` in your environment before running that step.
 Preparing the data and running it is nine commands, in this order:
 
 ```bash
-julia --project -m FjordSim prepare_bathymetry   --config oslofjorden
-julia --project -m FjordSim download_forcing     --config oslofjorden
-julia --project -m FjordSim prepare_forcing      --config oslofjorden
-julia --project -m FjordSim add_rivers           --config oslofjorden
-julia --project -m FjordSim download_boundaries  --config oslofjorden
-julia --project -m FjordSim prepare_boundaries   --config oslofjorden
-julia --project -m FjordSim download_atmosphere  --config oslofjorden
-julia --project -m FjordSim prepare_atmosphere   --config oslofjorden
-julia --project -m FjordSim run_simulation       --config oslofjorden
+julia --project -m FjordSim prepare_bathymetry   --config examples/oslofjorden.jl
+julia --project -m FjordSim download_forcing     --config examples/oslofjorden.jl
+julia --project -m FjordSim prepare_forcing      --config examples/oslofjorden.jl
+julia --project -m FjordSim add_rivers           --config examples/oslofjorden.jl
+julia --project -m FjordSim download_boundaries  --config examples/oslofjorden.jl
+julia --project -m FjordSim prepare_boundaries   --config examples/oslofjorden.jl
+julia --project -m FjordSim download_atmosphere  --config examples/oslofjorden.jl
+julia --project -m FjordSim prepare_atmosphere   --config examples/oslofjorden.jl
+julia --project -m FjordSim run_simulation       --config examples/oslofjorden.jl
 ```
 
 Each subcommand is named after the function it calls, so the same steps run from the REPL:
 
 ```julia
 using FjordSim
-config = oslofjorden()
+config = fjord_config("examples/oslofjorden.jl")
 prepare_bathymetry(config)
 download_forcing(config)
 prepare_forcing(config)
@@ -75,8 +75,7 @@ run_simulation(config)
 
 `build_simulation(config)` returns the assembled simulation without starting it, which is the entry
 point for the REPL and the debugger. Snapshots and a per-launch log land in
-`~/FjordSim_results/oslofjorden/`; `julia --project -m FjordSim --help` lists every subcommand and
-setup.
+`~/FjordSim_results/oslofjorden/`; `julia --project -m FjordSim --help` lists every subcommand.
 
 What to re-run after changing the run window or the grid, how to archive a run before a fresh
 rerun, and how to resume are in [`docs/running.md`](docs/running.md); running on a cloud GPU is in
@@ -127,10 +126,11 @@ Rivers are their own `river_config`, independent of `forcing_config`: `add_river
 What does need a prepared forcing file is `FromForcing` initial conditions;
 use constants, functions, or `FromResults` from an earlier run instead.
 
-### A fjord outside the package
+### A new fjord
 
-A fjord does not have to live in FjordSim. Put the `FjordConfig` in a standalone `.jl` file whose last
-expression is the config, and pass its path to `--config`:
+No setup is part of the package: every one is a standalone `.jl` file whose last expression is its
+`FjordConfig`, passed by path to `--config`. A new fjord is a new file, written from scratch or built
+on another with `base = include("oslofjorden.jl")`, as the variants in `examples/` are:
 
 ```bash
 julia --project -m FjordSim run_simulation --config examples/oslofjorden_npzd.jl

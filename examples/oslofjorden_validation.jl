@@ -1,4 +1,4 @@
-# The Oslofjord setup rebuilt for validation against the FjordOs reports: `oslofjorden()`'s physics,
+# The Oslofjord setup rebuilt for validation against the FjordOs reports: `oslofjorden.jl`'s physics,
 # over the domain and the years those reports cover, with the in-run diagnostics a model-observation
 # comparison needs.
 #
@@ -25,22 +25,22 @@
 #   julia --project -m FjordSim run_simulation      --config examples/oslofjorden_validation.jl
 #   julia --project -m FjordSim validate_simulation --config examples/oslofjorden_validation.jl
 #
-# `add_rivers` needs `NVE_API_KEY`, exactly as `oslofjorden()` does.
+# `add_rivers` needs `NVE_API_KEY`, exactly as `oslofjorden.jl` does.
 #
-# # What is reused from `oslofjorden()`, and why it is reused rather than copied
+# # What is reused from `oslofjorden.jl`, and why it is reused rather than copied
 #
 # The float type, the closure (every coefficient and the `BoundarySponge`, the CATKE `minimum_tke`
 # floor excepted, below), the advection schemes (salinity's excepted, below), the boundary conditions and their two Marchesiello timescales, the
 # time stepping, every bathymetry smoothing knob and the whole river
-# configuration are taken from the config `oslofjorden()` returns, not restated. A validation of a model that has drifted from
+# configuration are taken from the config `oslofjorden.jl` returns, not restated. A validation of a model that has drifted from
 # the model being validated is worth nothing, and a copy is exactly what drifts. So a change to any of
-# them is made in `oslofjorden()` and arrives here by itself — but a bathymetry knob is a *data*
+# them is made in `oslofjorden.jl` and arrives here by itself — but a bathymetry knob is a *data*
 # change, and needs this file's `prepare_bathymetry`, `prepare_forcing`, `add_rivers` and
-# `prepare_boundaries` re-run as much as `oslofjorden()`'s.
+# `prepare_boundaries` re-run as much as `oslofjorden.jl`'s.
 #
 # # What is different, and why
 #
-# **The dataset.** `oslofjorden()` reads the operational NorKyst-800m archive at
+# **The dataset.** `oslofjorden.jl` reads the operational NorKyst-800m archive at
 # `fou-hi/norkyst800m`, which begins 2017-02-20 and so cannot reach this window at all. This reads the
 # Norkyst-v3 hindcast at `romshindcast/norkyst_v3` (`NorKystHindcastConfig`,
 # `NorKystHindcastBoundariesConfig`), MET's continuous free run from 2012, which carries the same
@@ -48,7 +48,7 @@
 # `ubar_eastward`/`vbar_northward` already rotated to geographic axes, where the operational
 # collection publishes ROMS' grid-relative pair and `NorKystBoundariesConfig` has to derotate it.
 #
-# **The domain.** 10.00-11.20°E by 58.95-59.93°N against `oslofjorden()`'s 10.2-11.02 by 59.0-59.93 —
+# **The domain.** 10.00-11.20°E by 58.95-59.93°N against `oslofjorden.jl`'s 10.2-11.02 by 59.0-59.93 —
 # the box FjordOs CL covers, at the same cell size. The three extensions each buy something the
 # validation needs and nothing else does:
 #
@@ -68,11 +68,11 @@
 # that enters among two-level columns, and plain WENO drove salinity beside its mouth below
 # TEOS10's -32 psu floor at day 1.5. The measurement is at the statement, beside `model` below.
 #
-# **The vertical-mixing floor.** CATKE's `minimum_tke` at 7e-7 rather than `oslofjorden()`'s 7e-6,
+# **The vertical-mixing floor.** CATKE's `minimum_tke` at 7e-7 rather than `oslofjorden.jl`'s 7e-6,
 # because the 9 April 2014 NIVA casts are more stratified than the run was at 7e-6. The measurement
 # is beside `closure` below.
 #
-# **The deep levels.** Eighteen 5.06 m levels between 41 and 132 m in place of `oslofjorden()`'s five
+# **The deep levels.** Eighteen 5.06 m levels between 41 and 132 m in place of `oslofjorden.jl`'s five
 # 11-27 m ones, because WENO's implicit vertical diffusion on those thick levels, not CATKE, is what
 # freshened the sill basins. The measurement is beside `z_faces` below.
 #
@@ -88,12 +88,12 @@
 # 31 March 2014, because Norkyst's deep inner basins are about 2 °C too cold and the sill basins keep
 # what they start with. The measurement is beside `initial_conditions` below.
 #
-# **The writers.** A 640-day run cannot afford `oslofjorden()`'s three-hourly full-domain snapshots —
+# **The writers.** A 640-day run cannot afford `oslofjorden.jl`'s three-hourly full-domain snapshots —
 # at 7.5 M cells a record is 155 MB, so that is roughly 790 GB — and a validation does not need them:
 # what it needs is high cadence at a few dozen points. So the 3D fields drop to daily (99 GB) for maps
 # and sections, and five station writers carry the time resolution at about 1 GB total.
 #
-# **The data root.** Only the Geonorge FileGDB is shared with `oslofjorden()`, by absolute path,
+# **The data root.** Only the Geonorge FileGDB is shared with `oslofjorden.jl`, by absolute path,
 # because the 4.5 GB national download is the same for any Norwegian domain. Everything else is a
 # different period and downloads into this file's own root.
 #
@@ -103,7 +103,7 @@
 # in force; the reasoning is beside each value below. A change to the box or to any bathymetry knob
 # reopens both.
 #
-# 1. **`z_faces`.** `oslofjorden()`'s own, to -467 m, refined between 41 and 132 m. The deepest
+# 1. **`z_faces`.** `oslofjorden.jl`'s own, to -467 m, refined between 41 and 132 m. The deepest
 #    sounding is 470.0 m, but one more layer would hold no water: see the reasoning beside the value.
 # 2. **`open_edges`.** `:south` alone: the only long wet wall.
 #
@@ -220,8 +220,9 @@ const OSLOFJORD_CTD_STATIONS = [
 # The two deep basins of the Inner Oslofjord, monitored for hydrography and oxygen by NIVA on behalf
 # of Fagrådet since 1973. Not in either METreport; the positions are the programme's own, from
 # AquaMonitor (`observations/niva_ctd/stations.csv`). Exact. They are here because deep-water
-# renewal in these two basins is what `docs/setups.md` names as "what this domain is judged on", and
-# neither report covers it — this is the part of the validation that goes beyond reproducing FjordOs.
+# renewal in these two basins is what `oslofjorden.jl`'s closure comment names as "what this domain
+# is judged on", and neither report covers it — this is the part of the validation that goes beyond
+# reproducing FjordOs.
 const INNER_OSLOFJORD_STATIONS = [
     Station(name = "Dk1", longitude = 10.569384, latitude = 59.814999),  # Steilene,     cast to 99 m
     Station(name = "Ep1", longitude = 10.723783, latitude = 59.786301),  # Bunnefjorden, cast to 149 m
@@ -230,7 +231,7 @@ const INNER_OSLOFJORD_STATIONS = [
 # A section along the Drammensfjord's deepest water, from the Drammenselva mouth (the river's own
 # cell in `rivers_nve.nc`) through the basin, over the Svelvik sill and down Sandebukta to the head of
 # Breiangen. Not an observation programme: it is there to show the basin's vertical mixing and its
-# renewal over the sill, the deep freshening `docs/setups.md` calls the main open problem. The
+# renewal over the sill, the deep freshening `TODO.md` calls the main open problem. The
 # positions are cell centres of the deepest path through this run's 39-level `bathymetry.nc`, found
 # by Dijkstra over wet cells with a step cost of distance / depth² (`thalweg.jl` in
 # `gs://fjordsim/analysis/oslofjorden_validation_dz5_kappah0/`), every second cell of its 150 plus
@@ -343,7 +344,7 @@ const OSLOFJORD_TEMPERATURE_STATIONS = [
 # `TideCorrectedBoundaries` does it after the regrid, inside `prepare_boundaries`. It holds the
 # Norkyst-v3 boundary config and forwards everything else to it. Specific to this dataset and this
 # box, which is why it lives here and not in `src/`. The gains are measured for the hindcast's
-# 2014-15 tide only. `oslofjorden()`'s operational archive would need its own.
+# 2014-15 tide only. `oslofjorden.jl`'s operational archive would need its own.
 
 """
     TidalGain(constituent, amplitude_factor, phase_shift)
@@ -509,23 +510,24 @@ end
 
 # --- The config -------------------------------------------------------------------------------
 
-base = oslofjorden()
+# The config `oslofjorden.jl` evaluates to, built from the file beside this one.
+base = include("oslofjorden.jl")
 data_root = fjord_data_root("oslofjorden_validation")
-# `oslofjorden()`'s faces with 41-132 m split into eighteen equal levels; see beside `z_faces` below.
+# `oslofjorden.jl`'s faces with 41-132 m split into eighteen equal levels; see beside `z_faces` below.
 z_faces = let faces = base.grid_config.z_faces
     vcat(filter(z -> z <= -132, faces), collect(range(-132.0, -41.0; length = 19))[2:end-1],
          filter(z -> z >= -41, faces))
 end
 years = [2014, 2015]
 
-# The three configs below are `oslofjorden()`'s own instances with only their location and period
+# The three configs below are `oslofjorden.jl`'s own instances with only their location and period
 # changed, rather than fresh ones restating its fields: every smoothing knob, every river override and
 # threshold, and the atmosphere's resolution then carry over by construction, including any field
-# added later. `oslofjorden()` builds new instances on every call, so this mutates nothing shared.
+# added later. `include` evaluates `oslofjorden.jl` afresh, so this mutates nothing shared.
 
 bathymetry = base.bathymetry_config
 # Oslofjord's extracted copy of the national FileGDB, by absolute path — the same sharing
-# `drammensfjorden()` does. Resolved before `data_root` moves, which it is relative to.
+# `drammensfjorden.jl` does. Resolved before `data_root` moves, which it is relative to.
 bathymetry.geodatabase_file = geodatabase_path(bathymetry)
 bathymetry.data_root = data_root
 # This box reaches two places the FileGDB has no data for, and the gridding fills both with water
@@ -533,19 +535,19 @@ bathymetry.data_root = data_root
 # of 10.25°E, a gap in the FileGDB's inland coverage, which became a 7 m sea joined to the
 # Drammensfjord; and Swedish territory south of Strömstad, which became a 100 m one on the eastern
 # wall. Every real wet cell lies within 1.5 km of a sounding, so 2 km removes both and nothing else.
-# `oslofjorden()`'s box touches neither and does not set it.
+# `oslofjorden.jl`'s box touches neither and does not set it.
 bathymetry.max_sounding_distance = 2000.0
 
 # Discovery will find more mouths than Oslofjord's 21 because the box is larger — Numedalslågen in
 # the west, and Glomma's Singlefjord side in the east — which is the intended effect. The FjordOs
 # river table has 37 named rivers over a comparable domain, so the two counts should end up close.
-# Every override `oslofjorden()` states lies well inside this box, which only grew, so none of them
+# Every override `oslofjorden.jl` states lies well inside this box, which only grew, so none of them
 # matches no mouth.
 rivers = base.river_config
 rivers.data_root = data_root
 rivers.years = years
 
-# Three of `oslofjorden()`'s gauges were chosen for 2020 and have no daily values on HydAPI in 2014
+# Three of `oslofjorden.jl`'s gauges were chosen for 2020 and have no daily values on HydAPI in 2014
 # or 2015, so those overrides are restated with gauges that do. Each was checked as daily values
 # over both years.
 #
@@ -575,7 +577,7 @@ atmosphere.years = years
 
 simulation = base.simulation_config
 
-# The first physics departure from `oslofjorden()`: salinity is advected by bounds-preserving WENO.
+# The first physics departure from `oslofjorden.jl`: salinity is advected by bounds-preserving WENO.
 # Plain WENO is not bounded, and this domain adds Numedalslågen at Larvik, a large river entering
 # among two-level columns (measured while rivers were still a relaxation to S = 0). The horizontal reconstruction across that front drove the
 # neighbouring surface cells to -29 psu over a 110 psu cell beneath by day 1.5, and past -32 a step
@@ -586,13 +588,13 @@ simulation = base.simulation_config
 # real here, and a NamedTuple must name `e`, or Oceananigans gives it the unbounded `Centered()`
 # default.
 #
-# Not changed in `oslofjorden()` itself, because a NamedTuple there would leave the NPZD example's
+# Not changed in `oslofjorden.jl` itself, because a NamedTuple there would leave the NPZD example's
 # tracers on `Centered()`.
 scheme = simulation.model.tracer_advection
 
 # The other departure: CATKE's `minimum_tke` at 7e-7, a tenfold cut in the background diffusivity
-# that sets κ below about 6 m (see `oslofjorden()`), with the rest of the closure as it is there.
-# `oslofjorden()` keeps 7e-6 to fit basin-mean diffusivities from density budgets. Against the
+# that sets κ below about 6 m (see `oslofjorden.jl`), with the rest of the closure as it is there.
+# `oslofjorden.jl` keeps 7e-6 to fit basin-mean diffusivities from density budgets. Against the
 # NIVA casts of 9 April 2014 (day 8), the run with 7e-6 — rivers already a volume source — was too
 # salty in the top 5 m and too weakly stratified. Salinity at 25 m minus 1 m was 7.3 at Ep1 and
 # 6.2 at Dk1, against 11.0 and 9.4 observed. A 7e-7 run over the same days gave 9.3 and 7.4, with
@@ -633,7 +635,7 @@ model = CoupledHydrostaticSimulation(
 FjordConfig(
     grid_config = EvenGrid(
         # 351 x 548 cells over 1.20° x 0.98° is 193.8 m in longitude at 59.4°N and 199.1 m in
-        # latitude — the same cell size as `oslofjorden()`, deliberately. Everything tuned against Δx
+        # latitude — the same cell size as `oslofjorden.jl`, deliberately. Everything tuned against Δx
         # or Δx⁴ carries over only if Δx does: the biharmonic coefficients are justified by a damping
         # rate that goes as ν₄·16/Δx⁴, and changing the resolution without re-deriving them would
         # silently invalidate the one number in that setup that was measured rather than chosen.
@@ -642,7 +644,7 @@ FjordConfig(
         halo      = base.grid_config.halo,
         longitude = (10.00, 11.20),
         latitude  = (58.95, 59.93),
-        # `oslofjorden()`'s 26 levels, to -467 m, with the five between 41 and 132 m replaced by
+        # `oslofjorden.jl`'s 26 levels, to -467 m, with the five between 41 and 132 m replaced by
         # eighteen of 5.06 m: 39 in all. Those five were 11-27 m thick, and on them WENO's implicit
         # vertical diffusion, ~|w|Δz with the basins' 1-4e-4 m/s grid-scale w, mixed the sill
         # basins at 5-10x CATKE's κ there. Over this run's first 60 days
@@ -655,7 +657,7 @@ FjordConfig(
         # The 26 levels clear that domain's deepest sounding of
         # 463.0 m. This box extends into the Skagerrak and takes in more of the Hvalerdjupet, which
         # METreport 4/2016 §1.1 describes as "a 400 m deep basin extending northeastward from the
-        # Skagerrak", and its deepest sounding is 470.0 m. `oslofjorden()`'s rule — a geometric
+        # Skagerrak", and its deepest sounding is 470.0 m. `oslofjorden.jl`'s rule — a geometric
         # stretch of ratio 1.25 from a 1 m surface cell, capped at 33.5 m, with just enough 33.5 m
         # layers to clear the deepest sounding — would add a layer to -500.5 m, and measured, that
         # layer holds no water: only eight columns of the trench reach below -467 m, by at most
@@ -671,7 +673,7 @@ FjordConfig(
         # there. `z_faces` is written into `bathymetry.nc` and `simulation_grid` reads the file, not
         # this config, so a change here needs `prepare_bathymetry` re-run.
         z_faces   = z_faces,
-        # `oslofjorden()`'s, since the model below is built in it.
+        # `oslofjorden.jl`'s, since the model below is built in it.
         float_type = base.grid_config.float_type,
     ),
     bathymetry_config = bathymetry,
@@ -727,7 +729,7 @@ FjordConfig(
         model               = model,
         boundary_conditions = simulation.boundary_conditions,
         writers = (
-            # Daily, not `oslofjorden()`'s three-hourly. One record of five fields on this grid is
+            # Daily, not `oslofjorden.jl`'s three-hourly. One record of five fields on this grid is
             # 155 MB, so three-hourly over 640 days is about 790 GB against 99 GB daily. The full
             # fields are here for maps, for the two Statnett transect sections and for the M2
             # amplitude and phase maps, none of which needs sub-daily sampling — everything that

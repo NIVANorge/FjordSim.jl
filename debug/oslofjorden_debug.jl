@@ -3,7 +3,7 @@ Pkg.activate(joinpath(@__DIR__, ".."))
 
 using FjordSim
 
-config = oslofjorden()
+config = fjord_config(joinpath(@__DIR__, "..", "examples", "oslofjorden.jl"))
 prepare_bathymetry(config)
 # download_forcing(config)
 # prepare_forcing(config)

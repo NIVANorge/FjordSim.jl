@@ -9,7 +9,7 @@ report and scripts are in that results directory under `validation/report_full/`
 
 This probably applies to every setup and example: `oslofjorden` and `drammensfjorden` use
 `CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6)`. `examples/lista.jl` has moved to 7e-7. The
-`oslofjorden()` comment shows that this TKE floor, not the prognostic TKE, sets κ below about 6 m.
+`examples/oslofjorden.jl` comment shows that this TKE floor, not the prognostic TKE, sets κ below about 6 m.
 It argues that 7e-6 is at the low end of the measured basin diffusivities, but the first run at 7e-6
 (days 0–298, 2014-04 to 2015-01) contradicts that:
 
@@ -24,7 +24,7 @@ Tasks:
       example from the tracer variance budget, and compare it with CATKE's κ.
 - [ ] Revisit `HorizontalScalarBiharmonicDiffusivity`'s κ. NorKyst uses a 10 m² s⁻¹ harmonic κ on
       tracers.
-- [ ] Decide whether `oslofjorden()` and `drammensfjorden()` follow the example to 7e-7, and update
+- [ ] Decide whether `examples/oslofjorden.jl` and `examples/drammensfjorden.jl` follow the example to 7e-7, and update
       the rationale comments in the setups. The 640-day run at 7e-7 scores salinity RMSE 1.73 g/kg
       and temperature RMSE 1.22 °C against 216 casts (FjordOs 2.79 and 2.34), unbiased in
       temperature, but 0.4–1.4 g/kg too fresh below 5 m and overheats the 2–3 m deep cells (see
@@ -33,8 +33,8 @@ Tasks:
 ## Bathymetry
 
 The gridding and sill fixes are in (linear gridding of the soundings, `preserve_sills`,
-`raw_resolution_factor = 4`, `max_slope_factor = 0.5`, faces to −467 m); see "Bathymetry gridding and
-sills" in `docs/setups.md`. On the validation box the model columns at the CTD stations are within
+`raw_resolution_factor = 4`, `max_slope_factor = 0.5`, faces to −467 m); the measurements are in the
+bathymetry comments of `examples/oslofjorden.jl`. On the validation box the model columns at the CTD stations are within
 15 m of the casts except Im2 (165 against 201 m) in the narrow Drøbak Sound, and Drøbak is 23.5 m
 against the real ~20 m.
 

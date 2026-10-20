@@ -16,6 +16,7 @@ export AbstractGridConfig,
     AbstractCallbackConfig,
     AbstractTimeSteppingConfig,
     FjordConfig,
+    fjord_config,
     domain_grid,
     simulation_grid,
     model_closure,
@@ -577,7 +578,7 @@ This is what lets the same setup run against a laptop's home directory and a clo
 disk without editing the setup: the roots are the only thing that differs between the two, since
 every other path resolves against them through the helpers below.
 
-A fjord that reads another's downloads passes that other name — `drammensfjorden()` shares
+A fjord that reads another's downloads passes that other name — `examples/drammensfjorden.jl` shares
 Oslofjord's bathymetry source as `fjord_data_root("oslofjorden")` — so a relocation moves both.
 """
 fjord_data_root(fjord) =
@@ -798,8 +799,8 @@ coverage_window(config::AbstractSimulationConfig) =
 """
     FjordConfig
 
-Complete setup configuration for one fjord, as returned by the setup functions in
-`FjordSim.Setups`.
+Complete setup configuration for one fjord, as returned by a config file loaded with
+`fjord_config`.
 
 The fields are parametric over the abstract config supertypes rather than fixed to the
 built-in types, so a new grid, bathymetry source or forcing dataset only needs a struct
@@ -850,6 +851,34 @@ Base.@kwdef mutable struct FjordConfig{
     boundary_config::O = nothing
     atmosphere_config::A = nothing
     simulation_config::S = nothing
+end
+
+"""
+    fjord_config(path)
+
+Load a config file and return the `FjordConfig` it evaluates to: a Julia script whose last
+expression is a `FjordConfig`, such as `examples/oslofjorden.jl`. A setup is never part of the
+package, so this is how every one of them is read, by `--config` and from the REPL alike.
+
+Evaluated in `Main` rather than in this module: the file's own `using FjordSim` and any helper
+bindings belong in the caller's namespace, and a bare `include` here would resolve `path`
+relative to `src/`. Each call evaluates the file afresh, so it returns a new config every time —
+the structs are mutable and `native_region!` edits the bathymetry config, so a shared instance
+would leak one step's state into the next.
+"""
+function fjord_config(path)
+    filepath = abspath(expanduser(path))
+    isfile(filepath) || throw(ArgumentError("Config file $filepath does not exist"))
+
+    config = Base.include(Main, filepath)
+    config isa FjordConfig || throw(
+        ArgumentError(
+            "$filepath evaluated to a $(typeof(config)), not a FjordConfig. " *
+            "A config file's last expression must be the FjordConfig it describes.",
+        ),
+    )
+
+    return config
 end
 
 end  # module Configs

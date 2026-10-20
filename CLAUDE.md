@@ -11,18 +11,19 @@
 | [`gcp/README.md`](gcp/README.md) | anything with `gcp/fjordsim-gcp` or the cloud VM |
 | [`docs/architecture.md`](docs/architecture.md) | changing a module in `src/` — its section only (design rationale, ordering constraints, measured numbers) |
 | [`docs/adding-a-source.md`](docs/adding-a-source.md) | adding a grid, bathymetry, forcing, river, boundary, atmosphere or observation source |
-| [`docs/setups.md`](docs/setups.md) | adding a fjord or tuning a setup's parameters |
+| [`docs/setups.md`](docs/setups.md) | writing a new setup or changing a setup's parameters |
 | [`README.md`](README.md) | user-facing overview, quick start, `run_simulation` fields |
 | [`TODO.md`](TODO.md) | open work and the measurements behind it |
 
-The `run-simulation` skill (`.claude/skills/run-simulation/`) is the checklist for running steps.
+The `run-simulation` skill (`.claude/skills/run-simulation/`) is the checklist for running steps,
+and the `new-setup` skill (`.claude/skills/new-setup/`) the one for writing a new setup.
 
 ## Commands
 
 ```bash
 julia --project test/runtests.jl                                   # all tests
-julia --project -m FjordSim --help                                 # subcommands and setups
-julia --project -m FjordSim <step> --config <setup-or-path.jl>     # one pipeline step
+julia --project -m FjordSim --help                                 # subcommands
+julia --project -m FjordSim <step> --config <setup.jl>             # one pipeline step
 ```
 
 The steps, in order: `prepare_bathymetry`, `download_forcing`, `prepare_forcing`, `add_rivers`
@@ -59,8 +60,9 @@ methods on it — never by editing the generic pipeline.** Read `docs/adding-a-s
 
 The modules, in `include` order from `src/FjordSim.jl`:
 
-1. **Configs** (`src/Configs.jl`) — the abstract supertypes, `FjordConfig`, the edge vocabulary
-   (`LATERAL_EDGES`, `open_edges`), and the path helpers every source inherits.
+1. **Configs** (`src/Configs.jl`) — the abstract supertypes, `FjordConfig`, `fjord_config` (loads
+   a config file), the edge vocabulary (`LATERAL_EDGES`, `open_edges`), and the path helpers every
+   source inherits.
 2. **Utils** (`src/Utils.jl`) — `progress` callback, `recursive_merge`, time-step helpers.
 3. **Plotting** (`src/Plotting.jl`) — one `plot_*` function per pipeline, dispatching on config
    supertypes.
@@ -79,19 +81,20 @@ The modules, in `include` order from `src/FjordSim.jl`:
 11. **Grids** (`src/Grids.jl`) — `EvenGrid`, the `domain_grid`/`simulation_grid` hooks.
 12. **Simulations** (`src/Simulations.jl`) — `SimulationConfig`, `build_simulation`/`run_simulation`,
     writers, callbacks, looping, checkpointing, initial conditions.
-13. **Setups** (`src/Setups/`) — the built-in fjords; see `docs/setups.md`.
-14. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
+13. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
     observation sources, skill and tidal statistics, and the comparison figures. `StationWriter`
     (in `Simulations`) is what a run writes for it.
-15. **CLI** (`src/CLI.jl`) — subcommand dispatch, logging.
-16. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
+14. **CLI** (`src/CLI.jl`) — subcommand dispatch, logging.
+15. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
 
 ## Setups
 
-`src/Setups/` holds one lowercase file per fjord, each a zero-arg function returning a fresh
-`FjordConfig`, registered in `SETUPS`. Adding a fjord is a two-place edit: the new file, and its
-entry in `SETUPS`. `SimulationConfig` and everything it nests have **no defaults** — every field is
-a scientific choice a setup must state.
+No setup is part of the package. A setup is a script whose last expression is a `FjordConfig`,
+passed by path to `--config` and loaded by `fjord_config`; `examples/` holds the worked ones
+(`oslofjorden.jl`, `drammensfjorden.jl`, `lista.jl`, and variants that
+`include("oslofjorden.jl")`). Adding a fjord is one new file. `SimulationConfig` and everything it
+nests have **no defaults** — every field is a scientific choice a setup must state. How to write
+one is `docs/setups.md`; why a setup has the values it has belongs in its own comments.
 
 ## GPU & Kernel Compatibility
 
@@ -130,11 +133,10 @@ forcings.
 
 - **Tests are general, never setup-specific.** Never assert a value a setup states — a grid size, a
   box, a year, a `start_date`, a station list, which dataset it picks. Those are the setup author's
-  to change, and a test that pins them turns every scientific choice into a test failure. Assert the
-  *conventions* a setup getting it wrong would break, over `setup_names()`, the way the "Setups"
-  testset already does.
-- Build fixtures from `test/utilities.jl` (`test_simulation_config`, `immersed_test_grid`, ...)
-  rather than reading a registered setup with `fjord_config`.
+  to change, and a test that pins them turns every scientific choice into a test failure. The suite
+  never loads a file from `examples/`.
+- Build fixtures from `test/utilities.jl` (`test_simulation_config`, `immersed_test_grid`, ...).
+  A config file a test writes is evaluated in `Main`, so it can call those fixtures too.
 - **Do not test plotting.** No test asserts that a figure was drawn or how it looks.
 - The suite is offline: write a fixture file rather than fetching one. Anything needing the network
   is a manual integration check, not a test.

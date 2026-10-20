@@ -3,7 +3,7 @@
 # Sourced by fjordsim-gcp and build_image.sh. It reads the file rather than `source`-ing it so a
 # value already in the environment wins, which is what makes the documented one-off work:
 #
-#   BUCKET=gs://other-bucket gcp/fjordsim-gcp run --config oslofjorden --steps run_simulation
+#   BUCKET=gs://other-bucket gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation
 #
 # Plain `source` would assign unconditionally and silently ignore that override.
 

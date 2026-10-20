@@ -1,11 +1,11 @@
-# The `oslofjorden()` setup with the simplest OceanBioME.jl biogeochemistry bolted on: a
+# The `examples/oslofjorden.jl` setup with the simplest OceanBioME.jl biogeochemistry bolted on: a
 # four-compartment nitrogen NPZD model (nutrient, phytoplankton, zooplankton, detritus) in
 # mmol N m⁻³.
 #
 # Nothing in `src/` changes. The point of this file is to show the three ways an out-of-tree config
 # extends FjordSim, in increasing order of reach:
 #
-#   1. **Reuse.** `oslofjorden()` is called, and the pieces that need no change — the grid, the
+#   1. **Reuse.** `oslofjorden.jl` is included, and the pieces that need no change — the grid, the
 #      bathymetry, the atmosphere — are passed straight through.
 #   2. **A new config subtype with a new hook method.** `NPZDModel`, `NPZDRivers` and
 #      `NPZDBoundaries` subtype an `Abstract*Config`, hold the built-in config they extend, and
@@ -30,19 +30,19 @@
 #     without `south_N`, which is why the boundary append is not optional.
 #
 # The prepared files are new names under the shared `data_root`, so the downloads are reused and
-# `oslofjorden()`'s own `forcing.nc` and `boundaries.nc` are left untouched:
+# `oslofjorden.jl`'s own `forcing.nc` and `boundaries.nc` are left untouched:
 #
-#   julia --project -m FjordSim prepare_bathymetry  --config oslofjorden          # shared, if not run
-#   julia --project -m FjordSim download_forcing    --config oslofjorden          # shared
-#   julia --project -m FjordSim download_boundaries --config oslofjorden          # shared
-#   julia --project -m FjordSim download_atmosphere --config oslofjorden          # shared
-#   julia --project -m FjordSim prepare_atmosphere  --config oslofjorden          # shared
+#   julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden.jl   # shared, if not run
+#   julia --project -m FjordSim download_forcing    --config examples/oslofjorden.jl   # shared
+#   julia --project -m FjordSim download_boundaries --config examples/oslofjorden.jl   # shared
+#   julia --project -m FjordSim download_atmosphere --config examples/oslofjorden.jl   # shared
+#   julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden.jl   # shared
 #   julia --project -m FjordSim prepare_forcing     --config examples/oslofjorden_npzd.jl
 #   julia --project -m FjordSim add_rivers          --config examples/oslofjorden_npzd.jl
 #   julia --project -m FjordSim prepare_boundaries  --config examples/oslofjorden_npzd.jl
 #   julia --project -m FjordSim run_simulation      --config examples/oslofjorden_npzd.jl
 #
-# `add_rivers` needs `NVE_API_KEY`, exactly as `oslofjorden()` does.
+# `add_rivers` needs `NVE_API_KEY`, exactly as `oslofjorden.jl` does.
 
 using FjordSim
 using Oceananigans
@@ -538,7 +538,7 @@ concentrations multiply is already the observed daily HydAPI series — so the r
 follows the floods even though its concentration does not.
 
 Keyed by outlet *name*, which is the only identifier a `RiverLocation` carries — `vassdragsnr`, what
-`oslofjorden()` keys its own overrides by, does not survive into one. A name is a weaker key: the
+`oslofjorden.jl` keys its own overrides by, does not survive into one. A name is a weaker key: the
 gauged rivers are named only because that setup's overrides state a `name`, and renaming one there
 would drop it to `RIVER_TOTAL_NITROGEN_DEFAULT` with nothing to notice. Hence the log line, which
 says which outlets were matched and which took the default.
@@ -618,7 +618,7 @@ end
 Not optional. `open_tracer_boundary_conditions` puts a radiating `Value` condition on *every* tracer
 `model_tracers` names, and `boundary_series_value` raises rather than defaulting when the prepared
 file has no series for one — naming an open edge is a statement that the boundary data supplies the
-whole exterior state there. So `OpenLateralBoundaryFromData` below is `oslofjorden()`'s, unchanged,
+whole exterior state there. So `OpenLateralBoundaryFromData` below is `oslofjorden.jl`'s, unchanged,
 and this is what makes it work.
 
 `boundary_variable_names` is extended as well as `prepare_boundaries`: the map is what
@@ -671,12 +671,12 @@ end
 
 # --- The config itself --------------------------------------------------------------------------
 
-# `oslofjorden()` is the whole science of this run — grid, bathymetry, closure, rivers, boundary
+# `oslofjorden.jl` is the whole science of this run — grid, bathymetry, closure, rivers, boundary
 # data, atmosphere, time stepping. Everything below either passes one of its pieces through
-# untouched or wraps exactly one of them.
-base = oslofjorden()
+# untouched or wraps exactly one of them. Built from the file beside this one.
+base = include("oslofjorden.jl")
 
-# `output_file` is a new name so `oslofjorden()`'s own `rivers_nve.nc` survives for comparison, and
+# `output_file` is a new name so `oslofjorden.jl`'s own `rivers_nve.nc` survives for comparison, and
 # so does every other file this example writes.
 rivers = NPZDRivers(
     base.river_config,
@@ -684,7 +684,7 @@ rivers = NPZDRivers(
     plot_file = "rivers_npzd.png",
 )
 
-# A fresh `NorKystConfig` rather than a mutated `base.forcing_config`, so `oslofjorden()`'s own
+# A fresh `NorKystConfig` rather than a mutated `base.forcing_config`, so `oslofjorden.jl`'s own
 # `forcing.nc` survives. Same `output_directory`, so the downloaded NorKyst months are shared rather
 # than fetched again — `download_forcing` is the one step in this
 # pipeline that talks to MET's OPeNDAP server, and the only reason to re-run it is a new year.
@@ -725,13 +725,13 @@ FjordConfig(
     atmosphere_config = base.atmosphere_config,
     simulation_config = SimulationConfig(
         # Its own root. Checkpoints are shared per `results_root`, so pointing this at
-        # `oslofjorden()`'s would have the two runs pick each other's up.
+        # `oslofjorden.jl`'s would have the two runs pick each other's up.
         results_root = fjord_results_root("oslofjorden_npzd"),
         architecture = simulation.architecture,
         model = NPZDModel(
             simulation.model,
             # `:T` is in the list because NPZD's growth rate carries a Q₁₀ and therefore requires it;
-            # see `NPZDModel`. `tracer_advection` is `oslofjorden()`'s scalar `WENO()`, which was
+            # see `NPZDModel`. `tracer_advection` is `oslofjorden.jl`'s scalar `WENO()`, which was
             # already chosen so that a tracer the setup does not enumerate — CATKE's `e` then, these
             # four now — does not silently fall back to an unbounded centered scheme.
             tracers = (:T, :S, :N, :P, :Z, :D),
@@ -747,7 +747,7 @@ FjordConfig(
             SnapshotWriter(
                 name = :ocean,
                 output_file = "snapshots_ocean.nc",
-                # The four new tracers beside `oslofjorden()`'s five. `PAR` is a biogeochemical
+                # The four new tracers beside `oslofjorden.jl`'s five. `PAR` is a biogeochemical
                 # *auxiliary* field rather than a model field, so it is not nameable here.
                 variables = (:T, :S, :u, :v, :e, :N, :P, :Z, :D),
                 interval = 3hour,

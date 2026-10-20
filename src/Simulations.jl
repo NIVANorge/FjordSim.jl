@@ -2062,7 +2062,7 @@ time-step wizard attached, and return it without running it.
 Split from `run_simulation` so a run can be inspected or stepped by hand:
 
 ```julia
-simulation = build_simulation(oslofjorden())
+simulation = build_simulation(fjord_config("examples/oslofjorden.jl"))
 run!(simulation)
 ```
 

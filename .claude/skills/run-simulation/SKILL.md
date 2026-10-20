@@ -21,9 +21,9 @@ relevant one first; this is the order to work through.
      anything in the bucket;
    - a different experiment → it needs its own config with its own `results_root`.
 4. **Run.**
-   - Locally: `julia --project -m FjordSim <step> --config <setup-or-path.jl>`.
+   - Locally: `julia --project -m FjordSim <step> --config <setup.jl>`.
    - On GCP: check the VM is up, then
-     `gcp/fjordsim-gcp run --config <setup> --steps <a,b,...> [--gpu] [--resume] [--run-id <id>]`.
+     `gcp/fjordsim-gcp run --config <setup.jl> --steps <a,b,...> [--gpu] [--resume] [--run-id <id>]`.
      Use `--dry-run` first when unsure what a launch will do. `add_rivers` needs `NVE_API_KEY`.
 5. **Watch it.** `gcp/fjordsim-gcp status`, `gcp/fjordsim-gcp logs <run-id>`; stop any monitoring
    loop you started once it's no longer needed.

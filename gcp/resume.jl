@@ -1,4 +1,4 @@
-# Resume a simulation from its newest checkpoint: `julia --project gcp/resume.jl <setup-or-path>`.
+# Resume a simulation from its newest checkpoint: `julia --project gcp/resume.jl <config.jl>`.
 #
 # `pickup` is a `SimulationConfig` field rather than a command-line option, so resuming after a
 # Spot preemption would otherwise mean editing the setup. `FjordConfig` and `SimulationConfig` are
@@ -11,7 +11,7 @@
 using FjordSim
 using FjordSim.CLI: log_path, show_compact_error, tee_output
 
-length(ARGS) == 1 || error("usage: julia --project gcp/resume.jl <setup-name-or-config-path>")
+length(ARGS) == 1 || error("usage: julia --project gcp/resume.jl <config.jl>")
 
 config = fjord_config(ARGS[1])
 simulation_config = config.simulation_config

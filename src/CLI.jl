@@ -2,8 +2,7 @@ module CLI
 
 export parse_arguments
 
-using ..Configs: AbstractSimulationConfig, run_tag
-using ..Setups: fjord_config, setup_names
+using ..Configs: AbstractSimulationConfig, fjord_config, run_tag
 using ..Bathymetry: prepare_bathymetry
 using ..Atmospheres: prepare_atmosphere, download_atmosphere
 using ..Forcing: prepare_forcing, download_forcing
@@ -98,15 +97,15 @@ Subcommands, in the order a setup is prepared and run:
                         output is an error.
 
 Options:
-  --config SETUP   Which setup to prepare. Required. One of: $(join(setup_names(), ", ")).
-                   A path ending in .jl is loaded as an out-of-tree config file instead.
+  --config FILE    The setup: a Julia script whose last expression is a FjordConfig, e.g.
+                   examples/oslofjorden.jl. Required.
   -h, --help       Show this message.
 
 Everything other than which setup to prepare is stated in the setup itself, so this is the whole
 command-line surface. The same steps are available from the REPL:
 
   using FjordSim
-  config = $(first(setup_names()))()
+  config = fjord_config("examples/oslofjorden.jl")
   prepare_bathymetry(config)
 """
 
@@ -268,7 +267,7 @@ function parse_arguments(args)
 
     isnothing(subcommand) &&
         throw(ArgumentError("A subcommand is required. Available: $(join(subcommand_names(), ", "))."))
-    (isnothing(config) || isempty(config)) && throw(ArgumentError("--config SETUP is required"))
+    (isnothing(config) || isempty(config)) && throw(ArgumentError("--config FILE is required"))
 
     return (; subcommand, config, help = false)
 end
@@ -287,7 +286,7 @@ would be printed after the redirect had already been torn down, so the error —
 having in the log — would be the only thing missing from it.
 
 `driver` runs through `Base.invokelatest` because `config` may carry types and methods that did not
-exist until `fjord_config` loaded them: an out-of-tree `--config path.jl` file is `Base.include`d
+exist until `fjord_config` loaded them: the `--config` file is `Base.include`d
 from within this same `main` call, and any new struct or method it defines is invisible to code
 already running in the world active when `main` started — a plain `driver(config)` would throw
 "method too new" the first time a config file adds a new dispatch, e.g. a new

@@ -487,7 +487,7 @@ normal velocity, which is a closed wall, so only the tracers there were ever ope
 
 The values come from the boundary data config a setup names on its `FjordConfig`, read by
 `FjordSim.Boundaries.boundary_series` and handed in by `build_simulation` — hourly NorKyst for the
-built-in setups, because a Flather boundary without a tide is not worth prescribing and the interior
+setups in `examples/`, because a Flather boundary without a tide is not worth prescribing and the interior
 forcing is daily means.
 
 Called `OpenLateralBoundaryFromForcing` while the boundary dataset hung off the forcing config. The

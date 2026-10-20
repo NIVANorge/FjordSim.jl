@@ -12,7 +12,6 @@ readonly BUCKET="${BUCKET}"
 readonly FJORD="${FJORD}"
 readonly RUN_ID="${RUN_ID}"
 readonly STEPS="${STEPS}"
-readonly CONFIG_REF="${CONFIG_REF}"
 readonly CONFIG_OBJECT="${CONFIG_OBJECT}"
 readonly IMAGE_URI="${IMAGE_URI}"
 readonly USE_GPU="${USE_GPU}"
@@ -118,11 +117,10 @@ elif [[ "$STEPS" == *run_simulation* ]]; then
     sudo rm -rf "$RESULTS/$FJORD"
 fi
 
-config_arg="$CONFIG_REF"
-if [[ -n "$CONFIG_OBJECT" ]]; then
-    gcloud storage cp "$CONFIG_OBJECT" "$STAGE/configs/$(basename "$CONFIG_OBJECT")" --quiet
-    config_arg="/configs/$(basename "$CONFIG_OBJECT")"
-fi
+# The whole directory the config was uploaded with, so an `include` of a sibling resolves.
+mkdir -p "$STAGE/configs/$RUN_ID"
+gcloud storage cp "$(dirname "$CONFIG_OBJECT")/*.jl" "$STAGE/configs/$RUN_ID/" --quiet
+config_arg="/configs/$RUN_ID/$(basename "$CONFIG_OBJECT")"
 
 docker_args=(
     --rm

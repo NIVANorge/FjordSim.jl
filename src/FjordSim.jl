@@ -89,11 +89,8 @@ export
     ProjectedAtmosphereGrid,
     RiverLocation,
     AtmosphereRecord,
-    # setups
+    # config files
     fjord_config,
-    setup_names,
-    oslofjorden,
-    drammensfjorden,
     # built-in sources
     EvenGrid,
     DybdedataConfig,
@@ -214,13 +211,10 @@ include("Rivers/Rivers.jl")
 include("Boundaries/Boundaries.jl")
 include("BoundaryConditions.jl")
 include("Grids.jl")
-# Simulations reads the grid back from the processed bathymetry, so it comes after Grids, and
-# Setups builds a SimulationConfig, so it comes before Setups.
+# Simulations reads the grid back from the processed bathymetry, so it comes after Grids.
 include("Simulations.jl")
-# Setups builds every config type, so it comes after all of them — Grids' EvenGrid included.
-include("Setups/Setups.jl")
 include("Validation/Validation.jl")
-# CLI names every driver and every setup, so it comes last.
+# CLI names every driver, so it comes last.
 include("CLI.jl")
 
 using .Configs
@@ -235,7 +229,6 @@ using .Boundaries
 using .BoundaryConditions
 using .Grids
 using .Simulations
-using .Setups
 using .Validation
 using .CLI
 

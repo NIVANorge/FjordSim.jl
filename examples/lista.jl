@@ -60,7 +60,7 @@
 #
 # # What follows `examples/oslofjorden_validation.jl`, and what does not
 #
-# The physics is `oslofjorden()`'s, scaled to this grid, except where the Oslofjord validation
+# The physics is `oslofjorden.jl`'s, scaled to this grid, except where the Oslofjord validation
 # measured a departure that is not specific to its own box. Four carry over: bounded WENO for
 # salinity, CATKE's `minimum_tke` at 7e-7, the biharmonic tracer diffusivity κ at 0, and 5.06 m
 # levels between 41 and 132 m. Each is argued beside its value. Two do not. Its boundary tide
@@ -74,21 +74,22 @@ using Oceananigans.Units
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using NumericalEarth: FreezingLimitedOceanTemperature
 using Dates: DateTime
+using FjordSim.Bathymetry: GEONORGE_DYBDEDATA_GDB
 
 data_root = fjord_data_root("lista")
 FT = Float32
 # NorKyst-800m, daily and hourly alike, ends on 2025-10-05 on thredds.met.no, so 2025 is the last
 # year either forcing source can reach.
 years = [2024, 2025]
-# `oslofjorden()`'s levels from a 1 m surface cell stretching by 1.25, with 41-132 m split into
-# eighteen 5.06 m levels as in `examples/oslofjorden_validation.jl`. There `oslofjorden()`'s five
+# `oslofjorden.jl`'s levels from a 1 m surface cell stretching by 1.25, with 41-132 m split into
+# eighteen 5.06 m levels as in `examples/oslofjorden_validation.jl`. There `oslofjorden.jl`'s five
 # 11-27 m levels let WENO's implicit vertical diffusion, ~|w|Δz, mix the sill basins at 5-10 times
 # CATKE's κ, and the split cut the Drammensfjord's salt-budget diffusivity below 41 m by 2.6-7.7
 # times in 60 days. The mechanism is not specific to that grid. Here it acts wherever the levels are
 # thick, so on the sill basins of Fedafjorden and Rosfjorden where they reach below 41 m, and on the
 # coastal current's lower interface. Unmeasured on this grid.
 #
-# Below 132 m, `oslofjorden()`'s 33.5 m layers rather than thicker ones, for the same reason: the
+# Below 132 m, `oslofjorden.jl`'s 33.5 m layers rather than thicker ones, for the same reason: the
 # trench slope is where the coastal current meets the Atlantic water under it.
 # They stop at -433.5 m, short of the deepest sounding (gate 1 in the header). Binned per model
 # cell, the raw Geonorge soundings reach below -433.5 m in only a few cells, all on the southern
@@ -108,7 +109,7 @@ z_faces = vcat(
 FjordConfig(
     grid_config = EvenGrid(
         # 0.00837° by 0.0045°: about 490 m by 500 m at 58.1°N, 2.5 times Oslofjord's 193 m. Every
-        # coefficient below that depends on grid spacing (Δx or Δx⁴) is scaled from `oslofjorden()`
+        # coefficient below that depends on grid spacing (Δx or Δx⁴) is scaled from `oslofjorden.jl`
         # by that factor, not copied.
         size      = (123, 100, length(z_faces) - 1),
         halo      = (7, 7, 7),
@@ -123,8 +124,8 @@ FjordConfig(
         data_root             = data_root,
         output_file           = "bathymetry.nc",
         plot_file             = "bathymetry.png",
-        # Shared with `oslofjorden()`: it is one national file, the same for any Norwegian domain.
-        geodatabase_file      = geodatabase_path(oslofjorden().bathymetry_config),
+        # Shared with `oslofjorden.jl`: it is one national file, the same for any Norwegian domain.
+        geodatabase_file      = joinpath(fjord_data_root("oslofjorden"), GEONORGE_DYBDEDATA_GDB),
         # 4 rather than Oslofjord's 2. The model cells are 2.5 times larger, so a 2x native grid
         # would average each one from only four ~245 m samples. At 4x the native grid is still
         # only 492 x 400.
@@ -250,7 +251,7 @@ FjordConfig(
                     # there the floor hardly matters. It matters in the sill basins of Fedafjorden
                     # and Rosfjorden.
                     #
-                    # 7e-7 rather than `oslofjorden()`'s 7e-6, as in
+                    # 7e-7 rather than `oslofjorden.jl`'s 7e-6, as in
                     # `examples/oslofjorden_validation.jl`. There 7e-6 mixed the water columns
                     # towards uniform and freshened the sill basins. Over 640 days at 7e-7 the
                     # salinity RMSE against 216 casts was 1.73 g/kg and the temperature RMSE

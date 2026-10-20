@@ -4,8 +4,7 @@
 #
 # The rule these fixtures exist to enforce: a test asserts *behavior*, never a value a setup chose.
 # A setup file is a scientific statement about one fjord, and its author has to stay free to change
-# every number in it without a test failing. So nothing here reads a setup, and the tests that used
-# to borrow `oslofjorden().simulation_config` build their own config instead.
+# every number in it without a test failing. So nothing here reads a setup.
 
 using Oceananigans:
     CATKEVerticalDiffusivity,

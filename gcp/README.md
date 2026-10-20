@@ -61,7 +61,7 @@ your machine                    gs://BUCKET                     the VM (one, sha
 ────────────                    ───────────                     ────────────────────────────────
 ~/FjordSim_data/<fjord>  ──push──►  data/<fjord>/  ──stage in──►  /mnt/stage/data/<fjord>
                                                                         │  bind mount
-                                    configs/<name>.jl ──────────►  container: FJORDSIM_DATA_ROOT=/data
+                                    configs/<run-id>/*.jl ──────►  container: FJORDSIM_DATA_ROOT=/data
                                                                         │
 ~/FjordSim_results/<fjord> ◄─pull─  results/<fjord>/ ◄─stage out─  /mnt/stage/results/<fjord>
 ```
@@ -118,7 +118,7 @@ name one); and anything about the NVE key (`run` takes it from your environment)
 Every variable is also overridable per invocation, so a one-off needs no edit at all:
 
 ```bash
-BUCKET=gs://other-bucket gcp/fjordsim-gcp run --config oslofjorden --steps run_simulation --gpu
+BUCKET=gs://other-bucket gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --gpu
 ```
 
 ### 2. Build and push the image
@@ -138,7 +138,7 @@ being billed for a GPU that is doing nothing.
 ```bash
 gcp/fjordsim-gcp up                                  # launcher job: create or start the VM
 gcp/fjordsim-gcp bootstrap                           # driver, Docker, toolkit, image pull
-gcp/fjordsim-gcp run --config drammensfjorden --steps run_simulation --gpu
+gcp/fjordsim-gcp run --config examples/drammensfjorden.jl --steps run_simulation --gpu
 gcp/fjordsim-gcp logs <run-id>
 gcp/fjordsim-gcp pull-results drammensfjorden
 gcp/fjordsim-gcp down                                # stop billing; the disk survives
@@ -160,12 +160,12 @@ because the disk is gone.
 Preparing on a laptop is fine and often simplest; only the simulation really needs the cloud.
 
 ```bash
-julia --project -m FjordSim prepare_bathymetry --config drammensfjorden
-julia --project -m FjordSim prepare_forcing    --config drammensfjorden
-julia --project -m FjordSim add_rivers         --config drammensfjorden
+julia --project -m FjordSim prepare_bathymetry --config examples/drammensfjorden.jl
+julia --project -m FjordSim prepare_forcing    --config examples/drammensfjorden.jl
+julia --project -m FjordSim add_rivers         --config examples/drammensfjorden.jl
 
 gcp/fjordsim-gcp push-data drammensfjorden          # only the top-level *.nc, ~970 MB
-gcp/fjordsim-gcp run --config drammensfjorden --steps run_simulation --gpu
+gcp/fjordsim-gcp run --config examples/drammensfjorden.jl --steps run_simulation --gpu
 gcp/fjordsim-gcp pull-results drammensfjorden
 ```
 
@@ -177,11 +177,11 @@ the raw sources (`norkyst/`, `nora3/`, the FileGDB), which only a `prepare_*` st
 Better for the slow steps, and it keeps the raw sources off your disk entirely.
 
 ```bash
-gcp/fjordsim-gcp run --config oslofjorden \
+gcp/fjordsim-gcp run --config examples/oslofjorden.jl \
     --steps prepare_bathymetry,download_forcing,prepare_forcing,add_rivers
-gcp/fjordsim-gcp run --config oslofjorden \
+gcp/fjordsim-gcp run --config examples/oslofjorden.jl \
     --steps download_atmosphere,prepare_atmosphere
-gcp/fjordsim-gcp run --config oslofjorden --steps run_simulation --gpu
+gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --gpu
 ```
 
 Omitting `--gpu` hides the GPU from the container, and `architecture = :auto` resolves to `CPU()` —
@@ -199,18 +199,19 @@ world-readable in `ps`. Free key: https://hydapi.nve.no/Users
 that fjord staged too:
 
 ```bash
-gcp/fjordsim-gcp run --config drammensfjorden --steps prepare_bathymetry \
+gcp/fjordsim-gcp run --config examples/drammensfjorden.jl --steps prepare_bathymetry \
     --stage oslofjorden --stage-all
 ```
 
 ### A one-off experiment
 
-A config file ending in `.jl` is uploaded to the bucket and fetched by the VM, so trying a variant
-never means touching the repository. `examples/oslofjorden_npzd.jl` is the worked example. Name the
-file after the fjord — the basename is what roots the staged directories.
+`--config` is a `.jl` file, uploaded to the bucket together with every `.jl` file beside it and
+fetched by the VM, so a config may `include` a sibling — as `examples/oslofjorden_npzd.jl` includes
+`oslofjorden.jl` — and trying a variant never means rebuilding the image. Name the file after the
+fjord — the basename is what roots the staged directories.
 
 ```bash
-gcp/fjordsim-gcp run --config ./oslofjorden_npzd.jl --steps run_simulation --gpu
+gcp/fjordsim-gcp run --config examples/oslofjorden_npzd.jl --steps run_simulation --gpu
 ```
 
 ### Resuming after a preemption
@@ -219,15 +220,15 @@ A Spot VM (the default) will interrupt a long run. Recovery is `up`, `bootstrap`
 id with `--resume`:
 
 ```bash
-gcp/fjordsim-gcp run --config oslofjorden --steps run_simulation --gpu --run-id oslo-2020
+gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020
 # after a preemption:
 gcp/fjordsim-gcp up && gcp/fjordsim-gcp bootstrap
-gcp/fjordsim-gcp run --config oslofjorden --steps run_simulation --gpu --run-id oslo-2020 --resume
+gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020 --resume
 ```
 
 `--resume` stages `results/<fjord>/` back down and sets `pickup = true` (`gcp/resume.jl`), so the
 run continues from the newest checkpoint rather than restarting. This only works if the setup names
-a `CheckpointWriter` — both registered setups do.
+a `CheckpointWriter` — `examples/oslofjorden.jl` and `examples/drammensfjorden.jl` both do.
 
 Checkpoint filenames carry no run tag and are scoped to `results_root`, so **two live runs must not
 share a fjord**. With a single shared VM that is easy to do by accident. `fjordsim-gcp` refuses to

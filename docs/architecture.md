@@ -58,6 +58,13 @@ snapshots or log. Seconds are in it because a crash and an immediate relaunch ot
 Consequences: which window a file covers is not in its name but in the snapshot's `start_date`
 attribute, and checkpoints carry no tag at all (see Checkpointing).
 
+**No setup is part of the package.** A setup is a script ending in its `FjordConfig`, and
+`fjord_config(path)` `Base.include`s it into `Main` on every call. So each step gets a fresh config —
+the structs are mutable and `native_region!` edits the bathymetry config, so a shared instance would
+leak state between steps — built after `__init__` has filled `DybdedataConfig`'s scratch
+`raw_directory`, which is still `""` during precompilation. How to write one is `docs/setups.md`;
+the measurements behind a setup's values are in its own comments.
+
 `coverage_window(simulation_config)` is the `(first, last)` interval the run needs. Every prepare
 step that has a time axis — forcing, rivers, boundaries, atmosphere — and `validate_simulation` take
 it as their `coverage`.
@@ -582,14 +589,7 @@ MB per checkpoint on the Oslofjord grid, hence `cleanup = true`.
 - Snapshots *are* per launch, so a resumed run's file starts at the resume point.
 - `pickup` supersedes `initial_conditions`.
 
-## 13. Setups (`src/Setups/`)
-
-A setup is a zero-arg function, not a `const`: `DybdedataConfig`'s `raw_directory` defaults to a
-scratch path that is still `""` during precompilation, and `native_region!` mutates the bathymetry
-config, so a shared instance would leak state between steps. Parameters and their measurements are
-in `docs/setups.md`.
-
-## 14. Validation (`src/Validation/`)
+## 13. Validation (`src/Validation/`)
 
 The only module that runs after a simulation, built the same way as the others: an
 `AbstractObservationConfig` per source. Every stage is permissive about missing data — most
@@ -598,7 +598,7 @@ station-variable combinations in a sweep are empty, and each is a blank row, not
 `default_observations` builds its station list from the writers, and a mismatch shows up as "no model
 output", not an error.
 
-## 15. CLI (`src/CLI.jl`)
+## 14. CLI (`src/CLI.jl`)
 
 `parse_arguments` never `exit`s, so the help path is testable; exit codes are 0 success, 1 step
 failed, 2 bad arguments.
@@ -616,7 +616,7 @@ reproducible by re-running, and it is the only step guaranteed a `results_root`.
   to `{…}`. `STACKTRACE_WIDTH` below 120 changes nothing (`Base.type_depth_limit` floors it).
 - During a run `stdout` is a `Pipe`, so `displaysize` is 24x80 and wide `show` output may wrap.
 
-## 16. Top-level (`src/FjordSim.jl`)
+## 15. Top-level (`src/FjordSim.jl`)
 
 **It overrides one NumericalEarth method**, `update_net_ocean_fluxes!` on `NoSeaIceInterfaceModel`,
 with a copy of upstream's body. Without sea ice, NumericalEarth's zero fluxes are an untyped

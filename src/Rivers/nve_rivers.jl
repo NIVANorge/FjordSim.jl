@@ -179,7 +179,7 @@ river's properties.
   states its own mouth coordinates.
 - **A discharge in m³/s** — every river mouth NVE has in the model domain at or above that size is
   discovered from the map services, and `outlets` becomes a list of *overrides* keyed by
-  `vassdragsnr`. No coordinate is stated anywhere. `oslofjorden()` uses `0.5`, which gives 21
+  `vassdragsnr`. No coordinate is stated anywhere. `examples/oslofjorden.jl` uses `0.5`, which gives 21
   rivers covering 99.6 % of the domain's 1184 m³/s of freshwater.
 
 Discovery is what `nve_outlets` does, and the reason it exists is that hand-copied outlets are

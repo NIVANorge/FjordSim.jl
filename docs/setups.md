@@ -1,226 +1,174 @@
-# Setups
+# Adding a simulation setup
 
-> Read this when adding or tuning a fjord setup — it has the registry mechanics, the vertical-grid
-> rationale, and the numbers behind `oslofjorden()`'s current parameter values.
+> Read this before writing a new setup or changing an existing one's parameters. The worked setups
+> are in `examples/`; the rationale behind each of their values is in their own comments.
 
-`src/Setups/` holds one lowercase file per fjord (`oslofjorden.jl`, `drammensfjorden.jl`), each
-defining a zero-arg function that returns a fresh `FjordConfig`, plus `Setups.jl` with the `SETUPS`
-registry. Adding a fjord is a **two-place** edit: the new file, and its entry in `SETUPS` — the
-registry is keyed by a runtime string from `--config`, so there is no dispatch alternative. A fjord
-that should not live in the package can instead be a standalone `.jl` file whose last expression is
-a `FjordConfig`, passed as `--config path/to/it.jl` and loaded by `fjord_config`.
+## What a setup is
 
-Data paths are built from a per-setup `data_root` under `~/FjordSim_data/<fjord>/`, computed inside
-the setup function by `fjord_data_root("<fjord>")` — which reads `FJORDSIM_DATA_ROOT` for the parent
-and falls back to `homedir()`, so one variable relocates every setup at once and a container can
-stage its inputs anywhere; the config fields naming files (`output_file`, `plot_file`,
-`geodatabase_file`, `output_directory`) are names relative to `data_root`, and setting one to an
-absolute path relocates just that file — which is how a single FileGDB copy is shared across fjords.
-A nested config carries its own `data_root` too, so it can be relocated independently, and both
-setups give their `NVERiversConfig` the same `data_root` as the rest of the setup — NVE's cached
-network and catchment responses record the domain they were fetched for under a fixed file name, so
-a shared directory would be overwritten rather than reused. The same goes for their
-`NorKystBoundariesConfig`, and there it is not merely tidiness: the downloaded band is derived from
-*that* setup's own open edge, and Drammensfjord's southern edge is 60 km north of Oslofjord's, so the
-two bands are different data. What `drammensfjorden()` *does* share, by absolute path into
-`~/FjordSim_data/oslofjorden/`, is the FileGDB, the daily NorKyst months and the NORA3 months, all
-of which Oslofjord's larger domain already covers. That containment is the precondition: a month
-missing from the shared directory is re-downloaded subset to the *smaller* box, which would then
-shrink Oslofjord's own prepare step. Only the grid and the bathymetry are required. A setup
-wanting no forcing, rivers, boundary data, atmosphere or run leaves `forcing_config`, `river_config`,
-`boundary_config`, `atmosphere_config` or `simulation_config` unnamed so it defaults to `nothing`,
-making those steps no-ops — though both built-in setups name all of them. Each is a type parameter
-of `FjordConfig`, so that is a construction-time choice and cannot be undone on an existing
-instance.
+A setup is a Julia script whose last expression is a `FjordConfig`. It is not part of the package:
+it is passed by path to every step, and `fjord_config` evaluates it afresh each time.
 
-The simulation config is rooted separately, at `~/FjordSim_results/<fjord>/` rather than under
-`data_root`, since it writes rather than reads. Unlike every other config, `SimulationConfig` has
-**no defaults at all**, and neither do the configs it nests: `oslofjorden()` names every field
-of all of them — `extra_kwargs = (;)` included — because each is a scientific choice about that
-fjord and a default would let the next
-setup silently inherit it. Adding a field to any of them therefore breaks every setup until each
-names it, which is the intent.
+```julia
+using FjordSim
 
-## The vertical grid
+data_root = fjord_data_root("hardangerfjorden")
 
-`oslofjorden`'s `z_faces` are a geometric stretch — ratio 1.25, capped at 33.5 m — from a 1 m surface
-cell to a deepest face at −467 m, 26 levels. It was −400 m and 24 levels until the soundings were
-gridded linearly: the inverse-distance gridding before that averaged the Hvaler trench on the
-southern edge from 463 m down to 395.1 m, and the faces had been fitted to that. The 24 levels
-replaced a hand-written 18-level set running to −450 m in 25 m and 50 m steps, and the numbers are
-worth keeping because the replacement was measured against the bathymetry of the time rather than
-chosen:
+FjordConfig(
+    grid_config = EvenGrid(...),
+    bathymetry_config = DybdedataConfig(data_root = data_root, ...),
+    # every other field is optional
+)
+```
 
-| | 18 levels, to −450 m | 24 levels, to −400 m |
+```bash
+julia --project -m FjordSim prepare_bathymetry --config path/to/hardangerfjorden.jl
+```
+
+Two ways to write one:
+
+- **From scratch**, or by copying the example closest to the new domain: `examples/oslofjorden.jl`
+  (inner fjord, open southern edge), `examples/drammensfjorden.jl` (a sub-domain sharing Oslofjord's
+  downloads), `examples/lista.jl` (open coast, three open edges).
+- **As a variant of another setup**: `base = include("oslofjorden.jl")` resolves beside the
+  including file and returns that setup's config, whose fields the variant then changes or wraps
+  (`examples/oslofjorden_validation.jl`, `examples/oslofjorden_npzd.jl`). The included script's
+  top-level names (`data_root`, `FT`) become the variant's globals too, so assign the variant's own
+  after the `include`. `gcp/fjordsim-gcp` uploads every `.jl` file beside the config, so the
+  include works on the VM as well.
+
+Name the file after the fjord, lowercase, the same name `fjord_data_root` gets: `gcp/fjordsim-gcp`
+takes the basename as the fjord whose data and results directories it stages.
+
+## What it must and may contain
+
+Only the grid and the bathymetry are required. Every other field defaults to `nothing`, and every
+step whose config is `nothing` is a no-op:
+
+| Field | Built-in config | Steps | Prepared file | Needed for |
+|---|---|---|---|---|
+| `grid_config` | `EvenGrid` | — | — | always |
+| `bathymetry_config` | `DybdedataConfig` (Geonorge) | `prepare_bathymetry` | `bathymetry.nc` | always: it *is* the model grid |
+| `forcing_config` | `NorKystConfig`, `NorKystHindcastConfig` | `download_forcing`, `prepare_forcing` | `forcing.nc` | `FromForcing` initial conditions |
+| `river_config` | `NVERiversConfig` | `add_rivers` | `rivers_nve.nc` | river inflow; `RiverMouthMixing` |
+| `boundary_config` | `NorKystBoundariesConfig`, `NorKystHindcastBoundariesConfig` | `download_boundaries`, `prepare_boundaries` | `boundaries.nc` | any open edge; `OpenLateralBoundaryFromData` |
+| `atmosphere_config` | `NORA3Config` | `download_atmosphere`, `prepare_atmosphere` | `atmosphere.nc` | the prescribed atmosphere and radiation the surface fluxes are computed from |
+| `simulation_config` | `SimulationConfig` | `run_simulation`, `validate_simulation` | results | running at all |
+
+NorKyst's operational archive (`NorKystConfig`, `NorKystBoundariesConfig`) begins on 2017-02-20; a
+window before that needs the hindcast configs, which cover 2012 onwards. Each field is a type
+parameter of `FjordConfig`, so it is chosen when the config is built and cannot be set to `nothing`
+on an existing instance afterwards.
+
+A new data source is a new config type, not an edit to the pipeline: `docs/adding-a-source.md`.
+
+## Paths
+
+- **Roots.** Build the data root with `fjord_data_root("<fjord>")` and the simulation config's
+  `results_root` with `fjord_results_root("<fjord>")`, never from `homedir()`. Both read
+  `FJORDSIM_DATA_ROOT` / `FJORDSIM_RESULTS_ROOT`, which is how one setup runs unchanged on a laptop
+  and on the cloud VM. Results are never under the data root.
+- **File names** (`output_file`, `plot_file`, `output_directory`, `geodatabase_file`) are relative
+  to the config's own `data_root`; an absolute path relocates just that one.
+- **Sharing a download** with another fjord is an absolute path into that fjord's root, built from
+  `fjord_data_root("<other>")` so a relocation moves both — `examples/drammensfjorden.jl` shares
+  Oslofjord's FileGDB, NorKyst months and NORA3 months this way. Share only from a domain that
+  *contains* the new one, for the same years: a month missing from the shared directory is
+  downloaded subset to the smaller box and then shrinks the larger setup's own prepare step.
+- **Never shared:** prepared files (their names carry no fjord, so two setups would overwrite each
+  other), the NVE caches (they record the domain they were fetched for under a fixed name), and the
+  open-boundary band (it is cut along that setup's own edges).
+- One results directory holds one run (`docs/running.md`, "One run per results directory"); a
+  variant that is a different experiment gets its own `fjord_results_root` name.
+
+## The grid
+
+`EvenGrid` takes `size`, `halo`, `longitude`, `latitude`, `z_faces` and `float_type` (default
+`Float32`).
+
+- **Float type.** Define `FT = Float32` (or `Float64`) once, give it to `EvenGrid(float_type = FT)`
+  and to every model component that takes one — `WENO(FT)`, `WENOVectorInvariant(FT)`,
+  `CATKEVerticalDiffusivity(FT; ...)`, `SeawaterBuoyancy(FT, ...)`, `TEOS10EquationOfState(FT)`,
+  `HydrostaticSphericalCoriolis(FT)`, `FreezingLimitedOceanTemperature(FT)`. Never set
+  `Oceananigans.defaults.FloatType`: it is process-wide.
+- **Box.** A closed edge should be land along its whole length; an edge cutting open water must be
+  opened (`boundary_config.open_edges`) or the domain moved. Check the plotted bathymetry after the
+  first `prepare_bathymetry`.
+- **`z_faces`** run bottom to top, end at `0.0`, and number `size[3] + 1`.
+  - Fit the deepest face to the deepest cell `prepare_bathymetry` writes (read it from
+    `bathymetry.nc`), not to a round number: deeper wastes levels and shortens the barotropic
+    substep (`sqrt(g·Lz)`), shallower silently truncates the basin.
+  - Avoid thick bottom layers. A geometric stretch from a ~1 m surface cell, with no two adjacent
+    layers differing by more than a factor ~1.33, keeps a column's floor in a thin layer; a 25 m
+    bottom cell holds a site's whole near-bottom water in one cell, and that is where tracer
+    extremes collect.
+  - More levels give the seabed more faces to cross, so more laterally isolated bottom cells.
+- **Changing `size`, `z_faces` or the box is a data change**: `simulation_grid` reads
+  `bathymetry.nc`, not the config. Re-run the prepare steps `docs/running.md` lists.
+
+## The bathymetry
+
+`DybdedataConfig` requires `data_root`, `output_file` and `plot_file`. Its defaults leave every
+optional smoothing stage off:
+
+| Field | Default | What it does |
 |---|---|---|
-| median thickness of the layer holding a column's floor | **25.0 m** | **9.0 m** |
-| columns floored in a layer thicker than 20 m | **61.0 %** | **24.0 %** |
-| largest ratio between adjacent layers | 2.50 | 1.33 |
-| levels that are never wet | 1 | 0 |
-| median wet levels per column | 9 | 11 |
-| bottom cells thinner than 0.4 of their layer | 20.9 % | 20.3 % |
-| bottom cells `PartialCellBottom` has to clamp (true slivers) | 292 | **0** |
+| `geodatabase_file` | `GEONORGE_DYBDEDATA_GDB` | the national FileGDB, downloaded (4.5 GB) into `data_root` if missing |
+| `raw_resolution_factor` | `4` | native gridding resolution, as a multiple of the model resolution |
+| `padding_cells` | `0` | model-cell widths of soundings read around the box |
+| `include_contours`, `contour_stride` | `true`, `1` | use depth contours besides soundings |
+| `max_sounding_distance` | `Inf` | turn wet cells farther than this many metres from any sounding into land |
+| `interpolation_passes` | `1` | passed to `NumericalEarth.regrid_bathymetry` |
+| `major_basins` | `1` | keep this many largest connected water bodies (drops lakes) |
+| `minimum_depth` | `0.0` | deepen every wet cell shallower than this, m |
+| `open_boundary_land_cells` | `0` | flood land within this many rows of an open edge |
+| `max_island_cells` | `0` | remove interior land components up to this size |
+| `close_narrow_passages` | `false` | turn one-cell-wide passages into land where both sides stay connected |
+| `spike_ratio` | `0.0` | replace a cell shallower than this fraction of its neighbours' median depth by that median |
+| `minimum_cell_fraction` | `0.0` | snap partial bottom cells; set it to `0.2`, `PartialCellBottom`'s `minimum_fractional_cell_height` |
+| `max_slope_factor` | `0.0` | limit the bottom slope between neighbours |
+| `preserve_sills` | `false` | restore sills the regrid averaged away |
+| `geonorge_cache`, `regrid_cache` | `true`, `true` | reuse intermediate files |
 
-The old grid's failure was the first row. A 25 m bottom cell is the entire near-bottom water column
-of that site in one cell, with no vertical structure in it, and that is precisely where the 2020
-run's tracer extremes sat: 96 % of the temperature offenders and 67 % of the salinity offenders were
-in a bottom cell, and those were overwhelmingly at k = 9 and k = 10, the two 25 m layers. The first
-layer, −450 to −400 m, held no water at all against a deepest sounding of 395.1 m, and `grid.Lz`
-feeds `sqrt(g·Lz)` in `SplitExplicitFreeSurface`, so the unused depth was also buying a shorter
-barotropic substep for nothing.
+`DybdedataConfig`'s docstring states the failure each stage prevents and `docs/architecture.md`
+(Bathymetry) why their order is fixed. Check that `max_island_cells` stays below the smallest real
+island, and that a known sill comes out at its real depth.
 
-Three things to know before changing it.
+## The simulation config
 
-**−467 m is fitted to the deepest cell, not a round number.** The deepest cell `prepare_bathymetry`
-writes is 466.8 m, so nothing is clipped and no layer is dry. `limit_bottom_slope` can only make the
-deepest column *shallower* (it is the deeper half of every pair it corrects), so the margin cannot
-close; a change to the gridding or the box can, so re-check it then. A sounding below the deepest face is not an error —
-`snap_partial_bottom_cells` skips it and `PartialCellBottom` clips it — so the basin would simply be
-silently truncated.
+`SimulationConfig` and every config it nests have **no defaults**: each field is a scientific choice
+about one fjord, stated in the setup, so a field added later breaks every setup until each names it.
+`README.md` lists the fields; the examples state all of them. Coefficients that depend on the grid
+spacing have to be worked out for the new grid rather than copied:
 
-**More levels is not free, and not monotonically better.** A finer grid gives the seabed more faces
-to cross, so laterally isolated bottom cells rise from 3.9 % to 5.5 % of columns — see
-`snap_partial_bottom_cells` in `docs/architecture.md` (Bathymetry section), which is what handles
-them. A 28-level ratio-1.20 variant scores better still (median floor layer 8.4 m, *no* column
-floored in a layer over 30 m) at 56 % more cells than the original rather than 33 %; it is the option
-to reach for if the deep basins still look under-resolved.
+- **Explicit diffusion stability.** `AdaptiveTimeStep` measures only the advective CFL. A biharmonic
+  `ν₄` needs `Δt ≤ Δx⁴ / (32 ν₄)` and damps the 2Δx mode with e-folding time `Δx⁴ / (16 ν₄)`; a
+  harmonic `ν` (including `BoundarySponge`'s `viscosity` and `diffusivity`) needs
+  `Δt ≤ Δx² / (4 ν)`. Keep both limits well above `max_time_step`, or the diffusion, not the CFL,
+  sets the time step. Taking a value from a setup with a different cell size means scaling it by
+  `(Δx_new / Δx_old)⁴` for biharmonic and `(Δx_new / Δx_old)²` for harmonic coefficients.
+- **`tracer_advection`** is one scheme for every tracer, not a `NamedTuple`: tracers a `NamedTuple`
+  omits, such as CATKE's `e`, fall back to an unbounded `Centered()` scheme.
+- **`CATKEVerticalDiffusivity`'s `minimum_tke`** sets the background `κ = 0.098·e_min/N` wherever the
+  prognostic TKE is below it, which in a stratified fjord is most of the column, so it is effectively
+  the vertical-mixing knob.
+- **River inflow.** `NVERiversConfig` requires `data_root`, `outlets`, `years` and
+  `maximum_inflow_velocity`. `maximum_inflow_velocity` bounds the vertical Courant number
+  `w·Δt/Δz` through the top cell: at 1e-3 m/s, a 1 m top cell and a 180 s `max_time_step` it is
+  0.18. `minimum_discharge` defaults to `Inf`, meaning no discovery: `outlets` must then state every
+  river and its mouth. A discharge in m³/s instead discovers every mouth at or above it from NVE's
+  river network, and `outlets` become overrides that attach gauges.
+- **Open boundaries.** `OpenLateralBoundaryFromData`'s `inflow_timescale` relaxes by `Δt/τ` per step;
+  compare that with the advective rate into the boundary cell, `u/Δx`, or the nudging does nothing.
+  Too strong an inflow nudge reflects. A `BoundarySponge` damps what the open edges radiate.
+- **Initial conditions.** `FromForcing()` needs a `forcing_config`; `FromResults(path)` continues
+  from an earlier run's snapshot; a `NamedTuple` of constants or functions needs nothing.
+- **Run window.** `start_date` and `stop_time` decide what the prepare steps write, since they pad
+  every time axis to the window — changing either is a data change too.
 
-**Changing it is a data change.** `z_faces` is written into `bathymetry.nc`, and `simulation_grid`
-reads the file rather than the config — so the run silently uses whatever the file holds. Every 3D
-prepared file is regridded onto that grid, so re-run `prepare_bathymetry` → `prepare_forcing` →
-`add_rivers` → `prepare_boundaries`. No download step is affected. The atmosphere is 2D and is not.
+## Bringing a new setup up
 
-## The 2020 diagnosis
-
-Several of `oslofjorden()`'s current values are there because of one run, and are commented in the
-setup file with the number that justifies them. Collected here so the reasoning is not spread across
-six comments:
-
-- **`BoundarySponge`** on `closure` — the open boundary radiated noise nothing absorbed. See
-  "`closure` and `BoundarySponge`" in `docs/architecture.md` (Simulations section).
-- **`HorizontalScalarBiharmonicDiffusivity(ν = 2e4, κ = 2e3)`**, down from `1e5`/`1e4` — a
-  biharmonic coefficient only means something against `Δx⁴`, and the commit that raised ν from 15
-  justified 1e5 as a "~1.7 hours" e-folding of the 2Δx mode when the discrete rate `ν₄·16/Δx⁴` makes
-  it 14.5 min on this 193 m cell, 7x stronger than intended. 2e4 restores the intended 72 min, still
-  ~1300x the value it replaced, and leaves an 8 km baroclinic eddy alone (56 h at 8Δx). Norkyst-800,
-  the ROMS system feeding this run, applies **no** explicit interior viscosity and a 10 m² s⁻¹
-  harmonic tracer diffusivity, against 0.2 m² s⁻¹ at 2Δx for `κ = 2e3` here. It also restores a
-  stability margin nothing measures: explicit biharmonic diffusion needs `Δt ≤ Δx⁴/32ν₄`, 434 s at
-  1e5 and 2170 s at 2e4, while `AdaptiveTimeStep` only ever sees the advective CFL. The same
-  correction is larger on `drammensfjorden()`, whose 99 m cell had a 24 s diffusive limit at 1e5
-  against ~10 s steps; its ν is 1e3, the Δx⁴-scaled equivalent, not a copy of Oslofjord's — 101 min
-  at 2Δx and a 3026 s stability limit. `BoundarySponge` is scaled the same way and for the same
-  reason: 13 m² s⁻¹ rather than 30, because explicit `Δt ≤ Δx²/4ν` is 82 s at 30 on a 99 m cell,
-  below `max_time_step`, so the sponge and not the CFL would have been setting the time step.
-- **`minimum_tke = 7e-6` kept, not lowered** — CATKE takes `w★ = sqrt(max(minimum_tke, e))`, and
-  measured on the 2020 run the prognostic `e` is below that floor in 85 % of wet cells (95-100 %
-  below 9 m), so the floor and not the TKE equation sets the vertical diffusivity, at the documented
-  background `κ = 0.098·e_min/N`, `ν = 0.242·e_min/N`. The domain-median `κᵤ/κᶜ` of 2.38 against
-  `Cʰⁱᵤ/Cʰⁱᶜ = 2.47` is the confirmation. The value is ROMS' `GLS_KMIN` default (7.6e-6) and does not
-  transfer cleanly — ROMS floors its length scale too (`GLS_PMIN`) where CATKE's is diagnostic — but
-  it lands in the right place for this fjord: median `κᶜ` at 94-118 m is 8-9e-5 m² s⁻¹ against
-  basin-mean density-budget values of 1.0-1.8e-4 (Bunnefjorden), 4.9-7.6e-4 (Vestfjorden) and 2.5e-3
-  just inside the Drøbak sill (Gade 1970; Staalstrøm et al. 2012, *Ocean Sci.* 8, 525). The basin
-  water is at the low end already, so lowering the floor would slow deep-water renewal, which is what
-  this domain is judged on. `Cᵇ` stays at Oceananigans' 0.28 rather than NumericalEarth's regional
-  0.01 for the same reason: it scales the near-bottom mixing length, and the high basin-mean
-  diffusivity here is attributed to exactly that boundary mixing.
-- **`tracer_advection = WENO()`**, a scalar rather than `(T = WENO(), S = WENO())` — Oceananigans
-  gives any tracer a `NamedTuple` omits the `Centered()` default, and CATKE contributes an `e` the
-  setup never names, so `e` was being advected by an unbounded centered scheme. A scalar covers
-  whatever the closure adds, now and later. This is the shape NumericalEarth's own `ocean_simulation`
-  uses.
-- **`inflow_timescale = 3hours`**, down from `1day` — at the ~10 s steps the run actually takes, a
-  one-day timescale relaxes by 1.2 × 10⁻⁴ per step against an advective rate into the boundary cell
-  of ~2.5 × 10⁻³ s⁻¹. Two hundred times weaker than what it was competing with. Both timescales are
-  tuning knobs; too strong an inflow nudge over-constrains an open boundary and reflects.
-- **`max_slope_factor = 0.5`**, back from `0.25` — 0.25 was measured as nearly free on the
-  inverse-distance gridding, which had already averaged the trenches flat. On the linear gridding the
-  symmetric limiter raises the deep cell of a narrow trench once per shallow neighbour: at 0.25 the
-  `oslofjorden_validation` basins lose 34 m at Fl1 and 24 m at Hm4, at 0.5 they lose 8 m and 4 m. No
-  run measured 0.5 as unstable — the runs that died at it died at slivers, spikes and one-cell
-  passages, each now removed by its own stage — and `examples/oslofjorden_validation.jl` ran 640
-  days at 0.5 without a failure.
-- **`raw_resolution_factor = 4`** and **`preserve_sills = true`** — see "Bathymetry gridding and
-  sills" below.
-- **`max_island_cells = 6`, unchanged and deliberately so** — every remaining interior land component
-  is 7 cells or larger with a minimum width of 2 to 4 cells and bounding boxes like 4×8 and 5×4.
-  Those are compact skerries, not the one-cell ridges the stage exists to remove, and raising the
-  threshold would delete real topography.
-- **`NVERiversConfig`, rivers as a volume source** — each river adds its daily discharge through
-  the surface of the columns around its mouth, spread until it enters no faster than
-  `maximum_inflow_velocity = 1e-3` m/s (a vertical Courant number of 0.18 through the 1 m top cell at
-  the 3-minute `max_time_step`). It replaced OF800's outlet table and a relaxation towards river
-  values that added no water; see "Rivers as a volume source" in `docs/architecture.md`.
-- **`minimum_discharge = 0.5`, and no stated coordinate anywhere** — the nine outlets this setup
-  first carried were OF800's, and several were kilometres from their rivers; see "Outlet discovery"
-  in `docs/architecture.md` (Rivers section) for the measurements. Discovery gives 21 mouths,
-  including both of Glomma's, sized from their own REGINE catchments. Eight overrides add the gauges
-  that survive inspection; the other thirteen enter at their catchment normal, which is what
-  `river_discharge`'s catchment-normal rule is for. Only four of the 21 carry water temperature — the
-  rest enter at the temperature of the fjord water they join —
-  Akerselva's gauge reads 21.2 °C mean, Lysakerelva's 19.6 °C mean and 37.2 °C peak, and
-  Gjersjøelva's 2020 series is empty.
-- **Glomma is two rivers here**, `002.A21` (Østerelva) and `002.2A` (Vesterelva), both on
-  Solbergfoss's series at `discharge_fraction` 2/3 and 1/3. Both beds are resolved on this grid —
-  cells (222, 99) and (198, 101) — and the split is a **stated assumption**: NVE's own Nedre Glomma
-  flood report describes the division around Kråkerøy and publishes no fraction, and none was found
-  elsewhere. It is one number in the setup file to change when one turns up.
-
-`start_date` and `stop_time` also decide what the prepare steps write, since both pad their time
-axes to that window — so changing either is a data change, not just a run change. See "What to re-run
-after a config change" in `docs/running.md`.
-
-## Bathymetry gridding and sills
-
-The validation run against the NIVA casts found the basins 15–40 m too shallow and Svelvik at 5.5 m
-against 11 m. Replaying `prepare_bathymetry` stage by stage on `oslofjorden_validation` put the loss,
-deepest cell within 2 km of the station against the deepest sounding there:
-
-| | Ep1 | Fl1 | Im2 | Hm4 | Drøbak Sound | Svelvik sill |
-|---|---|---|---|---|---|---|
-| soundings | 154 | 166 | 211 | 119 | 211 | 11 |
-| inverse-distance native grid | 114 | 138 | 176 | 104 | 176 | 8.8 |
-| regridded | 111 | 127 | 170 | 88 | 170 | 6.6 |
-| after slope limit 0.25 and snap | 111 | 114 | 166 | 71 | 166 | 5.5 |
-| **linear, `raw_resolution_factor = 4`, r = 0.5, `preserve_sills`** | **153** | **153** | **209** | **99** | **209** | **10.8** |
-
-Most of it was the gridding, before any smoothing stage ran — its inverse-distance weights were a
-plain mean of 16 soundings (see "Gridding the soundings" in `docs/architecture.md`). The rest was the
-regrid averaging channels with their flanks, which `preserve_sills` undoes along one path per lost
-sill, and the slope limiter, loosened above. The mean depth rises from 62.4 m to 72.9 m, so the
-domain holds 14 % more water than the run that found this.
-
-`raw_resolution_factor` went from 2 to 4 once gridding stopped taking three hours. A ~48 m native
-grid resolves Svelvik at 11.3 m where ~97 m gives 8.5 m, and it holds the Drøbak connection at 23.5 m
-against 29 m — the real sill is about 20 m, and the stage that only deepens cannot correct a sill
-the regrid made too deep. It also moves the land mask: 1.6 k fewer wet cells on the validation box.
-`max_island_cells = 6` still holds on the new mask — every interior land component left is 7 cells
-or larger and at least 2 wide.
-
-## Per-step drivers and the example config
-
-Each step is a `FjordConfig` method on the generic function of the same name —
-`prepare_bathymetry`, `download_forcing`, `prepare_forcing`, `add_rivers`, `download_boundaries`,
-`prepare_boundaries`, `download_atmosphere`,
-`prepare_atmosphere`, `run_simulation` — living beside the pipeline it drives. Each builds the
-grid, checks the step before it has run, calls the generic pipeline, plots, and logs where the
-output went. A step the setup opts out of returns `nothing` rather than raising, matching the
-`::Nothing` methods of the lower arities; "you asked for a step this setup does not configure" is
-reported by `CLI.main`, because that is user input rather than a pipeline condition.
-
-`examples/oslofjorden_npzd.jl` is the worked example of an out-of-tree config: a variant of
-`src/Setups/oslofjorden.jl` running an implicit free surface and a radiating open lateral boundary,
-which it gets by subtyping `AbstractFreeSurfaceConfig`, `AbstractBoundaryConditionConfig` and
-`AbstractGridConfig` in the file itself. It is not a runner — it is passed as
-`--config examples/oslofjorden_npzd.jl`, and it shares `oslofjorden()`'s `data_root` so the atmosphere
-prepare steps do not have to run twice.
-
-`examples/oslofjorden_validation.jl` is the second: `oslofjorden()`'s physics over the domain and
-the 2014-2015 window of MET Norway's FjordOs reports (METreport 4/2016 and 11/2017), with station
-writers at the reports' tide gauges, moorings and CTD stations, for scoring with
-`validate_simulation`. It takes the model, boundary conditions, time stepping, bathymetry smoothing
-knobs and river configuration from the config `oslofjorden()` returns rather than restating them, so
-the two cannot drift apart, and swaps in the Norkyst-v3 hindcast because the operational archive
-begins in 2017. Its header has the full rationale, what the grid can and cannot be expected to show,
-and the two measurements (`z_faces` and `open_edges`) its values were settled by.
+1. Load it: `fjord_config("path/to/it.jl")` must return a `FjordConfig`.
+2. `prepare_bathymetry`, then inspect `bathymetry.png` and `bathymetry.nc`: closed edges are land,
+   the deepest cell matches `z_faces`, sills and channels survive.
+3. The other prepare steps the setup names, in the order `docs/running.md` lists.
+4. A short run first (days, not the full window), on the GPU it will run on, before the long one.

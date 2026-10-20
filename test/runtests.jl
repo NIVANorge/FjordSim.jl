@@ -145,9 +145,6 @@ include("utilities.jl")
             :quantiles,
             :direction_statistics,
             :fjord_config,
-            :setup_names,
-            :oslofjorden,
-            :drammensfjorden,
             # simulation
             :SimulationConfig,
             :AbstractCoupledSimulationConfig,
@@ -183,8 +180,7 @@ include("utilities.jl")
             (:Utils, :extract_z_faces),
             (:Utils, :netcdf_to_jld2),
             (:Utils, :save_fts),
-            (:Setups, :fjord_config),
-            (:Setups, :setup_names),
+            (:Configs, :fjord_config),
             (:Simulations, :SimulationConfig),
             (:Simulations, :run_simulation),
             # Moved out of FjordSim.jl into Simulations; still re-exported, so the entry above in
@@ -1127,25 +1123,10 @@ end
     end
 end
 
-@testset "Setups" begin
-    # Sorted, because Dict order is unspecified — asserted as an invariant rather than as a literal
-    # list, so registering a fjord does not break it.
-    @test issorted(setup_names())
-    @test sort(collect(keys(FjordSim.Setups.SETUPS))) == setup_names()
-
-    # A misspelled name must say which setups exist, not fall through to the file branch.
-    @test_throws ArgumentError fjord_config("nordfjorden")
-    message = try
-        fjord_config("nordfjorden")
-    catch exception
-        exception.msg
-    end
-    @test all(occursin(name, message) for name in setup_names())
-
-    # A path that looks like a config file but is not there fails as a file, not as a bad name.
+@testset "Config files" begin
+    # A setup is a config file outside the package, loaded by path.
     @test_throws ArgumentError fjord_config(joinpath(tempdir(), "no_such_setup.jl"))
 
-    # An out-of-tree config file is loaded by path, so a fjord need not live in the package.
     mktempdir() do tmp
         external = joinpath(tmp, "hardangerfjorden.jl")
         write(
@@ -1176,135 +1157,17 @@ end
         @test bathymetry_path(external_config.bathymetry_config) == joinpath(tmp, "b.nc")
         @test isnothing(external_config.atmosphere_config)  # defaults apply to a file config too
 
+        # Each load evaluates the file afresh: the structs are mutable and `native_region!` edits the
+        # bathymetry config, so a shared instance would leak state between steps.
+        second_config = fjord_config(external)
+        @test second_config !== external_config
+        @test second_config.bathymetry_config !== external_config.bathymetry_config
+
         # A file whose last expression is not a FjordConfig has to say so, rather than failing
         # later inside a pipeline with an unrelated error.
         not_a_config = joinpath(tmp, "not_a_config.jl")
         write(not_a_config, "42\n")
         @test_throws ArgumentError fjord_config(not_a_config)
-    end
-
-    # A field naming a file or directory is a name relative to the setup's own `data_root`, unless
-    # it is absolute — which is how a setup shares another fjord's download instead of fetching its
-    # own copy, and is what `drammensfjorden()` does with Oslofjord's FileGDB, NorKyst and NORA3
-    # files. An absolute one must still resolve to itself and stay inside the data tree, so sharing
-    # cannot become "points anywhere".
-    resolves_from(resolved, field, own_root, tree) =
-        isabspath(field) ? resolved == field && startswith(resolved, tree) :
-        startswith(resolved, own_root)
-
-    # Building a setup must not touch process-wide state: one that set `Oceananigans.defaults.FloatType`
-    # changed the precision of every config built after it, including every test fixture.
-    process_float_type = Oceananigans.defaults.FloatType
-
-    for name in setup_names()
-        config = fjord_config(name)
-        @test Oceananigans.defaults.FloatType == process_float_type
-        data_root = fjord_data_root(name)
-        data_tree = dirname(data_root)
-
-        @test config isa FjordConfig
-        # Every field is concrete or parameterized. `isconcretetype(typeof(config))` would be
-        # vacuous — `typeof` never returns an abstract type.
-        @test all(isconcretetype, fieldtypes(typeof(config)))
-        @test config.bathymetry_config.data_root == data_root
-        @test config.forcing_config.data_root == data_root
-
-        # Asserted for every field that can be shared, not just one of them: checking only the
-        # forcing directory is what let drammensfjorden start sharing Oslofjord's NorKyst download
-        # while the FileGDB and NORA3 fields it shares the same way went unpinned.
-        @test resolves_from(
-            forcing_directory(config.forcing_config),
-            config.forcing_config.output_directory,
-            data_root,
-            data_tree,
-        )
-        @test resolves_from(
-            geodatabase_path(config.bathymetry_config),
-            config.bathymetry_config.geodatabase_file,
-            data_root,
-            data_tree,
-        )
-        if !isnothing(config.atmosphere_config)
-            @test resolves_from(
-                atmosphere_directory(config.atmosphere_config),
-                config.atmosphere_config.output_directory,
-                data_root,
-                data_tree,
-            )
-        end
-
-        # What a setup *produces* is never shared: two fjords writing one prepared file would have
-        # each overwrite the other's, since the name carries no fjord in it.
-        @test startswith(forcing_path(config.forcing_config), data_root)
-        @test startswith(bathymetry_path(config.bathymetry_config), data_root)
-
-        # Built inside the function, so the scratch path `__init__` fills in is already there. A
-        # config built at precompile time would carry an empty `raw_directory` instead.
-        @test isdir(config.bathymetry_config.raw_directory)
-
-        grid_config = config.grid_config
-        @test length(grid_config.z_faces) == grid_config.size[3] + 1
-        @test issorted(grid_config.z_faces)  # bottom to top, as ImmersedBoundaryGrid expects
-        @test last(grid_config.z_faces) == 0.0
-        @test grid_config.longitude[1] < grid_config.longitude[2]
-        @test grid_config.latitude[1] < grid_config.latitude[2]
-    end
-
-    # Each call returns a fresh config: the structs are mutable and `native_region!` edits the
-    # bathymetry config, so a cached `const` instance would leak state between steps.
-    first_call = oslofjorden()
-    second_call = oslofjorden()
-    @test first_call !== second_call
-    @test first_call.bathymetry_config !== second_call.bathymetry_config
-    first_call.grid_config.size = (1, 1, 1)
-    @test second_call.grid_config.size != (1, 1, 1)
-
-    # Conventions every registered setup follows, asserted over all of them. Which dataset a setup
-    # picks, and how long it runs for, are its author's to change — so nothing here names a value,
-    # only the conventions a setup getting them wrong would break.
-    for name in setup_names()
-        config = fjord_config(name)
-
-        # A nested config downloads under the setup's own root rather than sharing from elsewhere.
-        rivers = config.river_config
-        if !isnothing(rivers)
-            @test rivers.data_root == config.bathymetry_config.data_root
-        end
-
-        if !isnothing(config.atmosphere_config)
-            @test startswith(
-                atmosphere_path(config.atmosphere_config),
-                config.atmosphere_config.data_root,
-            )
-        end
-
-        # Results are rooted away from the input data, the simulation config being the only one that
-        # writes rather than reads.
-        if !isnothing(config.simulation_config)
-            @test !startswith(
-                config.simulation_config.results_root,
-                config.bathymetry_config.data_root,
-            )
-        end
-    end
-
-    # Every registered setup reads its roots from the environment, which is what lets one config
-    # run against a laptop's home directory and a cloud VM's staging disk without being edited.
-    # Asserted over all of them, since a setup spelling `homedir()` directly would run against the
-    # wrong disk in a container and only fail once it could not find its inputs.
-    withenv("FJORDSIM_DATA_ROOT" => "/mnt/data", "FJORDSIM_RESULTS_ROOT" => "/mnt/results") do
-        for name in setup_names()
-            config = fjord_config(name)
-
-            @test config.bathymetry_config.data_root == joinpath("/mnt/data", name)
-            if !isnothing(config.simulation_config)
-                @test config.simulation_config.results_root == joinpath("/mnt/results", name)
-            end
-
-            # A setup sharing another fjord's downloads by absolute path must follow the move too,
-            # or a relocated Drammensfjord would look for Oslofjord's FileGDB back under `~`.
-            @test startswith(geodatabase_path(config.bathymetry_config), "/mnt/data/")
-        end
     end
 end
 
@@ -1313,25 +1176,25 @@ end
         parse_arguments = FjordSim.CLI.parse_arguments
 
         # `--config VALUE` and `--config=VALUE` are the same, in either order around the subcommand.
-        @test parse_arguments(["prepare_forcing", "--config", "oslofjorden"]) ==
-              (subcommand = "prepare_forcing", config = "oslofjorden", help = false)
-        @test parse_arguments(["prepare_forcing", "--config=oslofjorden"]) ==
-              parse_arguments(["prepare_forcing", "--config", "oslofjorden"])
-        @test parse_arguments(["--config", "oslofjorden", "prepare_forcing"]) ==
-              parse_arguments(["prepare_forcing", "--config", "oslofjorden"])
+        @test parse_arguments(["prepare_forcing", "--config", "setup.jl"]) ==
+              (subcommand = "prepare_forcing", config = "setup.jl", help = false)
+        @test parse_arguments(["prepare_forcing", "--config=setup.jl"]) ==
+              parse_arguments(["prepare_forcing", "--config", "setup.jl"])
+        @test parse_arguments(["--config", "setup.jl", "prepare_forcing"]) ==
+              parse_arguments(["prepare_forcing", "--config", "setup.jl"])
 
         @test_throws ArgumentError parse_arguments(String[])                              # no subcommand
         @test_throws ArgumentError parse_arguments(["prepare_forcing"])                   # no --config
         @test_throws ArgumentError parse_arguments(["prepare_forcing", "--config"])       # no value
         @test_throws ArgumentError parse_arguments(["prepare_forcing", "--config="])      # empty value
-        @test_throws ArgumentError parse_arguments(["prepare_forcing", "--gpu", "--config", "oslofjorden"])
-        @test_throws ArgumentError parse_arguments(["prepare_forcing", "add_rivers", "--config", "oslofjorden"])
+        @test_throws ArgumentError parse_arguments(["prepare_forcing", "--gpu", "--config", "setup.jl"])
+        @test_throws ArgumentError parse_arguments(["prepare_forcing", "add_rivers", "--config", "setup.jl"])
         @test_throws ArgumentError FjordSim.CLI.subcommand_driver("frobnicate")
 
         # `--help` returns a sentinel instead of exiting, which is what makes it testable at all.
         @test parse_arguments(["-h"]).help
         @test parse_arguments(["--help"]).help
-        @test parse_arguments(["prepare_forcing", "--config", "oslofjorden", "--help"]).help
+        @test parse_arguments(["prepare_forcing", "--config", "setup.jl", "--help"]).help
     end
 
     @testset "subcommand table" begin
@@ -1351,13 +1214,17 @@ end
         for name in subcommands
             @test occursin(name, FjordSim.CLI.USAGE)  # the usage text cannot drift from the table
         end
-        for name in setup_names()
-            @test occursin(name, FjordSim.CLI.USAGE)
-        end
 
         # Every subcommand resolves to a driver that takes a whole setup. This is the assertion that
         # catches a driver method that was never defined, without running any of them.
-        config = drammensfjorden()
+        config = FjordConfig(
+            grid_config = test_grid_config(),
+            bathymetry_config = test_bathymetry_config(),
+            forcing_config = test_forcing_config(),
+            boundary_config = test_boundaries_config(),
+            atmosphere_config = test_atmosphere_config(),
+            simulation_config = test_simulation_config(),
+        )
         for name in subcommands
             @test hasmethod(FjordSim.CLI.subcommand_driver(name), Tuple{typeof(config)})
         end
@@ -1370,8 +1237,8 @@ end
         # `using FjordSim` — including this test file.
         @test !(:main in names(FjordSim))
         @test FjordSim.main(["--help"]) === 0            # must be an exit code, not a driver's result
-        @test FjordSim.main(["frobnicate", "--config", "oslofjorden"]) == 2
-        @test FjordSim.main(["prepare_forcing", "--config", "nordfjorden"]) == 2
+        @test FjordSim.main(["frobnicate", "--config", "setup.jl"]) == 2
+        @test FjordSim.main(["prepare_forcing", "--config", "nordfjorden.jl"]) == 2
         @test FjordSim.main(String[]) == 2
     end
 
@@ -1380,12 +1247,10 @@ end
         # FjordConfig arity for a setup naming no config for it, before any prerequisite is checked.
         # Rooted in a temporary directory so nothing can touch the real ~/FjordSim_data.
         mktempdir() do tmp
-            base = drammensfjorden()
             config = FjordConfig(
-                grid_config = base.grid_config,
-                bathymetry_config = base.bathymetry_config,
+                grid_config = test_grid_config(),
+                bathymetry_config = test_bathymetry_config(data_root = tmp),
             )
-            config.bathymetry_config.data_root = tmp
 
             @test isnothing(download_forcing(config))
             @test isnothing(prepare_forcing(config))
@@ -1422,18 +1287,18 @@ end
 
     @testset "the run log" begin
         # Only `run_simulation` is logged, so a failing prepare step is exit code 1 and leaves no file
-        # behind at all. An out-of-tree config rooted in `tmp` rather than the registered name, so the
-        # assertion does not depend on whether ~/FjordSim_data/drammensfjorden happens to exist.
+        # behind at all. The config files below are evaluated in `Main`, so they build from the test
+        # fixtures, rooted in `tmp`.
         mktempdir() do tmp
             config_file = joinpath(tmp, "config.jl")
             write(
                 config_file,
                 """
-                using FjordSim
-                config = drammensfjorden()
-                config.bathymetry_config.data_root = raw"$tmp"
-                config.forcing_config.data_root = raw"$tmp"
-                config
+                FjordConfig(
+                    grid_config = test_grid_config(),
+                    bathymetry_config = test_bathymetry_config(data_root = raw"$tmp"),
+                    forcing_config = test_forcing_config(data_root = raw"$tmp"),
+                )
                 """,
             )
 
@@ -1445,9 +1310,9 @@ end
 
         # The log goes beside the output it describes, tagged with the launch instant so runs stay
         # distinguishable, and takes the simulation config because that is where both come from.
-        oslo = oslofjorden()
-        @test with_run_tag(() -> FjordSim.CLI.log_path(oslo.simulation_config)) ==
-              joinpath(oslo.simulation_config.results_root, "fjordsim_$PINNED_RUN_TAG.log")
+        simulation_config = test_simulation_config()
+        @test with_run_tag(() -> FjordSim.CLI.log_path(simulation_config)) ==
+              joinpath(simulation_config.results_root, "fjordsim_$PINNED_RUN_TAG.log")
 
         # End to end: a failing `run_simulation` writes its log into the setup's results root and not
         # into the working directory, creating the directory if it does not exist yet. `build_simulation`
@@ -1458,12 +1323,12 @@ end
             write(
                 config_file,
                 """
-                using FjordSim
-                config = oslofjorden()
-                config.bathymetry_config.data_root = raw"$tmp"
-                config.forcing_config.data_root = raw"$tmp"
-                config.simulation_config.results_root = raw"$results"
-                config
+                FjordConfig(
+                    grid_config = test_grid_config(),
+                    bathymetry_config = test_bathymetry_config(data_root = raw"$tmp"),
+                    forcing_config = test_forcing_config(data_root = raw"$tmp"),
+                    simulation_config = test_simulation_config(results_root = raw"$results"),
+                )
                 """,
             )
 
@@ -1480,24 +1345,17 @@ end
         end
 
         # A setup naming no simulation config has nothing to log and no results root to log into, so
-        # `run_simulation` stays a no-op that writes nothing. `drammensfjorden()` itself now names one,
-        # so this config is assembled from its grid/bathymetry/forcing instead, leaving
-        # `simulation_config` at its default of `nothing`.
+        # `run_simulation` stays a no-op that writes nothing.
         mktempdir() do tmp
             config_file = joinpath(tmp, "config.jl")
             write(
                 config_file,
                 """
-                using FjordSim
-                base = drammensfjorden()
-                config = FjordConfig(
-                    grid_config = base.grid_config,
-                    bathymetry_config = base.bathymetry_config,
-                    forcing_config = base.forcing_config,
+                FjordConfig(
+                    grid_config = test_grid_config(),
+                    bathymetry_config = test_bathymetry_config(data_root = raw"$tmp"),
+                    forcing_config = test_forcing_config(data_root = raw"$tmp"),
                 )
-                config.bathymetry_config.data_root = raw"$tmp"
-                config.forcing_config.data_root = raw"$tmp"
-                config
                 """,
             )
 
@@ -1851,7 +1709,7 @@ end
 
         # Every optional stage is opt-in: the default keeps the topological cleanup and nothing
         # else, which is what leaves every other source's bathymetry unchanged. Asserted on configs
-        # built here rather than on the built-in setups', whose numbers are a per-fjord choice.
+        # built here rather than on the example setups', whose numbers are a per-fjord choice.
         smoothing_options = FjordSim.Bathymetry.smoothing_options
         @test smoothing_options(test_bathymetry_config()) == (
             open_boundary_land_cells = 0,
@@ -4648,17 +4506,6 @@ end
         # through the forcing config, which is what a `boundary_config` independent of forcing needs.
         @test open_edges(test_boundaries_config(open_edges = :west)) == [:west]
         @test isempty(open_edges(nothing))
-
-        # The rivers have a file of their own, so whatever a setup names, the simulation reads the
-        # forcing `prepare_forcing` wrote — never a copy carrying rivers — and the river file is a
-        # different one.
-        for name in setup_names()
-            config = fjord_config(name)
-            isnothing(config.forcing_config) && continue
-            @test simulation_forcing_path(config) == forcing_path(config.forcing_config)
-            isnothing(config.river_config) && continue
-            @test river_forcing_path(config.river_config) != forcing_path(config.forcing_config)
-        end
 
         # Every prerequisite is reported as the command that produces it, and every check runs before
         # anything is read or allocated, so the temporary root stays empty apart from the stub.

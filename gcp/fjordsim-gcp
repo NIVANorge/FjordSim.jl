@@ -55,8 +55,8 @@ Data movement (between this machine and the bucket):
 
 Running:
   run --config REF --steps A,B[,...] [options]
-      --config REF     A registered setup name, or a path to an out-of-tree .jl config, which is
-                       uploaded to the bucket and fetched by the VM.
+      --config FILE    The setup's .jl config file. It and every .jl file beside it are uploaded
+                       to the bucket and fetched by the VM, so a config may include a sibling.
       --steps LIST     Comma-separated subcommands, run in order. Same names as the Julia CLI.
       --gpu            Expose the GPU to the container and run a preflight before any step.
       --resume         Stage results back down and set `pickup = true` for run_simulation.
@@ -227,16 +227,15 @@ cmd_run() {
     [[ -n "$steps" ]] || die "--steps is required."
     need PROJECT_ID; need BUCKET; need IMAGE_URI
 
-    local config_object="" fjord
-    if [[ "$config_ref" == *.jl ]]; then
-        [[ -f "$config_ref" ]] || die "config file $config_ref does not exist."
-        fjord="$(basename "$config_ref" .jl)"
-        config_object="$BUCKET/configs/$(basename "$config_ref")"
-    else
-        fjord="$config_ref"
-    fi
+    [[ "$config_ref" == *.jl ]] || die "--config takes a .jl config file, e.g. examples/oslofjorden.jl."
+    [[ -f "$config_ref" ]] || die "config file $config_ref does not exist."
+    local fjord
+    fjord="$(basename "$config_ref" .jl)"
 
     [[ -n "$run_id" ]] || run_id="$fjord-${steps//,/-}-$(date +%Y%m%d-%H%M%S)"
+
+    # Under the run id, so two runs' copies of a same-named sibling cannot overwrite each other.
+    local config_object="$BUCKET/configs/$run_id/$(basename "$config_ref")"
 
     # Checkpoints carry no run tag and are scoped to results_root, so two live runs against the
     # same fjord would silently pick up each other's. Refuse rather than corrupt a run — and refuse
@@ -267,14 +266,14 @@ cmd_run() {
 
     local script
     script="$(BUCKET="$BUCKET" FJORD="$fjord" RUN_ID="$run_id" STEPS="$steps" \
-        CONFIG_REF="$fjord" CONFIG_OBJECT="$config_object" IMAGE_URI="$IMAGE_URI" \
+        CONFIG_OBJECT="$config_object" IMAGE_URI="$IMAGE_URI" \
         USE_GPU="$use_gpu" RESUME="$resume" STAGE_ALL="$stage_all" EXTRA_FJORDS="$extra_fjords" \
         DEBUG="$debug" CPU="$cpu" \
-        envsubst '$BUCKET $FJORD $RUN_ID $STEPS $CONFIG_REF $CONFIG_OBJECT $IMAGE_URI $USE_GPU $RESUME $STAGE_ALL $EXTRA_FJORDS $DEBUG $CPU' \
+        envsubst '$BUCKET $FJORD $RUN_ID $STEPS $CONFIG_OBJECT $IMAGE_URI $USE_GPU $RESUME $STAGE_ALL $EXTRA_FJORDS $DEBUG $CPU' \
         < "$here/remote-run.sh")"
 
     if [[ "$dry" == "true" ]]; then
-        [[ -n "$config_object" ]] && printf 'would upload %s -> %s\n' "$config_ref" "$config_object"
+        printf 'would upload %s/*.jl -> %s/\n' "$(dirname "$config_ref")" "$(dirname "$config_object")"
         [[ -n "$nve_key" ]] && printf 'would write NVE_API_KEY to ~/.fjordsim-nve-key on %s\n' "$VM_NAME"
         printf 'would scp the script below to %s:~/%s, then:\n  %s\n\n--- rendered %s ---\n%s\n' \
             "$VM_NAME" "$remote_script" \
@@ -285,10 +284,8 @@ cmd_run() {
 
     [[ "$(vm_status)" == "RUNNING" ]] || die "$VM_NAME is not RUNNING. Start it with: gcp/fjordsim-gcp up"
 
-    if [[ -n "$config_object" ]]; then
-        echo "uploading $config_ref -> $config_object"
-        gcloud storage cp "$config_ref" "$config_object"
-    fi
+    echo "uploading $(dirname "$config_ref")/*.jl -> $(dirname "$config_object")/"
+    gcloud storage cp "$(dirname "$config_ref")"/*.jl "$(dirname "$config_object")/"
 
     # Through stdin, not an argument: a command line is world-readable in `ps` on the VM.
     if [[ -n "$nve_key" ]]; then

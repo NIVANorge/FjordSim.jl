@@ -4,9 +4,9 @@ How to take a setup from nothing to a scored run, and the rules that keep its da
 consistent. The quick start and the `run_simulation` fields are in the `README.md`; running on a
 cloud GPU is in `gcp/README.md`.
 
-`--config` is the only option of every subcommand, and it is required. It takes a registered setup
-name (`julia --project -m FjordSim --help` lists them) or the path to a `.jl` file whose last
-expression is a `FjordConfig`. Everything else is a field of that config.
+`--config` is the only option of every subcommand, and it is required. It takes the path to a setup:
+a `.jl` file whose last expression is a `FjordConfig`, such as `examples/oslofjorden.jl`. No setup
+is part of the package. Everything else is a field of that config.
 
 ## The steps
 
@@ -27,7 +27,7 @@ configure is a no-op.
 | `validate_simulation` | a finished run | `<results_root>/validation/` | only Kartverket water level is fetched automatically |
 
 ```bash
-julia --project -m FjordSim prepare_bathymetry --config oslofjorden
+julia --project -m FjordSim prepare_bathymetry --config examples/oslofjorden.jl
 julia --project -m FjordSim run_simulation --config examples/oslofjorden_npzd.jl
 julia --project -m FjordSim validate_simulation --config examples/oslofjorden_validation.jl
 ```
@@ -35,7 +35,7 @@ julia --project -m FjordSim validate_simulation --config examples/oslofjorden_va
 The same without `-m`, Julia 1.12's package entry point:
 
 ```bash
-julia --project -e 'using FjordSim; FjordSim.main(ARGS)' -- prepare_forcing --config oslofjorden
+julia --project -e 'using FjordSim; FjordSim.main(ARGS)' -- prepare_forcing --config examples/oslofjorden.jl
 ```
 
 ### From the REPL, and debugging a step
@@ -45,7 +45,7 @@ Each subcommand is a `FjordConfig` method on the generic function of the same na
 ```julia
 using Pkg; Pkg.activate(".")
 using FjordSim
-config = oslofjorden()
+config = fjord_config("examples/oslofjorden.jl")
 prepare_bathymetry(config)
 
 using Debugger
@@ -64,10 +64,10 @@ some config edits silently do nothing until the files are rewritten.
 (`coverage_window`), and the river file's daily axis *is* that window. Re-run, in this order:
 
 ```bash
-julia --project -m FjordSim prepare_forcing     --config oslofjorden
-julia --project -m FjordSim add_rivers          --config oslofjorden
-julia --project -m FjordSim prepare_boundaries  --config oslofjorden
-julia --project -m FjordSim prepare_atmosphere  --config oslofjorden
+julia --project -m FjordSim prepare_forcing     --config examples/oslofjorden.jl
+julia --project -m FjordSim add_rivers          --config examples/oslofjorden.jl
+julia --project -m FjordSim prepare_boundaries  --config examples/oslofjorden.jl
+julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden.jl
 ```
 
 **`z_faces`, the grid `size`, or any `bathymetry_config` smoothing knob.** `z_faces` is written into
@@ -75,10 +75,10 @@ julia --project -m FjordSim prepare_atmosphere  --config oslofjorden
 boundary prepares build their masks from comes from the same file. Re-run, in this order:
 
 ```bash
-julia --project -m FjordSim prepare_bathymetry  --config oslofjorden
-julia --project -m FjordSim prepare_forcing     --config oslofjorden
-julia --project -m FjordSim add_rivers          --config oslofjorden
-julia --project -m FjordSim prepare_boundaries  --config oslofjorden
+julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden.jl
+julia --project -m FjordSim prepare_forcing     --config examples/oslofjorden.jl
+julia --project -m FjordSim add_rivers          --config examples/oslofjorden.jl
+julia --project -m FjordSim prepare_boundaries  --config examples/oslofjorden.jl
 ```
 
 `prepare_atmosphere` is not in this list: the atmosphere is 2D on its own lon/lat grid. Existing

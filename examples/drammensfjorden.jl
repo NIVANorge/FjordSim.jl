@@ -1,5 +1,5 @@
-# The Drammensfjord setup: Geonorge Sjøkart Dybdedata bathymetry, NorKyst-800m forcing with NVE
-# rivers, and NORA3 atmosphere, on a 170 x 256 x 18 grid covering 10.20-10.50°E, 59.53-59.76°N — 99 m
+# The Drammensfjord setup: Geonorge Sjøkart Dybdedata bathymetry, NVE rivers, hourly NorKyst-800m
+# data on the open southern edge and NORA3 atmosphere, on a 170 x 256 x 18 grid covering 10.20-10.50°E, 59.53-59.76°N — 99 m
 # cells, and the whole fjord from the Drammenselva and Lierelva mouths down past the Svelvik sill to
 # the last narrows before Breiangen. It runs the calendar year 2020, as `oslofjorden.jl` does.
 #
@@ -7,7 +7,7 @@
 # whose *eastern* wall is still land: below 59.52°N Breiangen reaches past 10.50°E, so a closed
 # eastern wall would sit in open water across the mouth.
 #
-# The FileGDB, the daily NorKyst months and the NORA3 months are read from
+# The FileGDB and the NORA3 months are read from
 # `~/FjordSim_data/oslofjorden/` by absolute path, since Oslofjord's domain contains this one and both
 # downloaders skip a month already present. The boundary band and the NVE caches are not shared — see
 # their comments below.
@@ -15,8 +15,6 @@
 # # Preparing and running it
 #
 #   julia --project -m FjordSim prepare_bathymetry  --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim download_forcing    --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim prepare_forcing     --config examples/drammensfjorden.jl
 #   julia --project -m FjordSim add_rivers          --config examples/drammensfjorden.jl
 #   julia --project -m FjordSim download_boundaries --config examples/drammensfjorden.jl
 #   julia --project -m FjordSim prepare_boundaries  --config examples/drammensfjorden.jl
@@ -99,18 +97,6 @@ FjordConfig(
         geonorge_cache        = true,
         regrid_cache          = false,
     ),
-    # Overloads forcing_time_steps, forcing_source_grid, forcing_variable_names and
-    # download_forcing (required) — the hooks prepare_forcing and download_forcing dispatch on.
-    forcing_config = NorKystConfig(
-        data_root        = data_root,
-        # Absolute: Oslofjord's twelve daily NorKyst months are read rather than fetched again.
-        output_directory = joinpath(oslofjorden_data_root, "norkyst"),
-        output_file      = "forcing.nc",
-        plot_file        = "forcing.png",
-        architecture     = :auto,
-        parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
-        years            = [2020],
-    ),
     # Overloads river_locations, river_series, river_discharge and download_rivers (all
     # required). Its own `data_root`: the ELVIS and REGINE caches record the domain they
     # were fetched for under a fixed name, so sharing Oslofjord's `nve` directory would
@@ -165,7 +151,7 @@ FjordConfig(
     # download_atmosphere, prescribed_atmosphere and prescribed_radiation.
     atmosphere_config = NORA3Config(
         data_root        = data_root,
-        # Absolute, like the NorKyst directory above: NORA3 is ~10000 OPeNDAP reads per year,
+        # Absolute: NORA3 is ~10000 OPeNDAP reads per year,
         # and Oslofjord's subset already covers this domain.
         output_directory = joinpath(oslofjorden_data_root, "nora3"),
         output_file      = "atmosphere.nc",
@@ -259,14 +245,13 @@ FjordConfig(
             max_time_step        = 3minutes,
             max_time_step_change = 1.01,
         ),
-        # The NorKyst state at `start_date`: every tracer the model names plus u and v,
-        # whichever of them the prepared forcing file carries.
-        initial_conditions = FromForcing(),
-        # The whole of 2020, a leap year, so 366 days from midnight lands on midnight. Both
+        # A uniform water column at rest.
+        initial_conditions = (T = 5.0, S = 33.0),
+        # The whole of 2020, a leap year, so 366 days from midnight lands on midnight. The
         # prepare steps pad their time axes to reach the ends of this window.
         start_date         = DateTime(2020, 1, 1),
         stop_time          = 366days,
-        # One pass. Raise it to spin the basin up on the same forcing year, carrying the state
+        # One pass. Raise it to spin the basin up on the same year, carrying the state
         # over; each repetition writes its own `_loopNN` file.
         loops              = 1,
         pickup             = false,

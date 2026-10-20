@@ -1,13 +1,11 @@
 # Lista: the open coast of southernmost Norway, from Sokndal past Lindesnes (6.22-7.25°E,
 # 57.89-58.34°N), with Fedafjorden, the Flekkefjord sounds, Rosfjorden and the northern slope of the
-# Norwegian Trench. NorKyst-800m forcing and an open boundary on three sides, NVE rivers, NORA3
+# Norwegian Trench. Hourly NorKyst-800m data on an open boundary on three sides, NVE rivers, NORA3
 # atmosphere, run from 1 January 2024 to 1 October 2025.
 #
 # # Preparing and running it locally
 #
 #   julia --project -m FjordSim prepare_bathymetry  --config examples/lista.jl
-#   julia --project -m FjordSim download_forcing    --config examples/lista.jl
-#   julia --project -m FjordSim prepare_forcing     --config examples/lista.jl
 #   julia --project -m FjordSim add_rivers          --config examples/lista.jl
 #   julia --project -m FjordSim download_boundaries --config examples/lista.jl
 #   julia --project -m FjordSim prepare_boundaries  --config examples/lista.jl
@@ -30,7 +28,7 @@
 #   julia --project -m FjordSim prepare_bathymetry --config examples/lista.jl
 #   gcp/fjordsim-gcp push-data lista
 #   gcp/fjordsim-gcp up && gcp/fjordsim-gcp bootstrap
-#   gcp/fjordsim-gcp run --config examples/lista.jl --steps download_forcing,prepare_forcing,add_rivers,download_boundaries,prepare_boundaries,download_atmosphere,prepare_atmosphere
+#   gcp/fjordsim-gcp run --config examples/lista.jl --steps add_rivers,download_boundaries,prepare_boundaries,download_atmosphere,prepare_atmosphere
 #   gcp/fjordsim-gcp run --config examples/lista.jl --steps run_simulation --gpu --run-id lista-2024
 #   gcp/fjordsim-gcp logs lista-2024
 #   gcp/fjordsim-gcp pull-results lista
@@ -78,8 +76,8 @@ using FjordSim.Bathymetry: GEONORGE_DYBDEDATA_GDB
 
 data_root = fjord_data_root("lista")
 FT = Float32
-# NorKyst-800m, daily and hourly alike, ends on 2025-10-05 on thredds.met.no, so 2025 is the last
-# year either forcing source can reach.
+# The hourly NorKyst-800m collection ends on 2025-10-05 on thredds.met.no, so 2025 is the last year
+# the boundary data can reach.
 years = [2024, 2025]
 # `oslofjorden.jl`'s levels from a 1 m surface cell stretching by 1.25, with 41-132 m split into
 # eighteen 5.06 m levels as in `examples/oslofjorden_validation.jl`. There `oslofjorden.jl`'s five
@@ -152,15 +150,6 @@ FjordConfig(
         preserve_sills        = true,
         geonorge_cache        = true,
         regrid_cache          = false,
-    ),
-    forcing_config = NorKystConfig(
-        data_root        = data_root,
-        output_directory = "norkyst",
-        output_file      = "forcing.nc",
-        plot_file        = "forcing.png",
-        architecture     = :auto,
-        parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
-        years            = years,
     ),
     river_config = NVERiversConfig(
         data_root   = data_root,
@@ -331,11 +320,10 @@ FjordConfig(
             max_time_step        = 3minutes,
             max_time_step_change = 1.01,
         ),
-        # The NorKyst state at `start_date`. `prepare_forcing` pads the daily 12:00 records so
-        # that one lands exactly at midnight on 1 January.
-        initial_conditions = FromForcing(),
+        # A uniform water column at rest.
+        initial_conditions = (T = 5.0, S = 33.0),
         # 1 January 2024 to 1 October 2025: 366 + 273 days. NorKyst ends on 2025-10-05, so this is
-        # the last whole month either forcing source covers.
+        # the last whole month the boundary data covers.
         start_date         = DateTime(2024, 1, 1),
         stop_time          = 639days,
         loops              = 1,

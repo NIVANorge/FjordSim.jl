@@ -11,17 +11,14 @@
 #      `NPZDBoundaries` subtype an `Abstract*Config`, hold the built-in config they extend, and
 #      delegate every hook but the one or two they mean to change. That is the documented way to add
 #      a source (`docs/adding-a-source.md`) and it is all rivers and the model need.
-#   3. **A new method on a *pipeline* generic.** `prepare_forcing` and `prepare_boundaries` are
-#      generic functions dispatching on the config type, so `NPZDForcing` and `NPZDBoundaries` add a
-#      method that runs the built-in pipeline and then *appends* the biogeochemical variables to the
-#      file it wrote.
+#   3. **A new method on a *pipeline* generic.** `prepare_boundaries` is a generic function
+#      dispatching on the config type, so `NPZDBoundaries` adds a method that runs the built-in
+#      pipeline and then *appends* the biogeochemical variables to the file it wrote.
 #
-# (2) and (3) are what buy everything else for free. Once `forcing_npzd.nc` carries `N`/`N_lambda`,
-# `boundaries_npzd.nc` carries `south_N` and the river series carry `N`, three pieces of FjordSim
-# that were written to be name-driven pick the new tracers up with no further code:
+# (2) and (3) are what buy everything else for free. Once `boundaries_npzd.nc` carries `south_N` and
+# the river series carry `N`, two pieces of FjordSim that were written to be name-driven pick the new
+# tracers up with no further code:
 #
-#   * `state_variables` intersects `model_tracers` with the file's variables, so `FromForcing()`
-#     starts N, P, Z and D from the prepared field.
 #   * `river_forcing` builds a source for every model tracer the river file carries, so river nitrate
 #     enters with the same water, through the same columns, as river temperature and salinity. P, Z
 #     and D, which no river names, enter at the value of the water the river flows into.
@@ -29,15 +26,16 @@
 #     series, so `OpenLateralBoundaryFromData` needs no change at all — it would in fact **error**
 #     without `south_N`, which is why the boundary append is not optional.
 #
+# N, P, Z and D start from the same profiles, evaluated at `start_date` and given to
+# `initial_conditions` as functions of depth.
+#
 # The prepared files are new names under the shared `data_root`, so the downloads are reused and
-# `oslofjorden.jl`'s own `forcing.nc` and `boundaries.nc` are left untouched:
+# `oslofjorden.jl`'s own `rivers_nve.nc` and `boundaries.nc` are left untouched:
 #
 #   julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden.jl   # shared, if not run
-#   julia --project -m FjordSim download_forcing    --config examples/oslofjorden.jl   # shared
 #   julia --project -m FjordSim download_boundaries --config examples/oslofjorden.jl   # shared
 #   julia --project -m FjordSim download_atmosphere --config examples/oslofjorden.jl   # shared
 #   julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden.jl   # shared
-#   julia --project -m FjordSim prepare_forcing     --config examples/oslofjorden_npzd.jl
 #   julia --project -m FjordSim add_rivers          --config examples/oslofjorden_npzd.jl
 #   julia --project -m FjordSim prepare_boundaries  --config examples/oslofjorden_npzd.jl
 #   julia --project -m FjordSim run_simulation      --config examples/oslofjorden_npzd.jl
@@ -116,7 +114,7 @@ const EUPHOTIC_SCALE = 25.0
 # How well the nitrate profile above actually does, scored against all 23 OF-1 and LA-1 nitrate
 # measurements the report publishes for 2020: mean bias +0.9, RMSE 2.2 mmol N m⁻³ on a field that
 # spans 0-13. The two ends that matter are close — 6.65 against 6.71 at the surface in January,
-# which is the instant `FromForcing()` actually reads, and 8.4 / 8.6 / 12.8 against 8.6 / 8.6 / 12.9
+# which is the instant the initial conditions are evaluated at, and 8.4 / 8.6 / 12.8 against 8.6 / 8.6 / 12.9
 # at 100, 200 and 400 m in the March profile.
 #
 # Every large residual is subsurface and late-season: 4.1 against 0.1 at 50 m in September, 7.8
@@ -233,7 +231,7 @@ zooplankton_profile(z, date) = ZOOPLANKTON_FRACTION * phytoplankton_profile(z, d
 detritus_profile(z, date) = DETRITUS_FRACTION * phytoplankton_profile(z, date)
 
 # The four profiles, keyed by the tracer name they are written under. One `NamedTuple` because both
-# the forcing append and the boundary append want exactly the same set, evaluated the same way.
+# the initial conditions and the boundary append want exactly the same set, evaluated the same way.
 const NPZD_PROFILES = (
     N = nitrate_profile,
     P = phytoplankton_profile,
@@ -291,60 +289,9 @@ end
 
 # --- Writing the profiles into the prepared files -----------------------------------------------
 
-# Matches `FjordSim.Forcing`'s own writer settings, so the appended variables compress and chunk
-# like the ones `prepare_forcing` wrote beside them.
+# Matches FjordSim's own writer settings, so the appended variables compress like the ones
+# `prepare_boundaries` wrote beside them.
 const NPZD_DEFLATE_LEVEL = 5
-
-"""
-    append_forcing_variables!(filepath, profiles)
-
-Add one `name`/`name_lambda` pair per entry of `profiles` to the prepared forcing file at
-`filepath`, horizontally uniform and evaluated on the file's own depth and time axes.
-
-Every relaxation rate is zero, exactly as `prepare_forcing` writes them for T and S: the prepared
-forcing is a *state* to start from, not an interior nudging band.
-
-Land is copied from the file's own salinity mask rather than recomputed: `ForcingFromFile` reads a
-non-finite value as its land sentinel, and a mask that disagreed with S's would force a cell the
-rest of the file calls dry.
-"""
-function append_forcing_variables!(filepath, profiles)
-    NCDataset(filepath, "a") do ds
-        z = ds["Nz"][:]
-        dates = ds["time"][:]
-        shape = (ds.dim["Nx"], ds.dim["Ny"], ds.dim["Nz"])
-        wet = map(value -> !ismissing(value) && isfinite(value), ds["S"][:, :, :, 1])
-        lambda = zeros(Float32, shape)
-
-        for (name, profile) in pairs(profiles)
-            variable = defVar(
-                ds, String(name), Float32, ("Nx", "Ny", "Nz", "time");
-                chunksizes = [shape[1], shape[2], 1, 1],
-                deflatelevel = NPZD_DEFLATE_LEVEL,
-                attrib = ["_FillValue" => NaN32],
-            )
-            rates = defVar(
-                ds, String(name) * "_lambda", Float32, ("Nx", "Ny", "Nz", "time");
-                chunksizes = [shape[1], shape[2], 1, 1],
-                deflatelevel = NPZD_DEFLATE_LEVEL,
-                attrib = ["_FillValue" => NaN32],
-            )
-
-            @info "Writing $name into $(basename(filepath))"
-            slab = Array{Float32}(undef, shape)
-            for (index, date) in enumerate(dates)
-                column = Float32[profile(depth, date) for depth in z]
-                for k in axes(slab, 3)
-                    slab[:, :, k] .= ifelse.(wet[:, :, k], column[k], NaN32)
-                end
-                variable[:, :, :, index] = slab
-                rates[:, :, :, index] = lambda
-            end
-        end
-    end
-
-    return filepath
-end
 
 """
     append_boundary_variables!(filepath, edges, profiles)
@@ -463,7 +410,7 @@ die, in `calculate_substeps`, before the first hour was out.
 
 So the modifier is built here instead, over the four tracers that really do carry the nitrogen, and
 `scale_negatives` stays at its `false` default. `NPZD_PROFILES` names them, so the set cannot drift
-apart from the one the forcing and the boundary appends write.
+apart from the one the initial conditions and the boundary append use.
 """
 npzd_model(model::NPZDModel, grid) = CoupledHydrostaticSimulation(
     buoyancy = model.base.buoyancy,
@@ -559,55 +506,6 @@ function FjordSim.river_series(rivers::NPZDRivers, times)
     return series
 end
 
-# --- NPZDForcing: a new AbstractForcingConfig ---------------------------------------------------
-
-"""
-    NPZDForcing(base)
-
-`base`'s interior forcing with the four NPZD tracers appended to whatever it prepares.
-
-Only `prepare_forcing` is overloaded. `simulation_forcing` and `forcing_date_range` are the
-supertype defaults, because the appended variables are in exactly the layout those readers already
-expect — one `name`/`name_lambda` pair on `("Nx", "Ny", "Nz", "time")` — which is the point of
-appending rather than writing a second file.
-
-There is no hook inside `prepare_forcing` for a *synthesized* variable, and deliberately so: the
-generic pipeline reads every variable it writes out of a downloaded source file, and validates it
-against one. That is the right contract for a dataset adapter and the wrong one for a profile out of
-a report, so this extends the pipeline at the level where it composes — a second method on
-`prepare_forcing` itself — rather than pretending the values came from NorKyst.
-"""
-struct NPZDForcing{F} <: AbstractForcingConfig
-    base::F
-    data_root::String
-    output_file::String
-    plot_file::String
-end
-
-NPZDForcing(base) = NPZDForcing(base, base.data_root, base.output_file, base.plot_file)
-
-FjordSim.download_forcing(target_grid, config::NPZDForcing) = download_forcing(target_grid, config.base)
-
-"""
-    prepare_forcing(target_grid, config::NPZDForcing; coverage, edges)
-
-Regrid `base`'s variables, then append the biogeochemical ones to the file it wrote.
-
-`base` writes to the same path this config resolves — they share `data_root` and `output_file` — so
-there is one prepared file, not two.
-"""
-function FjordSim.prepare_forcing(
-    target_grid,
-    config::NPZDForcing;
-    coverage = nothing,
-    edges = nothing,
-)
-    result = prepare_forcing(target_grid, config.base; coverage, edges)
-    append_forcing_variables!(result.output_file, NPZD_PROFILES)
-
-    return (; result..., variables = [result.variables; String.(collect(keys(NPZD_PROFILES)))])
-end
-
 # --- NPZDBoundaries: a new AbstractBoundaryDataConfig -------------------------------------------
 
 """
@@ -651,10 +549,9 @@ FjordSim.download_boundaries(target_grid, config::NPZDBoundaries) =
 
 Regrid `base`'s exterior state, then append the biogeochemical variables to the file it wrote.
 
-The same shape as `NPZDForcing`'s `prepare_forcing`, and for the same reason: `boundary_source_slab`
-can *derive* a variable from others in the download, but `prepared_boundary_variable` still validates
-the source name against the downloaded file, so a variable with no source at all has to be added
-after the pipeline rather than inside it.
+Appended after the pipeline rather than inside it: `boundary_source_slab` can *derive* a variable
+from others in the download, but `prepared_boundary_variable` still validates the source name
+against the downloaded file, so a variable with no source at all has no place there.
 """
 function FjordSim.prepare_boundaries(target_grid, config::NPZDBoundaries; coverage = nothing)
     result = prepare_boundaries(target_grid, config.base; coverage)
@@ -684,22 +581,6 @@ rivers = NPZDRivers(
     plot_file = "rivers_npzd.png",
 )
 
-# A fresh `NorKystConfig` rather than a mutated `base.forcing_config`, so `oslofjorden.jl`'s own
-# `forcing.nc` survives. Same `output_directory`, so the downloaded NorKyst months are shared rather
-# than fetched again — `download_forcing` is the one step in this
-# pipeline that talks to MET's OPeNDAP server, and the only reason to re-run it is a new year.
-forcing = NPZDForcing(
-    NorKystConfig(
-        data_root = base.forcing_config.data_root,
-        output_directory = base.forcing_config.output_directory,
-        output_file = "forcing_npzd.nc",
-        plot_file = "forcing_npzd.png",
-        architecture = base.forcing_config.architecture,
-        parameters = base.forcing_config.parameters,
-        years = base.forcing_config.years,
-    ),
-)
-
 boundaries = NPZDBoundaries(
     NorKystBoundariesConfig(
         data_root = base.boundary_config.data_root,
@@ -719,7 +600,6 @@ simulation = base.simulation_config
 FjordConfig(
     grid_config = base.grid_config,
     bathymetry_config = base.bathymetry_config,
-    forcing_config = forcing,
     river_config = rivers,
     boundary_config = boundaries,
     atmosphere_config = base.atmosphere_config,
@@ -764,10 +644,11 @@ FjordConfig(
         ),
         callbacks = simulation.callbacks,
         time_stepping = simulation.time_stepping,
-        # Unchanged, and it now reads nine fields rather than five: `state_variables` intersects
-        # `model_tracers` with the prepared file's own variables, so appending N, P, Z and D to
-        # `forcing_npzd.nc` is the entire initial-condition change.
-        initial_conditions = FromForcing(),
+        # `oslofjorden.jl`'s T and S, plus N, P, Z and D as their profiles on `start_date`.
+        initial_conditions = merge(
+            simulation.initial_conditions,
+            map(profile -> (λ, φ, z) -> profile(z, simulation.start_date), NPZD_PROFILES),
+        ),
         start_date = simulation.start_date,
         stop_time = simulation.stop_time,
         loops = simulation.loops,

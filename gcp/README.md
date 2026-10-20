@@ -161,16 +161,15 @@ Preparing on a laptop is fine and often simplest; only the simulation really nee
 
 ```bash
 julia --project -m FjordSim prepare_bathymetry --config examples/drammensfjorden.jl
-julia --project -m FjordSim prepare_forcing    --config examples/drammensfjorden.jl
 julia --project -m FjordSim add_rivers         --config examples/drammensfjorden.jl
 
-gcp/fjordsim-gcp push-data drammensfjorden          # only the top-level *.nc, ~970 MB
+gcp/fjordsim-gcp push-data drammensfjorden          # only the top-level *.nc
 gcp/fjordsim-gcp run --config examples/drammensfjorden.jl --steps run_simulation --gpu
 gcp/fjordsim-gcp pull-results drammensfjorden
 ```
 
 `push-data` uploads only the prepared NetCDFs, because that is all a simulation opens. `--all` adds
-the raw sources (`norkyst/`, `nora3/`, the FileGDB), which only a `prepare_*` step needs.
+the raw sources (`norkyst_hourly/`, `nora3/`, the FileGDB), which only a `prepare_*` step needs.
 
 ### Prepare in the cloud
 
@@ -178,7 +177,7 @@ Better for the slow steps, and it keeps the raw sources off your disk entirely.
 
 ```bash
 gcp/fjordsim-gcp run --config examples/oslofjorden.jl \
-    --steps prepare_bathymetry,download_forcing,prepare_forcing,add_rivers
+    --steps prepare_bathymetry,add_rivers,download_boundaries,prepare_boundaries
 gcp/fjordsim-gcp run --config examples/oslofjorden.jl \
     --steps download_atmosphere,prepare_atmosphere
 gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --gpu

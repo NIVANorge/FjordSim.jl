@@ -71,8 +71,7 @@ A new data source is a new config type, not an edit to the pipeline: `docs/addin
   to the config's own `data_root`; an absolute path relocates just that one.
 - **Sharing a download** with another fjord is an absolute path into that fjord's root, built from
   `fjord_data_root("<other>")` so a relocation moves both — `examples/drammensfjorden.jl` shares
-  Oslofjord's FileGDB, NorKyst months and NORA3 months this way. Share only from a domain that
-  *contains* the new one, for the same years: a month missing from the shared directory is
+  Oslofjord's FileGDB and NORA3 months this way. Share only from a domain that *contains* the new one, for the same years: a month missing from the shared directory is
   downloaded subset to the smaller box and then shrinks the larger setup's own prepare step.
 - **Never shared:** prepared files (their names carry no fjord, so two setups would overwrite each
   other), the NVE caches (they record the domain they were fetched for under a fixed name), and the

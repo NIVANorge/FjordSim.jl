@@ -5,8 +5,6 @@ using FjordSim
 
 config = fjord_config(joinpath(@__DIR__, "..", "examples", "oslofjorden.jl"))
 prepare_bathymetry(config)
-# download_forcing(config)
-# prepare_forcing(config)
 # add_rivers(config)
 # download_boundaries(config)
 # prepare_boundaries(config)

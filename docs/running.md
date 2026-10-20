@@ -35,7 +35,7 @@ julia --project -m FjordSim validate_simulation --config examples/oslofjorden_va
 The same without `-m`, Julia 1.12's package entry point:
 
 ```bash
-julia --project -e 'using FjordSim; FjordSim.main(ARGS)' -- prepare_forcing --config examples/oslofjorden.jl
+julia --project -e 'using FjordSim; FjordSim.main(ARGS)' -- prepare_bathymetry --config examples/oslofjorden.jl
 ```
 
 ### From the REPL, and debugging a step
@@ -49,7 +49,7 @@ config = fjord_config("examples/oslofjorden.jl")
 prepare_bathymetry(config)
 
 using Debugger
-@enter prepare_forcing(config)
+@enter add_rivers(config)
 ```
 
 `build_simulation(config)` returns the assembled `Simulation` without starting it — the entry point
@@ -61,10 +61,10 @@ The prepared files are regridded onto the grid and padded to the run window *at 
 some config edits silently do nothing until the files are rewritten.
 
 **`start_date` or `stop_time`.** The prepare steps pad their time axes to the run window
-(`coverage_window`), and the river file's daily axis *is* that window. Re-run, in this order:
+(`coverage_window`), and the river file's daily axis *is* that window. Re-run, in this order, with
+`prepare_forcing` first for a setup that names a `forcing_config`:
 
 ```bash
-julia --project -m FjordSim prepare_forcing     --config examples/oslofjorden.jl
 julia --project -m FjordSim add_rivers          --config examples/oslofjorden.jl
 julia --project -m FjordSim prepare_boundaries  --config examples/oslofjorden.jl
 julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden.jl
@@ -72,11 +72,11 @@ julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden.jl
 
 **`z_faces`, the grid `size`, or any `bathymetry_config` smoothing knob.** `z_faces` is written into
 `bathymetry.nc` and `simulation_grid` reads the *file*, not the config; the land mask the forcing and
-boundary prepares build their masks from comes from the same file. Re-run, in this order:
+boundary prepares build their masks from comes from the same file. Re-run, in this order, with
+`prepare_forcing` after `prepare_bathymetry` for a setup that names a `forcing_config`:
 
 ```bash
 julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden.jl
-julia --project -m FjordSim prepare_forcing     --config examples/oslofjorden.jl
 julia --project -m FjordSim add_rivers          --config examples/oslofjorden.jl
 julia --project -m FjordSim prepare_boundaries  --config examples/oslofjorden.jl
 ```

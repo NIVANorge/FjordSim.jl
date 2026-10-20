@@ -15,8 +15,6 @@
 # water-level source.
 #
 #   julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden_validation.jl
-#   julia --project -m FjordSim download_forcing    --config examples/oslofjorden_validation.jl
-#   julia --project -m FjordSim prepare_forcing     --config examples/oslofjorden_validation.jl
 #   julia --project -m FjordSim add_rivers          --config examples/oslofjorden_validation.jl
 #   julia --project -m FjordSim download_boundaries --config examples/oslofjorden_validation.jl
 #   julia --project -m FjordSim prepare_boundaries  --config examples/oslofjorden_validation.jl
@@ -35,17 +33,16 @@
 # configuration are taken from the config `oslofjorden.jl` returns, not restated. A validation of a model that has drifted from
 # the model being validated is worth nothing, and a copy is exactly what drifts. So a change to any of
 # them is made in `oslofjorden.jl` and arrives here by itself — but a bathymetry knob is a *data*
-# change, and needs this file's `prepare_bathymetry`, `prepare_forcing`, `add_rivers` and
-# `prepare_boundaries` re-run as much as `oslofjorden.jl`'s.
+# change, and needs this file's `prepare_bathymetry`, `add_rivers` and `prepare_boundaries`
+# re-run as much as `oslofjorden.jl`'s.
 #
 # # What is different, and why
 #
 # **The dataset.** `oslofjorden.jl` reads the operational NorKyst-800m archive at
 # `fou-hi/norkyst800m`, which begins 2017-02-20 and so cannot reach this window at all. This reads the
-# Norkyst-v3 hindcast at `romshindcast/norkyst_v3` (`NorKystHindcastConfig`,
-# `NorKystHindcastBoundariesConfig`), MET's continuous free run from 2012, which carries the same
-# variables on the same grid. The boundary half gains from the change: the hindcast publishes
-# `ubar_eastward`/`vbar_northward` already rotated to geographic axes, where the operational
+# Norkyst-v3 hindcast at `romshindcast/norkyst_v3` (`NorKystHindcastBoundariesConfig`), MET's
+# continuous free run from 2012, which carries the same variables on the same grid. It also gains
+# from the change: the hindcast publishes `ubar_eastward`/`vbar_northward` already rotated to geographic axes, where the operational
 # collection publishes ROMS' grid-relative pair and `NorKystBoundariesConfig` has to derotate it.
 #
 # **The domain.** 10.00-11.20°E by 58.95-59.93°N against `oslofjorden.jl`'s 10.2-11.02 by 59.0-59.93 —
@@ -677,15 +674,6 @@ FjordConfig(
         float_type = base.grid_config.float_type,
     ),
     bathymetry_config = bathymetry,
-    forcing_config = NorKystHindcastConfig(
-        data_root        = data_root,
-        output_directory = "norkyst_v3",
-        output_file      = base.forcing_config.output_file,
-        plot_file        = base.forcing_config.plot_file,
-        architecture     = base.forcing_config.architecture,
-        parameters       = base.forcing_config.parameters,
-        years            = years,
-    ),
     river_config = rivers,
     # The tide in it corrected to Viker; see "The boundary tide" above.
     boundary_config = TideCorrectedBoundaries(

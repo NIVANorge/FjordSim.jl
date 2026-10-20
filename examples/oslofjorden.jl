@@ -1,5 +1,5 @@
-# The Oslofjord setup: Geonorge Sjøkart Dybdedata bathymetry, NorKyst-800m forcing with NVE rivers,
-# and NORA3 atmosphere, on a 240 x 520 x 24 grid covering 10.2-11.02°E, 59.0-59.93°N.
+# The Oslofjord setup: Geonorge Sjøkart Dybdedata bathymetry, NVE rivers, hourly NorKyst-800m data
+# on the open southern edge and NORA3 atmosphere, on a 240 x 520 x 24 grid covering 10.2-11.02°E, 59.0-59.93°N.
 #
 # The rivers are **discovered**, not stated: `minimum_discharge = 0.5` has `add_rivers` read NVE's
 # ELVIS river network and REGINE catchments for this domain and place every mouth at or above that
@@ -16,8 +16,8 @@
 # services are open, and nothing else here needs one either.
 #
 # The river config gets the same `data_root` as the rest of the setup, so the cached NVE responses
-# land alongside it rather than being shared from elsewhere. It writes `rivers_nve.nc`, a file of its
-# own beside the forcing rather than a copy of it, which `build_simulation` reads as a volume inflow.
+# land alongside it rather than being shared from elsewhere. It writes `rivers_nve.nc`, which
+# `build_simulation` reads as a volume inflow.
 #
 # It also names a `simulation_config`, so `run_simulation` works once the preparation steps have
 # run. Nothing about the run has a default, so every knob is stated here and nowhere else — split
@@ -27,17 +27,13 @@
 # separate from the input data root, and each writer's file carries the launch tag so runs do not
 # overwrite each other.
 #
-# `start_date` and `stop_time` also decide what the prepare steps write: they pad the forcing and
+# `start_date` and `stop_time` also decide what the prepare steps write: they pad the boundary and
 # atmosphere time axes to span exactly this window, and the river file is written on it, so changing
-# either means re-running `prepare_forcing`, `add_rivers` and `prepare_atmosphere`. The window here is the whole of 2020, which
-# needs that padding at both ends — files prepared against the old 12:00-anchored window will be
-# rejected by `validate_time_coverage` until those three steps have been re-run.
+# either means re-running `add_rivers`, `prepare_boundaries` and `prepare_atmosphere`.
 #
 # # Preparing and running it
 #
 #   julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden.jl
-#   julia --project -m FjordSim download_forcing    --config examples/oslofjorden.jl
-#   julia --project -m FjordSim prepare_forcing     --config examples/oslofjorden.jl
 #   julia --project -m FjordSim add_rivers          --config examples/oslofjorden.jl
 #   julia --project -m FjordSim download_boundaries --config examples/oslofjorden.jl
 #   julia --project -m FjordSim prepare_boundaries  --config examples/oslofjorden.jl
@@ -63,7 +59,7 @@ data_root = fjord_data_root("oslofjorden")
 # `Oceananigans.defaults.FloatType` — see `EvenGrid`'s `float_type`.
 FT = Float32
 
-# FjordConfig is what the driver-level generics (run_simulation(), download_forcing(), etc.)
+# FjordConfig is what the driver-level generics (run_simulation(), add_rivers(), etc.)
 # dispatch on — one method per subcommand, shared by every setup. Each driver then calls the
 # finer-grained hooks the nested configs below overload.
 FjordConfig(
@@ -165,29 +161,11 @@ FjordConfig(
         geonorge_cache        = true,
         regrid_cache          = false,
     ),
-    # NorKystConfig overloads forcing_time_steps, forcing_source_grid and
-    # forcing_variable_names — hooks prepare_forcing calls — plus download_forcing itself,
-    # which the driver-level download_forcing(config::FjordConfig) dispatches straight to.
-    # All dispatch on this config's type. simulation_forcing is left at its default, since
-    # this is the FjordSim NetCDF forcing contract build_simulation already reads.
-    forcing_config = NorKystConfig(
-        data_root        = data_root,
-        output_directory = "norkyst",
-        output_file      = "forcing.nc",
-        plot_file        = "forcing.png",
-        architecture     = :auto,
-        parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
-        years            = [2020],
-    ),
     # NVERiversConfig overloads river_locations, river_series, river_discharge and
     # download_rivers (all required, hooks add_rivers calls), all dispatching on this
     # config's type. It queries NVE, so the window follows `years` and every value has
     # provenance. The HydAPI half needs an API key — `NVE_API_KEY`, free at
     # https://hydapi.nve.no/Users.
-    #
-    # `add_rivers` writes the river file on its own, so the forcing above is never touched
-    # and `initial_conditions = FromForcing()` below reads an ocean state no river has
-    # written into.
     river_config = NVERiversConfig(
         data_root  = data_root,
         output_file = "rivers_nve.nc",
@@ -273,13 +251,11 @@ FjordConfig(
         ],
     ),
     # The exterior state along the open southern edge, from the *hourly* NorKyst collection: a
-    # Flather boundary compares the model's own η against the exterior one, and the daily means
-    # the forcing config reads have the tide averaged out of them. Only the boundary row is
-    # prepared at that cadence, so the file is a few hundred MB.
+    # Flather boundary compares the model's own η against the exterior one, and NorKyst's daily
+    # means have the tide averaged out of them. Only the boundary row is prepared at that cadence,
+    # so the file is a few hundred MB.
     #
-    # A `FjordConfig` field of its own, independent of the forcing above: this is a separate
-    # file from a separate collection read by a separate pipeline, and it is what states the open
-    # edge — for the boundary steps, for the forcing land mask, and for the boundary condition.
+    # It is what states the open edge — for the boundary steps and for the boundary condition.
     # NorKystBoundariesConfig overloads boundary_time_steps, boundary_source_grid,
     # boundary_variable_names (all required) and download_boundaries — hooks
     # prepare_boundaries and download_boundaries call, dispatching on this config's type.
@@ -475,21 +451,15 @@ FjordConfig(
             max_time_step        = 3minutes,
             max_time_step_change = 1.01,
         ),
-        # FromForcing(): the NorKyst state at `start_date` rather than a uniform water
-        # column: every tracer the model names plus u and v, whichever of them the forcing
-        # file carries. A literal NamedTuple (`(T = 5.0, S = 33.0)`) still works, and
-        # `FromResults("snapshots_ocean_<tag>.nc")` continues from a previous run instead.
-        initial_conditions = FromForcing(),  # (T = 5.0, S = 33.0),
+        # A uniform water column at rest. `FromResults("snapshots_ocean_<tag>.nc")` continues
+        # from a previous run instead.
+        initial_conditions = (T = 5.0, S = 33.0),
         # The whole calendar year 2020, which is a leap year — so 366 days from midnight on
-        # 1 January lands exactly on midnight a year later. Neither prepared file has a record
-        # at either end natively (NorKyst's are daily at 12:00, NORA3's hourly from 00:00 to
-        # 23:00), so both prepare steps pad their axes to reach them: 12 hours at each end of
-        # the forcing and one hour at the end of the atmosphere, each within the one-record-
-        # spacing bound. That is what lets the window be a round year instead of being pinned
-        # to whichever instant the forcing happened to start at.
+        # 1 January lands exactly on midnight a year later. The prepare steps pad their time
+        # axes to reach both ends.
         start_date         = DateTime(2020, 1, 1),
         stop_time          = 366days,
-        # One pass. Raise it to spin the deep basins up on the same forcing year, carrying the
+        # One pass. Raise it to spin the deep basins up on the same year, carrying the
         # state over; each repetition writes its own `_loopNN` file.
         loops              = 1,
         pickup             = false,

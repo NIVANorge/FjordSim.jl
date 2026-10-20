@@ -1,0 +1,128 @@
+# Running a fjord
+
+How to take a setup from nothing to a scored run, and the rules that keep its data and results
+consistent. The quick start and the `run_simulation` fields are in the `README.md`; running on a
+cloud GPU is in `gcp/README.md`.
+
+`--config` is the only option of every subcommand, and it is required. It takes a registered setup
+name (`julia --project -m FjordSim --help` lists them) or the path to a `.jl` file whose last
+expression is a `FjordConfig`. Everything else is a field of that config.
+
+## The steps
+
+In order. Each step needs the ones above it that its setup configures; a step the setup does not
+configure is a no-op.
+
+| Step | Needs | Writes (under the fjord's data directory) | Notes |
+|---|---|---|---|
+| `prepare_bathymetry` | — | `bathymetry.nc` | downloads the Geonorge FileGDB (4.5 GB) on first use |
+| `download_forcing` | — | raw NorKyst months | network |
+| `prepare_forcing` | bathymetry, download | `forcing.nc` | pure regrid |
+| `add_rivers` | bathymetry | `rivers_nve.nc` | needs `NVE_API_KEY` (free: https://hydapi.nve.no/Users) |
+| `download_boundaries` | — | hourly NorKyst band along the open edges | network |
+| `prepare_boundaries` | bathymetry, download | `boundaries.nc` | pure regrid |
+| `download_atmosphere` | — | raw NORA3 months | slow: ~10000 OPeNDAP reads per simulated year |
+| `prepare_atmosphere` | download | `atmosphere.nc` | pure regrid, independent of the ocean grid |
+| `run_simulation` | every prepared file the setup names | results under `results_root` | needs a GPU in practice |
+| `validate_simulation` | a finished run | `<results_root>/validation/` | only Kartverket water level is fetched automatically |
+
+```bash
+julia --project -m FjordSim prepare_bathymetry --config oslofjorden
+julia --project -m FjordSim run_simulation --config examples/oslofjorden_npzd.jl
+julia --project -m FjordSim validate_simulation --config examples/oslofjorden_validation.jl
+```
+
+The same without `-m`, Julia 1.12's package entry point:
+
+```bash
+julia --project -e 'using FjordSim; FjordSim.main(ARGS)' -- prepare_forcing --config oslofjorden
+```
+
+### From the REPL, and debugging a step
+
+Each subcommand is a `FjordConfig` method on the generic function of the same name:
+
+```julia
+using Pkg; Pkg.activate(".")
+using FjordSim
+config = oslofjorden()
+prepare_bathymetry(config)
+
+using Debugger
+@enter prepare_forcing(config)
+```
+
+`build_simulation(config)` returns the assembled `Simulation` without starting it — the entry point
+for inspecting a model or stepping into it.
+
+## What to re-run after a config change
+
+The prepared files are regridded onto the grid and padded to the run window *at prepare time*, so
+some config edits silently do nothing until the files are rewritten.
+
+**`start_date` or `stop_time`.** The prepare steps pad their time axes to the run window
+(`coverage_window`), and the river file's daily axis *is* that window. Re-run, in this order:
+
+```bash
+julia --project -m FjordSim prepare_forcing     --config oslofjorden
+julia --project -m FjordSim add_rivers          --config oslofjorden
+julia --project -m FjordSim prepare_boundaries  --config oslofjorden
+julia --project -m FjordSim prepare_atmosphere  --config oslofjorden
+```
+
+**`z_faces`, the grid `size`, or any `bathymetry_config` smoothing knob.** `z_faces` is written into
+`bathymetry.nc` and `simulation_grid` reads the *file*, not the config; the land mask the forcing and
+boundary prepares build their masks from comes from the same file. Re-run, in this order:
+
+```bash
+julia --project -m FjordSim prepare_bathymetry  --config oslofjorden
+julia --project -m FjordSim prepare_forcing     --config oslofjorden
+julia --project -m FjordSim add_rivers          --config oslofjorden
+julia --project -m FjordSim prepare_boundaries  --config oslofjorden
+```
+
+`prepare_atmosphere` is not in this list: the atmosphere is 2D on its own lon/lat grid. Existing
+checkpoints are invalid after either change.
+
+No download step is affected by either change, and `loops` re-runs nothing.
+
+## One run per results directory
+
+Checkpoints carry no run tag, so a results directory holds exactly one resumable run: `pickup`
+resumes the highest-numbered checkpoint it finds, whichever launch wrote it. A fresh run into a used
+directory would mix with the old one, and analyses that read every stamp would splice them together.
+
+- **A different experiment** (a changed parameter, a sensitivity test) gets its own config with its
+  own `results_root`, e.g. `fjord_results_root("oslofjorden_validation_tke7e-7_30d")`.
+- **A from-scratch rerun of the same config** first archives the previous run, so the undated name
+  is always the current one. Rename `<name>` to `<name>_<YYYY-MM-DD>`, the UTC date of that run's
+  last output (`-2` if taken), *before* launching — locally and, if the run went through GCP, in the
+  bucket. A `--resume` is not a fresh run and archives nothing.
+
+Locally:
+
+```bash
+mv ~/FjordSim_results/oslofjorden_validation ~/FjordSim_results/oslofjorden_validation_2026-10-16
+```
+
+In the bucket an object rename is a copy, so copy, check, then delete:
+
+```bash
+source gcp/config.env
+from="$BUCKET/results/oslofjorden_validation"
+to="$BUCKET/results/oslofjorden_validation_2026-10-16"
+gcloud storage cp -r "$from/*" "$to/"
+diff <(gcloud storage ls -L "$from/**" | grep -E 'Content-Length|Hash \(crc32c\)') \
+     <(gcloud storage ls -L "$to/**"   | grep -E 'Content-Length|Hash \(crc32c\)') \
+    && gcloud storage rm -r "$from"
+```
+
+The rule is enforced twice: `run_simulation` refuses a fresh run (`pickup = false`) into a
+`results_root` that already holds checkpoints, and `gcp/fjordsim-gcp run` refuses a fresh
+`run_simulation` while the bucket's `results/<name>/` does.
+
+## Resuming
+
+Set `pickup = true` in the config (or pass `--resume` to `gcp/fjordsim-gcp run`, which sets it) and
+the newest checkpoint is restored exactly. It needs a `CheckpointWriter` among the writers. See
+"Continuing a run" in the `README.md`.

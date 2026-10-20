@@ -37,7 +37,7 @@ Set `FJORDSIM_DATA_ROOT` or `FJORDSIM_RESULTS_ROOT` to change the default direct
 
 `oslofjorden()` in `src/Setups/oslofjorden.jl` is the reference setup: Geonorge bathymetry,
 NorKyst-800m forcing with NVE rivers, hourly NorKyst open-boundary data along the southern edge,
-and NORA3 atmosphere. 
+and NORA3 atmosphere.
 Please note: It may take several hours to download the data.
 
 `add_rivers` also needs a free NVE HydAPI key — sign up at https://hydapi.nve.no/Users and set it
@@ -78,6 +78,10 @@ point for the REPL and the debugger. Snapshots and a per-launch log land in
 `~/FjordSim_results/oslofjorden/`; `julia --project -m FjordSim --help` lists every subcommand and
 setup.
 
+What to re-run after changing the run window or the grid, how to archive a run before a fresh
+rerun, and how to resume are in [`docs/running.md`](docs/running.md); running on a cloud GPU is in
+[`gcp/README.md`](gcp/README.md).
+
 ## What a run is made of
 
 A simulation is assembled from four data components, each regridded onto — or around — the same
@@ -116,7 +120,7 @@ atmosphere is independent.
 
 ### Skipping steps
 
-Only the grid and the bathymetry are always required. 
+Only the grid and the bathymetry are always required.
 Every other component is a config field defaulting to `nothing`, and a step whose config is absent is a no-op rather than an error — so a setup names what it wants and skips the rest.
 
 Rivers need no prepared forcing: `add_rivers` writes their own file from the bathymetry and the run window alone, so a setup can keep them with `download_forcing` and `prepare_forcing` skipped.
@@ -163,14 +167,16 @@ Set `pickup = true` and the newest checkpoint is restored — clock, time
 step, tracers, velocities, free surface, CATKE's diffusivities and the Adams-Bashforth tendencies — so
 this is an *exact* continuation, and it supersedes `initial_conditions` (they are set at build time
 and then overwritten). `pickup` without a `CheckpointWriter` is a configuration error, not a run that
-fails later; `pickup` with no checkpoint on disk warns and starts from the beginning.
+fails later; `pickup` with no checkpoint on disk warns and starts from the beginning. The reverse
+is refused too: a fresh run (`pickup = false`) into a `results_root` that already holds checkpoints,
+since the two runs' checkpoints would mix.
 
 The resumed run gets its own run tag, so its snapshots start at the resume point and the records
 before it stay in the previous launch's file.
 
 ### Looping
 
-`loops > 1` runs the same window repeatedly, saving the ocean state. 
+`loops > 1` runs the same window repeatedly, saving the ocean state.
 Each iteration resets all clocks to zero, saves the time step reached by the master, and writes its own file (`snapshots_ocean_<tag>_loop02.nc`) so that loops can be compared without overwriting each other.
 
 ### Starting from forcing or from a previous run
@@ -185,5 +191,5 @@ initial_conditions = FromResults("snapshots_ocean_20260814T143012.nc")   # a pre
 initial_conditions = FromResults("snapshots_ocean_20260814T143012.nc", DateTime(2020, 6, 1))
 ```
 
-All are a **lossy warm start**: the tracers from the config plus `u` and `v` are set, while the free surface, the turbulence state and the timestepper tendencies keep their defaults, so the first hours are a barotropic adjustment. 
+All are a **lossy warm start**: the tracers from the config plus `u` and `v` are set, while the free surface, the turbulence state and the timestepper tendencies keep their defaults, so the first hours are a barotropic adjustment.
 That is the difference from `pickup`, which is exact — the two are complementary, not alternatives.

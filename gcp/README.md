@@ -10,9 +10,10 @@ setup and which steps are arguments to one launch.
 
 ## The shape of this deployment
 
-**You cannot create, start, stop or delete instances, and you cannot set instance metadata.** Two
-Cloud Run jobs, owned by an admin, create or start one fixed VM on your behalf. After that you have
-SSH with sudo, and that is the whole interface. Everything here is built around those facts:
+**The workflow never creates, starts, stops or deletes an instance itself, and never sets instance
+metadata** — the operator account it runs as has no permission to. Two Cloud Run jobs, owned by an
+admin, create or start one fixed VM; after that the workflow drives it over SSH with sudo, and that
+is the whole interface. Everything here is built around that:
 
 - There is **one** VM, named by `VM_NAME` (`fjordsim-gpu`), not one per run.
 - There is **no startup script** — `run` ships a script over `scp` and detaches it with `nohup`.
@@ -30,7 +31,7 @@ SSH with sudo, and that is the whole interface. Everything here is built around 
   | `fjordsim-launch-spot` | (default) | Spot | 24h |
   | `fjordsim-launch-standard` | `--standard` | on-demand | 168h |
 
-Measured access for `shamil.iakubov@niva.no` in `nivatest-1` (`testIamPermissions`, 2026-09-16):
+The operator account's access, measured with `testIamPermissions` (2026-09-16):
 
 | Have | Scope |
 |---|---|
@@ -101,7 +102,7 @@ Six values, all of them facts about the deployment:
 | `VM_NAME` | the instance the jobs manage |
 | `LAUNCH_JOB_SPOT`, `LAUNCH_JOB_STANDARD` | the jobs themselves |
 
-You cannot list any of the last three, so ask the admin for them.
+The operator account cannot list the last three, so they come from the admin.
 
 Access to Artifact Registry is granted per *repository*, so the one you can push to may sit in
 another project or region entirely. `IMAGE_URI` is therefore written out in full rather than
@@ -237,7 +238,7 @@ Nor may a fresh run follow an earlier one into the same directory: the results s
 the earlier run's checkpoints would stay beside the new one's and a later `--resume` would pick up the
 highest-numbered of them, likely the earlier run's. A fresh `run_simulation` (no `--resume`) is
 therefore refused while `results/<fjord>/` in the bucket holds checkpoints — archive the earlier run
-first (`CLAUDE.md`, "One run per results directory") — and starts on the VM from an empty results
+first (`docs/running.md`, "One run per results directory") — and starts on the VM from an empty results
 directory, clearing what an earlier run left on its disk.
 
 ### Watching a run
@@ -281,8 +282,8 @@ stands — but each one removes a sharp edge.
 2. **`roles/compute.instanceAdmin.v1` on the instance `fjordsim-gpu`** (resource-level, not
    project-level). Combined with the `actAs` already granted, this alone restores `stop`, `delete`
    and `setMetadata` — real cost control instead of a guest `poweroff`. An instance-level binding
-   dies with the instance, so the jobs' `grant_shamil_admin()` should add it alongside
-   `osAdminLogin`. Narrower alternatives: a custom role with just
+   dies with the instance, so the jobs' step that grants the operator `osAdminLogin` should add it
+   alongside. Narrower alternatives: a custom role with just
    `compute.instances.{start,stop,delete}`, or a third Cloud Run job `fjordsim-stop`.
 
 3. **`roles/artifactregistry.reader` for the VM's service account on the image repository.**
@@ -294,7 +295,7 @@ stands — but each one removes a sharp edge.
 
 4. **Give the standard launcher its own VM name** (e.g. `fjordsim-gpu-std`). The two jobs share one
    instance name and each exits with an error on an instance created with the other provisioning
-   model, so while a Spot `fjordsim-gpu` exists — and it cannot be deleted from this account —
+   model, so while a Spot `fjordsim-gpu` exists — and the workflow cannot delete it —
    `up --standard` can never succeed, and the reverse holds for plain `up`.
 
 5. **A persistent data disk** attached with `auto-delete=no`, holding `/var/lib/docker` and

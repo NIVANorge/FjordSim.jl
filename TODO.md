@@ -1,62 +1,17 @@
 # TODO
 
 Code changes found while validating `examples/oslofjorden_validation.jl` against the NIVA CTD casts,
-NorKyst v3 and FjordOs. The problem statements quote the first run (days 0–298, 2014-04 to 2015-01).
-The results under each task, and the sections from "Sill basins are not renewed" on, quote the full
-640-day run with every fix below in it (stamp 20261014T142318, 2014-04-01 to 2015-12-31). Its report
-and scripts are in `~/FjordSim_results/oslofjorden_validation/validation/report_full/`.
-
-## Rivers as a mass source, not a relaxation
-
-`add_rivers` writes rivers as a relaxation of T and S towards the river values over the plume
-levels, with `λ = Q / V` (`src/Rivers/Rivers.jl`). The tracer dilution is right, but no volume
-enters the domain:
-
-- the river adds no volume, so sea level does not rise and there is no outflow driven by the river
-  itself;
-- the outflowing surface layer does not entrain water from below, so the estuarine circulation it
-  should drive is missing;
-- in the sill basins, without that circulation there is no deep inflow of saltier water to replace
-  what the surface layer carries out. In the model, basin water is only diluted from above and is
-  never renewed.
-
-That fits what the run shows in the sill basins. Observed water at D-2 50 m stays at 31.0–31.4 g/kg,
-while the model's falls from 32 to 27.7. In the Drammensfjord, FjordSim's upper 20 m is within
-about 1 g/kg of the observations, but the deep basin freshens steadily. In the open fjord, the
-surface is 2–4 g/kg saltier than NorKyst.
-
-- [x] Implement rivers as a volume source.
-      - Oceananigans allows exactly one volume hook without type piracy, `forcing.η` (m/s), so the
-        water enters through the surface face of its columns; `LwSrc`-with-`Qshape` and `LuvSrc`
-        would both need overrides of `compute_w_from_continuity!` or the immersed masking.
-      - The tracer half is `w (c_r − c) / Δz` in the top cell, replacing the top cell's own value
-        that the surface inflow carries in — NumericalEarth's correction, as a forcing.
-      - Each river is spread over connected columns until its peak discharge enters no faster than
-        `maximum_inflow_velocity` (1 mm/s in the setups): Glomma's eastern arm takes 47 columns.
-      - Rivers moved to a file of their own (`rivers_nve.nc`, ~3 MB, daily over the run window)
-        instead of a patched copy of `forcing.nc`; `FromForcing` no longer starts river cells at
-        S = 0. Relaxation, plume depths and `OF800RiversConfig` are gone; optional
-        `RiverMouthMixing` reuses NumericalEarth's mouth diffusivity.
-      - "Rivers as a volume source" in `docs/architecture.md` has the details.
-- [x] Check that the river cell's mass and salt budgets close, so that `∫S dV` changes only by
-      boundary fluxes. Do it with a test on a small offline grid.
-      - "river budget" in `test/runtests.jl`: on a closed basin `Σ η A` rises by `Q t` to ~5e-9, and
-        a fresh river leaves the linear-free-surface salt content `Σ S V + Σ S_N η A` unchanged to
-        ~2e-8.
-- [x] Then re-check the D-2 and D-3 basin salinity trend and the near-surface salinity bias.
-      - Near-surface bias fixed: the top 5 m is +0.1 g/kg on average (RMSE 4.2, FjordOs 5.8), and the
-        25 m − 1 m salinity difference is unbiased overall. The Drammensfjord's is right (RMSE 1.1,
-        FjordOs 4.5).
-      - The basin trend is slower but not gone: D-2 at 50 m goes 32.1 → 30.0 g/kg over 640 days
-        against an observed 31.0–31.4, and does not level off. See "Sill basins are not renewed".
+NorKyst v3 and FjordOs. Unless a section says otherwise, numbers quote the full 640-day run (stamp
+20261014T142318, 2014-04-01 to 2015-12-31), archived as `oslofjorden_validation_2026-10-16`; its
+report and scripts are in that results directory under `validation/report_full/`.
 
 ## Vertical mixing is too strong
 
 This probably applies to every setup and example: `oslofjorden` and `drammensfjorden` use
 `CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6)`. `examples/lista.jl` has moved to 7e-7. The
 `oslofjorden()` comment shows that this TKE floor, not the prognostic TKE, sets κ below about 6 m.
-It argues that 7e-6 is at the low end of the measured basin diffusivities, but the run contradicts
-that:
+It argues that 7e-6 is at the low end of the measured basin diffusivities, but the first run at 7e-6
+(days 0–298, 2014-04 to 2015-01) contradicts that:
 
 - Ep1 at 50 m freshens from 32.8 to 30.2 g/kg and warms from 6.3 to 10.5 °C. NorKyst stays near
   33.3 g/kg and observations at 33.0–33.3.
@@ -65,98 +20,28 @@ that:
 - In D-3, the 30 g/kg isohaline sinks from 14 m to below the 66 m bottom by October.
 
 Tasks:
-- [ ] Run a short sensitivity test, 60–90 days from the same start, with a lower `minimum_tke`.
-      Measure the 50 m salinity trend at D-2 and Ep1.
-      - 13 Oct, after the volume-source rivers and the new bathymetry: `minimum_tke = 7e-7` for 27
-        days (`oslofjorden_validation_tke7e-7_30d`, cut short when GCE deleted the VM), against the
-        first 27 days of the full 7e-6 run. Over the first 26 days, the 50 m trend per 30 days is
-        D-2 +0.39 against +0.28 (the old run's −0.31), and Ep1 0.00 against −0.14 (old −0.55). The
-        new rivers stopped the 50 m freshening at both settings, and the floor differs by about 0.1,
-        too little to tell apart in 26 days.
-      - The only casts inside that window are Ep1 and Dk1 on 9 April (day 8). Both settings are too
-        salty in the top 5 m and too weakly stratified, and 7e-7 is closer. Salinity at 25 m minus
-        1 m is 11.0 observed at Ep1, against 9.3 at 7e-7, 7.3 at 7e-6 and 6.8 in the old run. Dk1
-        has 9.4 against 7.4, 6.2 and 5.8. At 1 m Ep1 is 20.1 observed, against 22.9 and 24.7. Below
-        20 m all runs are about 0.3–1.0 too salty and about 2 °C too cold (Ep1 6.0–6.6 °C against
-        8.2–8.5). The floor does not change that, so it is the starting state.
-      - NorKyst's surface-to-25 m difference of about 7 at Ep1 is weaker than that cast, so it is
-        not a reliable target for stratification in the inner fjord. Judge against the casts.
-      - With 7e-7 the thin surface layer in shallow bays reached 22–23 °C by day 27, against about
-        16–18 °C at 7e-6. No observations cover those bays.
-      - Next: `examples/oslofjorden_validation.jl` now sets 7e-7 itself, and the full validation is
-        to be rerun with it. The 7e-6 run it replaces is archived as
-        `oslofjorden_validation_2026-10-13` (27 days). Check it against the casts on 8 May (day 37,
-        inner fjord) and on 16 June and 5 July (days 76 and 95, the first at D-2 and D-3), and then
-        against the rest of the casts.
-      - Done: the full 640-day run at 7e-7. Against 216 casts, the salinity RMSE is 1.73 g/kg
-        (FjordOs 2.79) and the temperature RMSE 1.22 °C (FjordOs 2.34). Temperature is unbiased at
-        every depth band, and the summer heat no longer reaches too deep in the Inner Oslofjord.
-        Salinity is 0.4–1.4 g/kg too fresh below 5 m, and 1.2–2.8 too fresh at 5–20 m in every
-        region: the brackish layer is a few metres too deep.
-      - Costs of the lower floor: the 2–3 m deep cells overheat (see "Hot shallow cells"), and
-        Åsgårdstrand's monthly variance is larger than observed in most months. Its monthly means
-        are still within 0.6 °C in 17 of 21 months.
-      - Keep 7e-7 in the example. Whether `oslofjorden()` should follow is the open rationale task
-        below.
 - [ ] Measure numerical mixing from WENO plus `PartialCellBottom` z-levels on steep slopes, for
       example from the tracer variance budget, and compare it with CATKE's κ.
 - [ ] Revisit `HorizontalScalarBiharmonicDiffusivity`'s κ. NorKyst uses a 10 m² s⁻¹ harmonic κ on
       tracers.
-- [ ] Update the rationale comments in the setups once this has been measured.
+- [ ] Decide whether `oslofjorden()` and `drammensfjorden()` follow the example to 7e-7, and update
+      the rationale comments in the setups. The 640-day run at 7e-7 scores salinity RMSE 1.73 g/kg
+      and temperature RMSE 1.22 °C against 216 casts (FjordOs 2.79 and 2.34), unbiased in
+      temperature, but 0.4–1.4 g/kg too fresh below 5 m and overheats the 2–3 m deep cells (see
+      "Hot shallow cells").
 
-## Bathymetry is smoothed too much
+## Bathymetry
 
-The model basins are 15–40 m too shallow. The model column is the deepest wet cell within 6 km of
-the station, from `bathymetry.nc`; the real column is the deepest NIVA cast there:
+The gridding and sill fixes are in (linear gridding of the soundings, `preserve_sills`,
+`raw_resolution_factor = 4`, `max_slope_factor = 0.5`, faces to −467 m); see "Bathymetry gridding and
+sills" in `docs/setups.md`. On the validation box the model columns at the CTD stations are within
+15 m of the casts except Im2 (165 against 201 m) in the narrow Drøbak Sound, and Drøbak is 23.5 m
+against the real ~20 m.
 
-| Station | Deepest model cell (m) | Deepest cast (m) |
-|---|---|---|
-| Ep1 | 111 | 149 |
-| Fl1 | 132 | 165 |
-| Im2 | 166 | 201 |
-| D-2 | 100 | 115 |
-
-The channels are wrong too: the Svelvik sill is 5.5 m against 11 m real, and the Drøbak Sound is
-at most 131 m deep against 208 m. The comment in the example says the slope limit
-(`max_slope_factor = 0.25`) costs only 0.6 m at the Drøbak sill. That measures one stage, so the
-loss must come from the others.
-
-- [x] Run the `smooth_bathymetry_gaps!` pipeline stage by stage and record, after each stage, the
-      basin maxima and the sill depths along the deepest path.
-      - Most of the loss came *before* the pipeline, in the gridding of the soundings: `invdistnn`
-        with `smoothing=0.2` in degrees weighted the 16 nearest soundings almost equally, a plain
-        mean. That took Ep1 from 154 m (deepest sounding within 2 km) to 114 m and the Drøbak Sound
-        from 211 m to 176 m.
-      - Then the regrid (Fl1 −10 m, Hm4 −16 m, Svelvik 8.8 → 6.6 m), and `max_slope_factor = 0.25`
-        (Fl1 −13 m, Hm4 −17 m). The snap costs at most a fifth of a layer, 4 m at Im2.
-      - Table and numbers: "Bathymetry gridding and sills" in `docs/setups.md`.
-- [x] Preserve the extremes where it matters: keep basin maxima when regridding (not only the cell
-      mean), and keep the deepest connection across a sill rather than averaging it with the flanks.
-      - Soundings are now gridded linearly on their Delaunay triangulation (`GEONORGE_GRIDDING_ALGORITHM`).
-      - The new `preserve_sills` stage (`preserve_sill_depths`) restores sills along one path per
-        lost connection, from the native grid's merge tree.
-      - `oslofjorden()` now uses `raw_resolution_factor = 4` and `max_slope_factor = 0.5`, and all
-        three setups use `preserve_sills = true`.
-      - On the validation box: Ep1 153 m, Fl1 153, Im2 209, Svelvik 10.8 m, Drøbak 23.5 m.
-      - Drøbak is still deeper than the real ~20 m. The stage only deepens, so it cannot correct a
-        sill the regrid made too deep.
-- [x] Below 132 m the faces are 33.5 m apart, so check whether the coarse deep `z_faces` add to the
-      loss in basin depth.
-      - Only through the snap, which costs at most 0.2 × 33.5 = 6.7 m.
-      - The real `z_faces` problem was at the bottom: the faces had been fitted to the averaged
-        Hvaler trench (395 m), but the soundings reach 463–470 m. Both Oslofjord grids now go to
-        −467 m (26 levels).
 - [ ] Re-run `prepare_bathymetry`, `prepare_forcing`, `add_rivers` and `prepare_boundaries` for
-      `oslofjorden`, `drammensfjorden` and `examples/oslofjorden_validation.jl`. Existing checkpoints
-      are invalid: the `z_faces` and the land mask have changed.
-      - Done for `examples/oslofjorden_validation.jl`. It ran 640 days on the new bathymetry
-        (`max_slope_factor = 0.5`, `preserve_sills`) without a failure, so the stability concern is
-        settled for that box.
-      - Model columns at the CTD stations are now within 15 m of the casts (Ep1 150 against 149 m,
-        D-2 116 against 115), except Im2 (165 against 201 m) in the narrow Drøbak Sound. Svelvik is
-        10.8 m, Drøbak 23.5 m.
-      - Still to do for `oslofjorden` and `drammensfjorden`.
-      - `examples/lista.jl`'s `z_faces` gate needs re-measuring on the linear gridding.
+      `oslofjorden` and `drammensfjorden` on the linear gridding and `preserve_sills` (done for the
+      validation example). Their existing checkpoints are invalid.
+- [ ] Re-measure `examples/lista.jl`'s `z_faces` gate on the linear gridding.
 - [ ] Fill single-cell pits on open edges. The new validation bathymetry has five on the south edge:
       wet edge cells whose east, west and inward neighbours are all below the seabed, so their only
       side neighbour is the open boundary. On the 13 Oct full run, the two thinnest went to the
@@ -200,54 +85,10 @@ Full run, harmonic fits from 2014-05-01 to 2015-12-31, amplitudes in cm:
   (r = 0.90), but its standard deviation is 14–16 % too small and the largest surges are
   18–25 % too low. That is worth a look at the boundary's subtidal `zeta` too, separately.
 
-Ways to correct it, in order of preference:
+The correction is implemented in `examples/oslofjorden_validation.jl` only: `TideCorrectedBoundaries`
+wraps the hindcast boundary config and rescales each constituent by `VIKER_TIDE_GAINS` after the
+regrid (`correct_boundary_tide!`), velocities by the same complex gain as the sea level.
 
-1. **Rescale NorKyst's tide per constituent, after the regrid.**
-   - Add a post-pass to `prepare_boundaries`, through a new boundary-config hook with a no-op
-     fallback.
-   - Fit the main constituents (M2, S2, N2, K2, K1, O1) to `eta`, `ubar` and `vbar` at every
-     boundary node over the prepared window. The file spans two years, enough to separate S2 from
-     K2.
-   - Replace each fitted constituent with `G_k` times itself, where `G_k` is a complex gain: an
-     amplitude factor and a phase shift. Everything else is left unchanged: the mean, the surges
-     and the subtidal exchange.
-   - The velocities must get the same `G_k` as the sea level. Flather (`GravityWaveRadiation`)
-     combines the exterior transport and the exterior elevation, so correcting only `eta` would
-     leave the two inconsistent and set the wrong incoming wave.
-   - Gains from this run, observed/model at Viker: M2 ×0.71 (+3°), S2 ×2.1 (−34°), N2 ×0.91,
-     O1 ×1.5, K1 ×0.4. State them in the setup as constants.
-   - `harmonic_fit` lives in `Validation`, which is included after `Boundaries`, so it has to move
-     down (to `Utils`) for the prepare step to use it.
-   - Cost: the code plus a re-run of `prepare_boundaries`; no new download. The gains belong to
-     the NorKyst v3 hindcast in 2014–15. The operational archive `oslofjorden()` reads needs its
-     own check.
-2. **Force the tide from a tidal atlas** (TPXO10-atlas or FES2022).
-   - Remove NorKyst's tide with a 25 h low-pass filter, which keeps only the changes slower than
-     a day.
-   - Add the atlas tide in elevation and transport, with nodal corrections: the 18.6-year
-     modulation of each constituent's amplitude and phase.
-   - It is independent of NorKyst's tide and covers every setup and period without gauges.
-   - But both atlases need registration, the nodal-correction code (or a dependency) is new, and
-     global atlases are weakest in the Skagerrak, where M2 is small. It would still need checking
-     against Viker.
-   - Worth it only if several setups or periods need the tide right.
-3. **Impose the observed tide.**
-   - Low-pass NorKyst as in 2, then add the tide fitted to the Viker record, plus Helgeroa's for
-     the western end of the edge if it is fetched.
-   - The velocities still need NorKyst's tidal currents scaled to match, so in practice this is 1
-     with target values in place of gains, and 1 is simpler.
-
-- [x] Implement option 1, in `examples/oslofjorden_validation.jl` only, since the gains belong to
-      this dataset and box.
-      - `TideCorrectedBoundaries` wraps the `NorKystHindcastBoundariesConfig` and forwards its
-        hooks to it. Its `prepare_boundaries` method calls `correct_boundary_tide!` on the written
-        file, so nothing in `src/` changed. The gains are `VIKER_TIDE_GAINS`, for M2, S2, N2, K2,
-        O1 and K1.
-      - Checked on a copy of the prepared file. At the node south of Viker, each corrected
-        constituent has exactly its gain and shift: M2 17.7 → 12.6 cm, S2 1.4 → 2.9 cm. The mean,
-        the other seven constituents and the residual are unchanged to four decimals. The 3D `v`
-        moves by the `vbar` increment at every wet level (to 3e-8). A second call is refused (the
-        `tide_correction` attribute). It takes 41 s on the CPU.
 - [ ] Re-run `prepare_boundaries` for the example, then a 60-day run. Check M2 and S2 at the three
       gauges, and the Km1 current (expected about 2.3 cm/s from the M2 factor alone). The interior
       M2 phase error (11° ahead at Oscarsborg and Oslo, 3° at Viker) will remain.

@@ -252,7 +252,7 @@ cmd_run() {
     if [[ "$resume" != "true" && "$steps" == *run_simulation* ]] &&
         gcloud storage ls "$BUCKET/results/$fjord/checkpoint_*" >/dev/null 2>&1; then
         die "$BUCKET/results/$fjord already holds an earlier run's checkpoints. Archive that run first" \
-            "(\"One run per results directory\" in CLAUDE.md), give this one its own results_root," \
+            "(\"One run per results directory\" in docs/running.md), give this one its own results_root," \
             "or pass --resume to continue it."
     fi
 

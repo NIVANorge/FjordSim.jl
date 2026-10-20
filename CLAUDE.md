@@ -1,165 +1,48 @@
 # CLAUDE.md
 
-> This file holds what's needed on every task: commands, hard rules, and gotchas. Design rationale,
-> the full per-module architecture writeup, the "adding a new source" hook contracts, and per-fjord
-> tuning history live in `docs/` and are meant to be read on demand — see the pointers below.
+> This file holds what's needed on every task: commands, hard rules, and gotchas. Everything else
+> lives in the docs below and is read on demand.
+
+## Docs — read before the matching task
+
+| Doc | Read it before |
+|---|---|
+| [`docs/running.md`](docs/running.md) | running any pipeline step; changing `start_date`, `stop_time`, `z_faces`, the grid `size` or a bathymetry knob; a fresh rerun into a used results directory; resuming |
+| [`gcp/README.md`](gcp/README.md) | anything with `gcp/fjordsim-gcp` or the cloud VM |
+| [`docs/architecture.md`](docs/architecture.md) | changing any module in `src/` (design rationale, ordering constraints, measured numbers) |
+| [`docs/adding-a-source.md`](docs/adding-a-source.md) | adding a grid, bathymetry, forcing, river, boundary, atmosphere or observation source |
+| [`docs/setups.md`](docs/setups.md) | adding a fjord or tuning a setup's parameters |
+| [`README.md`](README.md) | user-facing overview, quick start, `run_simulation` fields |
+| [`TODO.md`](TODO.md) | open work and the measurements behind it |
+
+The `run-simulation` skill (`.claude/skills/run-simulation/`) is the checklist for running steps.
 
 ## Commands
 
 ```bash
-# Run all tests
-julia --project test/runtests.jl
-
-# Run the out-of-tree Oslofjord example config (requires GPU + data files)
-julia --project -m FjordSim run_simulation --config examples/oslofjorden_npzd.jl
-
-# Prepare bathymetry for a configured fjord (downloads the Geonorge GDB on first use)
-julia --project -m FjordSim prepare_bathymetry --config drammensfjorden
-
-# Download and subset the configured forcing dataset for a fjord
-julia --project -m FjordSim download_forcing --config oslofjorden
-
-# Regrid the downloaded forcing onto the fjord's grid (needs the bathymetry and download first)
-julia --project -m FjordSim prepare_forcing --config oslofjorden
-
-# Write the river inflow file (rivers_nve.nc, beside forcing.nc — not a copy of it): each river's
-# discharge and values on the surface columns it enters through. Needs only the bathymetry and the
-# run window. `oslofjorden` discovers its river mouths from NVE's open map services and reads its
-# gauges from NVE's HydAPI, so this step needs `NVE_API_KEY` — free at https://hydapi.nve.no/Users.
-julia --project -m FjordSim add_rivers --config oslofjorden
-
-# Download the hourly exterior state along the open lateral boundary (a thin band, not the box)
-julia --project -m FjordSim download_boundaries --config oslofjorden
-
-# Regrid it onto the open edge of the fjord's grid (needs the bathymetry and download first)
-julia --project -m FjordSim prepare_boundaries --config oslofjorden
-
-# Download and subset the configured atmosphere dataset (slow: ~10000 OPeNDAP reads per year)
-julia --project -m FjordSim download_atmosphere --config oslofjorden
-
-# Regrid the downloaded atmosphere onto a regular lon/lat grid (needs the download first)
-julia --project -m FjordSim prepare_atmosphere --config oslofjorden
-
-# Build and run the coupled simulation (needs every prepare step the setup configures, plus a GPU)
-julia --project -m FjordSim run_simulation --config oslofjorden
-
-# Score a finished run against observations, writing tables and figures to <results_root>/validation/
-# Only Kartverket water level is fetched automatically; the NIVA-held programmes want a reader
-# subtyping `AbstractObservationConfig` (see docs/adding-a-source.md).
-julia --project -m FjordSim validate_simulation --config examples/oslofjorden_validation.jl
-
-# The subcommands and the setups they accept
-julia --project -m FjordSim --help
+julia --project test/runtests.jl                                   # all tests
+julia --project -m FjordSim --help                                 # subcommands and setups
+julia --project -m FjordSim <step> --config <setup-or-path.jl>     # one pipeline step
 ```
 
-### Running on GCP
+The steps, in order: `prepare_bathymetry`, `download_forcing`, `prepare_forcing`, `add_rivers`
+(needs `NVE_API_KEY`), `download_boundaries`, `prepare_boundaries`, `download_atmosphere`,
+`prepare_atmosphere`, `run_simulation` (needs a GPU), `validate_simulation`. `--config` is the only
+option and is required. From the REPL each step is a function of the same name on a `FjordConfig`;
+`build_simulation(config)` assembles a `Simulation` without running it. Details: `docs/running.md`.
 
-`run_simulation` needs a GPU. `gcp/fjordsim-gcp` runs any step of any setup on a shared GCE VM and
-moves data to and from a bucket; `gcp/README.md` is the full workflow and the permission matrix.
-
-This account cannot create, start, stop or delete instances, or set instance metadata. Two Cloud
-Run jobs create or start **one fixed VM** on its behalf; everything after that goes over SSH. So
-there is no per-run VM, no startup script and nothing self-deletes — `down` is a manual step, and
-it powers the VM off from inside.
-
-```bash
-gcp/fjordsim-gcp build                                                   # image -> Artifact Registry
-gcp/fjordsim-gcp up                                                      # launcher job -> VM up
-gcp/fjordsim-gcp bootstrap                                               # driver, Docker, toolkit
-gcp/fjordsim-gcp push-data drammensfjorden                               # prepared *.nc -> bucket
-gcp/fjordsim-gcp run --config oslofjorden --steps run_simulation --gpu   # scp a script, detach
-gcp/fjordsim-gcp logs <run-id>
-gcp/fjordsim-gcp pull-results oslofjorden
-gcp/fjordsim-gcp down                                                    # stop billing
-```
-
-`--dry-run` prints the launch command and the rendered remote script without touching the VM.
-`gcp/config.env` is six values: project, bucket, image URI, the launcher jobs' region, and the VM
-and job names. The machine shape is *not* among them — it belongs to the launcher jobs, so changing
-it is an admin request.
-
-`--config` is the only option, and it is required — there is no default setup. It takes a
-registered setup name (`FjordSim.Setups.SETUPS`) or a path to an out-of-tree `.jl` config file
-whose last expression is a `FjordConfig`. Every other knob, including which device the forcing
-interpolation runs on, is a config field.
-
-### One run per results directory
-
-Checkpoints carry no run tag (`checkpoint_prefix`), so a results directory holds exactly one
-resumable run: `pickup` resumes the highest-numbered checkpoint it finds, whichever launch wrote it.
-The bucket's results sync never deletes, so a fresh run launched into a used directory mixes with the
-old one there — a `--resume` then loads the *old* run's latest state, and analyses that read every
-stamp in the directory splice the two together.
-
-- **A different experiment** (a changed parameter, a sensitivity test) gets its own config with its
-  own `results_root`, e.g. `fjord_results_root("oslofjorden_validation_tke7e-7_30d")`.
-- **A from-scratch rerun of the same config** first archives the previous run, so the undated name
-  is always the current one: rename `<name>` to `<name>_<YYYY-MM-DD>`, the UTC date of that run's
-  last output (add `-2` if taken), both in the bucket (`gs://BUCKET/results/<name>`) and locally
-  (`~/FjordSim_results/<name>`), *before* launching. In the bucket that is a copy, a check of names,
-  sizes and checksums, then deleting the originals. A `--resume` is not a fresh run and archives
-  nothing.
-
-The rule is enforced in two places: `resume_loop` refuses a fresh run (`pickup = false`) where
-`results_root` already holds checkpoints, and `fjordsim-gcp run` refuses a fresh `run_simulation`
-while the bucket's `results/<name>/` does.
-
-### Changing `start_date` or `stop_time`
-
-Both prepare steps pad their time axes to span the run window the simulation config names
-(`coverage_window`), so moving either end invalidates the prepared files. Re-run, in this order:
-
-```bash
-julia --project -m FjordSim prepare_forcing     --config oslofjorden   # rewrites forcing.nc
-julia --project -m FjordSim add_rivers          --config oslofjorden   # rewrites rivers_nve.nc
-julia --project -m FjordSim prepare_boundaries  --config oslofjorden   # rewrites boundaries.nc
-julia --project -m FjordSim prepare_atmosphere  --config oslofjorden   # rewrites atmosphere.nc
-```
-
-`add_rivers` is not optional here: the river file's daily axis *is* the run window, so it carries the
-old one until re-run. No download step is affected; the prepares are pure regrids.
-`loops` is not part of the window, so changing it re-runs nothing.
-
-### Changing `z_faces` or the grid `size`
-
-Also a data change, and a larger one. `z_faces` is written into `bathymetry.nc`, and
-`simulation_grid` reads the *file* rather than the config — so a config edit alone changes nothing
-about the run, and every 3D prepared file was regridded onto the old geometry. Re-run, in this order:
-
-```bash
-julia --project -m FjordSim prepare_bathymetry  --config oslofjorden   # rewrites bathymetry.nc
-julia --project -m FjordSim prepare_forcing     --config oslofjorden   # rewrites forcing.nc
-julia --project -m FjordSim add_rivers          --config oslofjorden   # rewrites rivers_nve.nc
-julia --project -m FjordSim prepare_boundaries  --config oslofjorden   # rewrites boundaries.nc
-```
-
-No download step is affected — all four are pure regrids of data already on disk. `prepare_atmosphere`
-is *not* in the list: the atmosphere is 2D on its own regular lon/lat grid and knows nothing about the
-model's vertical coordinate.
-
-The same list applies to a change in any `bathymetry_config` smoothing knob, since those change the
-land mask that `prepare_forcing` and `prepare_boundaries` build their masks from. See "The vertical
-grid" in `docs/setups.md` for what the current faces are and why.
+`run_simulation` on a cloud GPU goes through `gcp/fjordsim-gcp`; read `gcp/README.md` first.
 
 `-m` is Julia 1.12's package entry point, which is why `Project.toml` has `[compat] julia = "1.12"`.
-The equivalent without `-m` is
-`julia --project -e 'using FjordSim; FjordSim.main(ARGS)' -- prepare_forcing --config oslofjorden`.
 
-Each subcommand is a `FjordConfig` method on the generic function of the same name, so the same
-steps run from the REPL, which is also how to debug one:
-```julia
-using Pkg; Pkg.activate(".")
-using FjordSim
-config = oslofjorden()
-prepare_bathymetry(config)
+## Hard rules for runs
 
-using Debugger        # step through a step
-@enter prepare_forcing(config)
-```
-
-`run_simulation` is the exception with a second entry point: `build_simulation(config)` returns
-the assembled `Simulation` without starting it, which is what to reach for in the REPL or the
-debugger.
+- **One run per results directory.** Checkpoints carry no run tag. A different experiment gets its
+  own `results_root`; a from-scratch rerun of the same config first archives the old run as
+  `<name>_<YYYY-MM-DD>`. Procedure in `docs/running.md`.
+- **Prepared files go stale silently.** Changing `start_date`/`stop_time` or `z_faces`/`size`/a
+  bathymetry knob does nothing until the listed prepare steps are re-run — `simulation_grid` reads
+  `bathymetry.nc`, not the config. Lists in `docs/running.md`.
 
 ## Architecture
 
@@ -170,13 +53,9 @@ and atmospheric data.
 
 **A new grid, bathymetry source, forcing dataset, river dataset, open-boundary dataset or
 atmosphere dataset is added by subtyping the matching `Abstract*Config` supertype and overloading
-methods on it — never by editing the generic pipeline.** Before doing that, read
-**`docs/adding-a-source.md`** for the hook tables (what's required, what has a fallback, and why).
+methods on it — never by editing the generic pipeline.** Read `docs/adding-a-source.md` first.
 
-The modules, in `include` order from `src/FjordSim.jl` — **`docs/architecture.md` has the full
-per-module writeup** (design rationale, ordering constraints, and the measured numbers behind
-non-obvious choices like the bathymetry smoothing pipeline order or the open-boundary scheme set);
-read it before changing any of these:
+The modules, in `include` order from `src/FjordSim.jl`:
 
 1. **Configs** (`src/Configs.jl`) — the abstract supertypes, `FjordConfig`, the edge vocabulary
    (`LATERAL_EDGES`, `open_edges`), and the path helpers every source inherits.
@@ -211,13 +90,8 @@ read it before changing any of these:
 
 `src/Setups/` holds one lowercase file per fjord, each a zero-arg function returning a fresh
 `FjordConfig`, registered in `SETUPS`. Adding a fjord is a two-place edit: the new file, and its
-entry in `SETUPS`. Data paths default to `~/FjordSim_data/<fjord>/`; results to
-`~/FjordSim_results/<fjord>/`. `SimulationConfig` and everything it nests have **no defaults** —
-every field is a scientific choice a setup must state.
-
-Read **`docs/setups.md`** before adding a fjord or tuning an existing one — it has the vertical-grid
-rationale and the measured justification for `oslofjorden()`'s current parameter values (the "2020
-diagnosis").
+entry in `SETUPS`. `SimulationConfig` and everything it nests have **no defaults** — every field is
+a scientific choice a setup must state.
 
 ## GPU & Kernel Compatibility
 
@@ -279,7 +153,18 @@ forcings.
   has no run yet", "the 42 m layers this file had", "from your environment". A machine's state
   belongs nowhere in the repo; a task's progress goes in `TODO.md`; history goes in the commit
   message.
-- Prefer dispatch over conditionals: multiple dispatch instead of `if`/`else` branching on types
+
+## Writing docs, CLAUDE.md and TODO.md
+
+- **No user- or account-specific information in any checked-in file** — no names, email addresses,
+  personal account permissions ("this account cannot …"), local paths of one machine, or one
+  person's preferences. Describe what the code or workflow does ("the workflow starts the VM through
+  two Cloud Run jobs"), not who can do what. Personal facts and preferences go in Claude's memory.
+- **CLAUDE.md holds only what every task needs.** Procedures and rationale go in `docs/` or
+  `gcp/README.md`, with a row in the docs table above; don't copy their content here.
+- **Remove completed items from `TODO.md`** when finishing them — don't tick them off and leave them.
+  If an open item needs a result the finished one produced, fold that result into the open item in a
+  line or two; the full record of what was done goes in the commit message.
 
 ## Common Pitfalls
 

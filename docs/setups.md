@@ -1,8 +1,7 @@
 # Setups
 
-> Split out of `CLAUDE.md`. Read this when adding or tuning a fjord setup — it has the registry
-> mechanics, the vertical-grid rationale, and the numbers behind `oslofjorden()`'s current
-> parameter values.
+> Read this when adding or tuning a fjord setup — it has the registry mechanics, the vertical-grid
+> rationale, and the numbers behind `oslofjorden()`'s current parameter values.
 
 `src/Setups/` holds one lowercase file per fjord (`oslofjorden.jl`, `drammensfjorden.jl`), each
 defining a zero-arg function that returns a fresh `FjordConfig`, plus `Setups.jl` with the `SETUPS`
@@ -73,9 +72,10 @@ barotropic substep for nothing.
 
 Three things to know before changing it.
 
-**−400 m is deliberate headroom, not a coincidence.** The deepest sounding is 395.1 m, and
-`limit_bottom_slope` can only make the deepest column *shallower* (it is the deeper half of every
-pair it corrects), so the margin cannot close. A sounding below the deepest face is not an error —
+**−467 m is fitted to the deepest cell, not a round number.** The deepest cell `prepare_bathymetry`
+writes is 466.8 m, so nothing is clipped and no layer is dry. `limit_bottom_slope` can only make the
+deepest column *shallower* (it is the deeper half of every pair it corrects), so the margin cannot
+close; a change to the gridding or the box can, so re-check it then. A sounding below the deepest face is not an error —
 `snap_partial_bottom_cells` skips it and `PartialCellBottom` clips it — so the basin would simply be
 silently truncated.
 
@@ -140,7 +140,8 @@ six comments:
   symmetric limiter raises the deep cell of a narrow trench once per shallow neighbour: at 0.25 the
   `oslofjorden_validation` basins lose 34 m at Fl1 and 24 m at Hm4, at 0.5 they lose 8 m and 4 m. No
   run measured 0.5 as unstable — the runs that died at it died at slivers, spikes and one-cell
-  passages, each now removed by its own stage — but no long run has confirmed it either.
+  passages, each now removed by its own stage — and `examples/oslofjorden_validation.jl` ran 640
+  days at 0.5 without a failure.
 - **`raw_resolution_factor = 4`** and **`preserve_sills = true`** — see "Bathymetry gridding and
   sills" below.
 - **`max_island_cells = 6`, unchanged and deliberately so** — every remaining interior land component
@@ -168,8 +169,8 @@ six comments:
   elsewhere. It is one number in the setup file to change when one turns up.
 
 `start_date` and `stop_time` also decide what the prepare steps write, since both pad their time
-axes to that window — so changing either is a data change, not just a run change. See "Changing
-`start_date` or `stop_time`" in `CLAUDE.md`.
+axes to that window — so changing either is a data change, not just a run change. See "What to re-run
+after a config change" in `docs/running.md`.
 
 ## Bathymetry gridding and sills
 
@@ -223,4 +224,4 @@ writers at the reports' tide gauges, moorings and CTD stations, for scoring with
 knobs and river configuration from the config `oslofjorden()` returns rather than restating them, so
 the two cannot drift apart, and swaps in the Norkyst-v3 hindcast because the operational archive
 begins in 2017. Its header has the full rationale, what the grid can and cannot be expected to show,
-and the two measurements (`z_faces` and `open_edges`) to settle before running it.
+and the two measurements (`z_faces` and `open_edges`) its values were settled by.

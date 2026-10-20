@@ -1,9 +1,9 @@
 # Architecture
 
-> Split out of `CLAUDE.md` to keep that file short. Read this when you need the *why* behind a
-> module's design — the rationale, the numbers behind a tuning choice, or the history of a defect
-> and its fix — not just what to call. `CLAUDE.md` still has the operational essentials (commands,
-> kernel rules, style, common pitfalls) and a one-line summary of each module below.
+> Read this when you need the *why* behind a module's design — the rationale, the numbers behind a
+> tuning choice, or the history of a defect and its fix — not just what to call. `CLAUDE.md` has the
+> operational essentials (commands, kernel rules, style, common pitfalls) and a one-line summary of
+> each module below.
 
 FjordSim is a Julia package that wraps [Oceananigans.jl](https://github.com/CliMA/Oceananigans.jl) and [NumericalEarth.jl](https://github.com/NumericalEarth/NumericalEarth.jl) to set up regional ocean simulations of Norwegian fjords.
 

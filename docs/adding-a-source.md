@@ -1,6 +1,6 @@
 # Adding a new source
 
-> Split out of `CLAUDE.md`. Read this before subtyping any `Abstract*Config` supertype — it lists
+> Read this before subtyping any `Abstract*Config` supertype — it lists
 > every hook a new source must or may implement, with defaults and rationale.
 
 Every pipeline is a generic function on the config supertype plus a small set of hooks. Add a

@@ -53,6 +53,7 @@ option and is required. From the REPL each step is a function of the same name o
   (e.g. `river-mouth-salinity`) and switch to it with `git switch -c <name>`; every change for the
   task goes there.
 - When the work is ready, ask before merging the branch back into `main` — never merge on your own.
+- Once the merge has succeeded, delete the merged branch (`git branch -d <name>`).
 
 ## Architecture
 

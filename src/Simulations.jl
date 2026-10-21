@@ -10,6 +10,7 @@ export SimulationConfig,
     Station,
     StationWriter,
     FieldStationWriter,
+    SectionWriter,
     CheckpointWriter,
     ProgressCallback,
     AdaptiveTimeStep,
@@ -21,8 +22,9 @@ export SimulationConfig,
 
 using Oceananigans
 using Oceananigans: fields
-using Oceananigans.Architectures: on_architecture
-using Oceananigans.Utils: prettytime
+using Oceananigans: prognostic_state, restore_prognostic_state!
+using Oceananigans.Architectures: architecture, on_architecture
+using Oceananigans.Utils: prettytime, launch!
 using Oceananigans.TimeSteppers: Clock, reset!, update_state!
 using Oceananigans.Grids: x_domain, y_domain, node, λnodes, φnodes, znodes, Center, Face
 using Oceananigans.Fields: location
@@ -31,6 +33,7 @@ using NumericalEarth
 using Dates: DateTime, Millisecond, Second, format, now
 using Printf: @sprintf
 using NCDatasets
+using KernelAbstractions: @kernel, @index, @Const
 
 using ..Configs:
     AbstractSimulationConfig,
@@ -810,6 +813,53 @@ function FieldStationWriter(;
 end
 
 """
+    SectionWriter(; name, output_file, variables, stations, interval, overwrite_existing, search_radius = 10)
+
+`StationWriter`'s whole-column profiles, all stations in one NetCDF file with a `station`
+dimension. For many stations, such as a section along a fjord.
+
+A `StationWriter` costs per station: Oceananigans compiles a kernel for each window it computes
+into, because `KernelParameters` carries the window's offset in its type, so every station compiles
+its own centred-velocity, grid-metric and immersed-boundary kernels. Measured on the CPU with T, S,
+u and v: 5.1 s of start-up and 8 ms per write per station. Here the station indices are data, so one
+gather kernel per variable serves every station.
+
+Stations are placed (`station_cells`) and `u`, `v` centred (`station_outputs`) exactly as by a
+`StationWriter`. The file holds each variable as `(station, level, time)`, the per-station metadata a
+station file carries as global attributes (`station_attributes`) as variables along `station`, plus
+the grid indices `i` and `j`, and the run's `start_date` as a global attribute. Levels below
+`model_level_depth` are inside the bottom.
+
+`validate_simulation` reads `StationWriter` files, so stations to score against observations go
+there. The fields are `StationWriter`'s.
+"""
+struct SectionWriter{V<:Tuple{Vararg{Symbol}}} <: AbstractWriterConfig
+    name::Symbol
+    output_file::String
+    variables::V
+    stations::Vector{Station}
+    interval::Float64
+    overwrite_existing::Bool
+    search_radius::Int
+end
+
+function SectionWriter(;
+    name,
+    output_file,
+    variables,
+    stations,
+    interval,
+    overwrite_existing,
+    search_radius = 10,
+)
+    return SectionWriter(
+        validate_station_writer(name, output_file, variables, stations, interval, search_radius)...,
+        Bool(overwrite_existing),
+        Int(search_radius),
+    )
+end
+
+"""
     validate_station_writer(name, output_file, variables, stations, interval, search_radius)
 
 The five fields both station writers share, checked and converted. Returns them in field order, so
@@ -1510,6 +1560,7 @@ output_path_trait(::SnapshotWriter) = NamesOutputFile()
 output_path_trait(::FieldSnapshotWriter) = NamesOutputFile()
 output_path_trait(::StationWriter) = NamesOutputFile()
 output_path_trait(::FieldStationWriter) = NamesOutputFile()
+output_path_trait(::SectionWriter) = NamesOutputFile()
 
 """
     reported_paths(writer, config, loop)
@@ -1672,7 +1723,7 @@ variable sets legitimately differ and which no config named, while here the setu
 down. An over-eager error costs a typo fix; a silently dropped variable costs a whole run.
 """
 function snapshot_outputs(
-    writer::Union{SnapshotWriter,FieldSnapshotWriter,StationWriter,FieldStationWriter},
+    writer::Union{SnapshotWriter,FieldSnapshotWriter,StationWriter,FieldStationWriter,SectionWriter},
     ocean_model,
 )
     available = fields(ocean_model)
@@ -2035,6 +2086,136 @@ function attach_writer!(
 
     return simulation
 end
+
+"""
+    SectionOutputWriter
+
+The Oceananigans output writer a `SectionWriter` attaches: its file, its schedule, the outputs it
+samples, the placed stations' indices on the model's architecture, and one `(station, level)` buffer
+per output that the gather kernel fills there before the copy to the host.
+"""
+struct SectionOutputWriter{S,O,I,C} <: Oceananigans.AbstractOutputWriter
+    filepath::String
+    schedule::S
+    outputs::O
+    i::I
+    j::I
+    columns::C
+end
+
+"""
+    attach_writer!(simulation, writer::SectionWriter, config, loop)
+
+Attach one `SectionOutputWriter` for all of `writer.stations` to the ocean sub-simulation, under
+`writer.name`, after creating its file (`create_section_file`).
+"""
+function attach_writer!(simulation, writer::SectionWriter, config::AbstractSimulationConfig, loop)
+    ocean_sim = simulation.model.ocean
+    grid = ocean_sim.model.grid
+    placed = station_cells(writer, grid)
+    report_station_cells(writer, placed, grid)
+    isempty(placed) && return simulation
+
+    outputs = station_outputs(writer, ocean_sim.model)
+    filepath = loop_output_path(writer, config, loop)
+    mkpath(dirname(filepath))
+    if writer.overwrite_existing || !isfile(filepath)
+        create_section_file(filepath, outputs, placed, config, grid)
+    end
+
+    arch = architecture(grid)
+    columns = map(output -> zeros(grid, length(placed), size(output, 3)), outputs)
+    ocean_sim.output_writers[writer.name] = SectionOutputWriter(
+        filepath,
+        TimeInterval(writer.interval),
+        outputs,
+        on_architecture(arch, [site.i for site in placed]),
+        on_architecture(arch, [site.j for site in placed]),
+        columns,
+    )
+
+    return simulation
+end
+
+# Oceananigans' names for the vertical coordinate of a centre and a face, as station files use.
+vertical_dimension(::Type{Center}) = "z_aac"
+vertical_dimension(::Type{Face}) = "z_aaf"
+
+"""
+    create_section_file(filepath, outputs, placed, config, grid)
+
+Create a section file: `station`, the vertical dimensions the outputs sit on and an unlimited `time`;
+every output as `(station, level, time)`; and `station_attributes`' per-station metadata, with `i`
+and `j`, as variables along `station`.
+"""
+function create_section_file(filepath, outputs, placed, config::AbstractSimulationConfig, grid)
+    records = [station_attributes(config, site, grid) for site in placed]
+
+    NCDataset(filepath, "c") do ds
+        ds.attrib[RESULTS_START_DATE_ATTRIBUTE] = string(config.start_date)
+        defDim(ds, "station", length(placed))
+        defDim(ds, "time", Inf)
+        defVar(ds, "time", Float64, ("time",), attrib = Dict("units" => "seconds"))
+        defVar(ds, "i", [site.i for site in placed], ("station",))
+        defVar(ds, "j", [site.j for site in placed], ("station",))
+        for key in keys(first(records))
+            key == RESULTS_START_DATE_ATTRIBUTE && continue
+            defVar(ds, key, [record[key] for record in records], ("station",))
+        end
+
+        for (name, output) in pairs(outputs)
+            LZ = location(output)[3]
+            dimension = vertical_dimension(LZ)
+            if !haskey(ds.dim, dimension)
+                defVar(ds, dimension, collect(znodes(grid, LZ())), (dimension,))
+            end
+            defVar(ds, string(name), Float32, ("station", dimension, "time"); deflatelevel = 1)
+        end
+    end
+
+    return filepath
+end
+
+@kernel function _gather_columns!(columns, output, @Const(i), @Const(j))
+    n, k = @index(Global, NTuple)
+    @inbounds columns[n, k] = output[i[n], j[n], k]
+end
+
+"""
+    write_output!(writer::SectionOutputWriter, simulation)
+
+Gather every output's columns at the stations into its buffer, one kernel per output, and append
+them to the file as one record at the model time in seconds.
+"""
+function Oceananigans.write_output!(writer::SectionOutputWriter, simulation)
+    model = simulation.model
+    grid = model.grid
+
+    for (output, columns) in zip(writer.outputs, writer.columns)
+        launch!(architecture(grid), grid, size(columns), _gather_columns!, columns, output, writer.i, writer.j)
+    end
+
+    NCDataset(writer.filepath, "a") do ds
+        record = length(ds["time"]) + 1
+        ds["time"][record] = model.clock.time
+        for (name, columns) in pairs(writer.columns)
+            ds[string(name)][:, :, record] = on_architecture(CPU(), columns)
+        end
+    end
+
+    return nothing
+end
+
+# A checkpoint keeps only the schedule, as for Oceananigans' own file writers; the buffers and the
+# outputs are rebuilt on attach.
+Oceananigans.prognostic_state(writer::SectionOutputWriter) = (; schedule = prognostic_state(writer.schedule))
+
+function Oceananigans.restore_prognostic_state!(writer::SectionOutputWriter, from)
+    restore_prognostic_state!(writer.schedule, from.schedule)
+    return writer
+end
+
+Oceananigans.restore_prognostic_state!(::SectionOutputWriter, ::Nothing) = nothing
 
 """
     station_attributes(config, site, grid)

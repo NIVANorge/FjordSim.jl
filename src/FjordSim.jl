@@ -42,6 +42,7 @@ export
     Station,
     StationWriter,
     FieldStationWriter,
+    SectionWriter,
     CheckpointWriter,
     ProgressCallback,
     progress,

@@ -89,6 +89,7 @@ include("utilities.jl")
             :Station,
             :StationWriter,
             :FieldStationWriter,
+            :SectionWriter,
             :CheckpointWriter,
             :ProgressCallback,
             :progress,
@@ -5854,6 +5855,50 @@ end
         @test (partial.i, partial.j) == (4, 4)
         @test partial.water_depth ≈ 15
         @test partial.level_depth ≈ 20
+    end
+
+    @testset "SectionWriter writes every station to one file" begin
+        directory = mktempdir()
+        bottom_height = fill(-20.0, 4, 4)
+        bottom_height[1, 1] = 1.0                          # a land column a station snaps off
+        (; grid) = immersed_test_grid(
+            joinpath(directory, "bathymetry.nc"); size = (4, 4, 2), halo = (3, 3, 3), bottom_height,
+        )
+        writer = SectionWriter(
+            name = :section,
+            output_file = "section.nc",
+            variables = (:T, :u),
+            stations = [Station(name = "land", longitude = 10.125, latitude = 59.125),
+                        Station(name = "middle", longitude = 10.625, latitude = 59.375),
+                        Station(name = "outside", longitude = 12.0, latitude = 59.5)],
+            interval = 1.0,
+            overwrite_existing = true,
+        )
+        @test FjordSim.Simulations.writer_keys(writer) == (:section,)
+        @test FjordSim.Simulations.output_path_trait(writer) isa FjordSim.Simulations.NamesOutputFile
+
+        model = HydrostaticFreeSurfaceModel(grid; tracers = (:T, :S), buoyancy = nothing)
+        set!(model, T = (λ, φ, z) -> λ + φ + z, u = (λ, φ, z) -> φ)
+        ocean = Simulation(model; Δt = 1.0, stop_iteration = 2, verbose = false)
+        config = test_simulation_config(results_root = directory, writers = (writer,))
+        # `attach_writer!` reaches the ocean through the coupled simulation's `model.ocean`.
+        @test_logs (:warn,) match_mode = :any attach_writer!((; model = (; ocean)), writer, config, 1)
+        @test FjordSim.Simulations.prognostic_state(ocean.output_writers[:section]) isa
+              NamedTuple{(:schedule,)}
+        run!(ocean)
+
+        u_centred = compute!(Field(FjordSim.Simulations.centred_horizontally(model.velocities.u)))
+        NCDataset(FjordSim.Simulations.loop_output_path(writer, config, 1)) do ds
+            @test ds.attrib["start_date"] == string(config.start_date)
+            @test ds["station_name"][:] == ["land", "middle"]  # the one outside the box is dropped
+            @test ds["time"][:] == [0.0, 1.0, 2.0]             # the initial record and one per step
+            @test size(ds["T"]) == (2, 2, 3)
+            for (n, (i, j)) in enumerate(zip(ds["i"][:], ds["j"][:]))
+                @test ds["T"][n, :, end] ≈ interior(model.tracers.T, i, j, :)
+                @test ds["u"][n, :, end] ≈ interior(u_centred, i, j, :)
+            end
+            @test (ds["i"][1], ds["j"][1]) != (1, 1)
+        end
     end
 
     @testset "station outputs are horizontally centred" begin

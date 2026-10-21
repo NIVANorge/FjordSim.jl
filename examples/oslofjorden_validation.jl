@@ -782,8 +782,9 @@ FjordConfig(
             ),
             # Hourly whole-column profiles along the Drammensfjord section: T and S for the
             # mixing and renewal, `e` for the TKE, and u, v for the exchange over the sill. About
-            # 12 MB a station over 640 days, 0.9 GB for the 77.
-            StationWriter(
+            # 0.9 GB over 640 days. One file for all 77 rather than one per station, which cost
+            # about 7 minutes of start-up.
+            SectionWriter(
                 name               = :section,
                 output_file        = "stations_section.nc",
                 variables          = (:T, :S, :e, :u, :v),

@@ -15,9 +15,8 @@
 #   julia --project -m FjordSim prepare_atmosphere     --config examples/lista.jl
 #   julia --project -m FjordSim run_simulation         --config examples/lista.jl   # needs a GPU
 #
-# `add_rivers` needs `NVE_API_KEY` (free at https://hydapi.nve.no/Users). `prepare_bathymetry` reads
-# Oslofjord's extracted copy of the national Geonorge FileGDB, `~/FjordSim_data/oslofjorden/`, by
-# absolute path, and downloads it there (4.5 GB) if it is missing. Everything else goes to
+# `add_rivers` needs `NVE_API_KEY` (free at https://hydapi.nve.no/Users). `prepare_bathymetry`
+# downloads the national Geonorge FileGDB (4.5 GB) if it is missing. Data goes to
 # `~/FjordSim_data/lista/`, and results to `~/FjordSim_results/lista/`.
 #
 # # Settle these after `prepare_bathymetry`, before the rest
@@ -50,7 +49,6 @@ using Oceananigans.Units
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using NumericalEarth: FreezingLimitedOceanTemperature
 using Dates: DateTime
-using FjordSim.Bathymetry: GEONORGE_DYBDEDATA_GDB
 
 data_root = fjord_data_root("lista")
 FT = Float32
@@ -100,8 +98,6 @@ FjordConfig(
         data_root             = data_root,
         output_file           = "bathymetry.nc",
         plot_file             = "bathymetry.png",
-        # Shared with `oslofjorden.jl`: it is one national file, the same for any Norwegian domain.
-        geodatabase_file      = joinpath(fjord_data_root("oslofjorden"), GEONORGE_DYBDEDATA_GDB),
         # 4 rather than Oslofjord's 2. The model cells are 2.5 times larger, so a 2x native grid
         # would average each one from only four ~245 m samples. At 4x the native grid is still
         # only 492 x 400.

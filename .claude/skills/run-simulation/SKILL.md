@@ -16,10 +16,10 @@ relevant one first; this is the order to work through.
 3. **Check the results directory.** If `results_root` (locally, and `results/<name>/` in the bucket
    for a GCP run) already holds checkpoints:
    - a resume → `pickup = true` / `--resume`, nothing to archive;
-   - the same config from scratch → archive the old run as `<name>_<YYYY-MM-DD>` first
-     (`docs/running.md`, "One run per results directory"); confirm with the user before deleting
-     anything in the bucket;
-   - a different experiment → it needs its own config with its own `results_root`.
+   - anything else (a rerun, a test, a changed parameter — all with the same config file, edited,
+     never a new one) → the previous run should have been archived as `<name>_<YYYY-MM-DD>` when it
+     finished; if it was not, archive it first (`gcp/README.md`, "When a run finishes"); confirm with
+     the user before deleting anything in the bucket.
 4. **Run.**
    - Locally: `julia --project -m FjordSim <step> --config <setup.jl>`.
    - On GCP: check the VM is up, then
@@ -27,6 +27,6 @@ relevant one first; this is the order to work through.
      Use `--dry-run` first when unsure what a launch will do. `add_rivers` needs `NVE_API_KEY`.
 5. **Watch it.** `gcp/fjordsim-gcp status`, `gcp/fjordsim-gcp logs <run-id>`; stop any monitoring
    loop you started once it's no longer needed.
-6. **After the run.** `gcp/fjordsim-gcp pull-results <name>`, then
+6. **After the run.** `gcp/fjordsim-gcp pull-results <name>`, archive the run (step 3), then
    `julia --project -m FjordSim validate_simulation --config <config>`. Record findings and open
    problems in `TODO.md`; remove the items the run completed.

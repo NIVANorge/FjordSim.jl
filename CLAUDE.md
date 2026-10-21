@@ -39,9 +39,9 @@ option and is required. From the REPL each step is a function of the same name o
 
 ## Hard rules for runs
 
-- **One run per results directory.** Checkpoints carry no run tag. A different experiment gets its
-  own `results_root`; a from-scratch rerun of the same config first archives the old run as
-  `<name>_<YYYY-MM-DD>`. Procedure in `docs/running.md`.
+- **One run per results directory.** Checkpoints carry no run tag. A finished run is archived as
+  `<name>_<YYYY-MM-DD>`, in the bucket and locally, and the next run — rerun, test or changed
+  parameter — uses the same config file, edited, not a new one. Procedure in `docs/running.md`.
 - **Prepared files go stale silently.** Changing `start_date`/`stop_time` or `z_faces`/`size`/a
   bathymetry knob does nothing until the listed prepare steps are re-run — `simulation_grid` reads
   `bathymetry.nc`, not the config. Lists in `docs/running.md`.

@@ -232,14 +232,13 @@ a `CheckpointWriter` — `examples/oslofjorden.jl` and `examples/drammensfjorden
 
 Checkpoint filenames carry no run tag and are scoped to `results_root`, so **two live runs must not
 share a fjord**. With a single shared VM that is easy to do by accident. `fjordsim-gcp` refuses to
-start a run whose id is already marked running; give a different `--run-id` for a genuinely separate
-experiment, and a `results_root` to match.
+start a run whose id is already marked running.
 
 Nor may a fresh run follow an earlier one into the same directory: the results sync never deletes, so
 the earlier run's checkpoints would stay beside the new one's and a later `--resume` would pick up the
 highest-numbered of them, likely the earlier run's. A fresh `run_simulation` (no `--resume`) is
 therefore refused while `results/<fjord>/` in the bucket holds checkpoints — archive the earlier run
-first (`docs/running.md`, "One run per results directory") — and starts on the VM from an empty results
+first ("When a run finishes", below) — and starts on the VM from an empty results
 directory, clearing what an earlier run left on its disk.
 
 ### Watching a run
@@ -253,6 +252,28 @@ gcp/fjordsim-gcp ssh               # the VM is a normal box; docker ps, nvidia-s
 Results sync up every 10 minutes while the run is in flight, so `pull-results` mid-run gives you
 something to plot.
 
+### When a run finishes
+
+Archive it: move `results/<fjord>/` in the bucket to `results/<fjord>_<YYYY-MM-DD>/`, the UTC date of
+the run's last output (`-2` if taken). The undated directory is then free for the next run — a rerun,
+a test or a changed parameter alike — which uses the same config file, edited if need be, rather than
+a new one. The config each run used is kept under `configs/<run-id>/`.
+
+An object rename is a copy, so copy, check, then delete:
+
+```bash
+source gcp/config.env
+from="$BUCKET/results/oslofjorden_validation"
+to="$BUCKET/results/oslofjorden_validation_2026-10-16"
+gcloud storage cp -r "$from/*" "$to/"
+diff <(gcloud storage ls -L "$from/**" | grep -E 'Content-Length|Hash \(crc32c\)') \
+     <(gcloud storage ls -L "$to/**"   | grep -E 'Content-Length|Hash \(crc32c\)') \
+    && gcloud storage rm -r "$from"
+```
+
+A local copy from `pull-results` is renamed the same way (`docs/running.md`, "One run per results
+directory").
+
 ## Cost
 
 - **Nothing stops on its own.** A finished run leaves the VM up and billing; `down` is a manual step
@@ -264,50 +285,6 @@ something to plot.
   hundred MB per run.
 - The stage-in filter is the other lever: a simulation pulls ~900 MB instead of ~5.5 GB because it
   never touches the raw sources.
-
-## Asking the admin
-
-Ranked by value per unit of admin effort. Nothing here blocks you today — the tooling works as it
-stands — but each one removes a sharp edge.
-
-1. **Use a Deep Learning VM image in both launcher jobs.** One flag pair, no new IAM, and it
-   deletes the slowest and most fragile part of the loop: `bootstrap` currently spends ~10 minutes
-   installing a driver, Docker and the container toolkit on every VM *creation*, and the VM is
-   re-created on every preemption.
-   ```diff
-   -  --image-family=ubuntu-2204-lts  --image-project=ubuntu-os-cloud
-   +  --image-family=common-cu129-ubuntu-2204-nvidia-580  --image-project=deeplearning-platform-release
-   ```
-   `gcp/bootstrap.sh` stays correct either way — it just becomes a no-op.
-
-2. **`roles/compute.instanceAdmin.v1` on the instance `fjordsim-gpu`** (resource-level, not
-   project-level). Combined with the `actAs` already granted, this alone restores `stop`, `delete`
-   and `setMetadata` — real cost control instead of a guest `poweroff`. An instance-level binding
-   dies with the instance, so the jobs' step that grants the operator `osAdminLogin` should add it
-   alongside. Narrower alternatives: a custom role with just
-   `compute.instances.{start,stop,delete}`, or a third Cloud Run job `fjordsim-stop`.
-
-3. **`roles/artifactregistry.reader` for the VM's service account on the image repository.**
-   Needed for `docker pull` on the VM and currently unverified: `iam.serviceAccounts.getAccessToken`
-   is not granted, so the account cannot be impersonated to test it. `bootstrap` is what finds out,
-   and it prints the exact identity to name — read from the VM's metadata server, so it is the one
-   actually in use rather than a guess. Workaround without admin: `docker save | gzip` the image to
-   the bucket and `docker load` on the VM.
-
-4. **Give the standard launcher its own VM name** (e.g. `fjordsim-gpu-std`). The two jobs share one
-   instance name and each exits with an error on an instance created with the other provisioning
-   model, so while a Spot `fjordsim-gpu` exists — and the workflow cannot delete it —
-   `up --standard` can never succeed, and the reverse holds for plain `up`.
-
-5. **A persistent data disk** attached with `auto-delete=no`, holding `/var/lib/docker` and
-   `/mnt/stage`. Turns a preemption into a restart rather than a full re-bootstrap plus a 2.7 GB
-   image pull. More admin work than §1; only worth it if preemptions turn out to be frequent.
-
-6. **`run.jobs.runWithOverrides` on the two jobs**, so `MAX_ROUNDS` and the backoff can be set per
-   launch instead of being baked in at ten rounds. Minor.
-
-7. **`roles/secretmanager.secretAccessor` on the NVE key secret**, only if passing `NVE_API_KEY`
-   from your own environment is unacceptable. The env-var route works today.
 
 ## Reproducibility
 

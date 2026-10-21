@@ -95,12 +95,11 @@ Checkpoints carry no run tag, so a results directory holds exactly one resumable
 resumes the highest-numbered checkpoint it finds, whichever launch wrote it. A fresh run into a used
 directory would mix with the old one, and analyses that read every stamp would splice them together.
 
-- **A different experiment** (a changed parameter, a sensitivity test) gets its own config with its
-  own `results_root`, e.g. `fjord_results_root("oslofjorden_validation_tke7e-7_30d")`.
-- **A from-scratch rerun of the same config** first archives the previous run, so the undated name
-  is always the current one. Rename `<name>` to `<name>_<YYYY-MM-DD>`, the UTC date of that run's
-  last output (`-2` if taken), *before* launching — locally and, if the run went through GCP, in the
-  bucket. A `--resume` is not a fresh run and archives nothing.
+- **Every run uses the setup's own config and `results_root`.** A rerun, a test or a changed
+  parameter is an edit to the setup, not a new config file.
+- **A finished run is archived**, so the undated name is free for the next one. Rename `<name>` to
+  `<name>_<YYYY-MM-DD>`, the UTC date of that run's last output (`-2` if taken) — locally and, if
+  the run went through GCP, in the bucket. A `--resume` is not a fresh run and archives nothing.
 
 Locally:
 
@@ -108,17 +107,7 @@ Locally:
 mv ~/FjordSim_results/oslofjorden_validation ~/FjordSim_results/oslofjorden_validation_2026-10-16
 ```
 
-In the bucket an object rename is a copy, so copy, check, then delete:
-
-```bash
-source gcp/config.env
-from="$BUCKET/results/oslofjorden_validation"
-to="$BUCKET/results/oslofjorden_validation_2026-10-16"
-gcloud storage cp -r "$from/*" "$to/"
-diff <(gcloud storage ls -L "$from/**" | grep -E 'Content-Length|Hash \(crc32c\)') \
-     <(gcloud storage ls -L "$to/**"   | grep -E 'Content-Length|Hash \(crc32c\)') \
-    && gcloud storage rm -r "$from"
-```
+In the bucket: `gcp/README.md`, "When a run finishes".
 
 The rule is enforced twice: `run_simulation` refuses a fresh run (`pickup = false`) into a
 `results_root` that already holds checkpoints, and `gcp/fjordsim-gcp run` refuses a fresh

@@ -39,6 +39,12 @@ const NORKYST_VARIABLE_NAMES = Dict(
     "u_eastward" => "u",
     "v_northward" => "v",
 )
+# thredds.met.no answers `429 Too Many Requests` to bursts: opening a month's daily files back to
+# back, at three requests an open, tripped it every five or so opens. Requests are spaced by this.
+const NORKYST_REQUEST_INTERVAL_SECONDS = 0.5
+const NORKYST_OPEN_REQUESTS = 3
+const NORKYST_NEXT_REQUEST = Ref(0.0)
+
 # Scalar NorKyst variable whose `proj4` attribute defines the projected X/Y coordinates.
 const NORKYST_PROJECTION_VARIABLE = "projection_stere"
 
@@ -116,8 +122,31 @@ end
 Open the OPeNDAP dataset at `url`, retrying as `with_retries` does. With `body`, run it on the
 dataset and close it; a failure inside `body` retries it too, from a fresh open.
 """
-open_remote(url) = with_retries(() -> NCDataset(url), url)
-open_remote(body, url) = with_retries(() -> NCDataset(body, url), url)
+open_remote(url) = with_retries(() -> paced(() -> NCDataset(url), NORKYST_OPEN_REQUESTS), url)
+open_remote(body, url) =
+    with_retries(() -> paced(() -> NCDataset(body, url), NORKYST_OPEN_REQUESTS), url)
+
+"""
+    read_remote(variable, indices, source)
+
+The `indices` of `variable` from the OPeNDAP dataset `source`, paced and retried.
+"""
+read_remote(variable, indices, source) =
+    with_retries(() -> paced(() -> variable[indices...], 1), "$(name(variable)) in $(path(source))")
+
+"""
+    paced(body, requests)
+
+Run `body()`, which makes `requests` HTTP requests, no sooner than the previous paced call allows,
+and hold the next one back by `requests` times `NORKYST_REQUEST_INTERVAL_SECONDS`.
+"""
+function paced(body, requests)
+    wait_seconds = NORKYST_NEXT_REQUEST[] - time()
+    wait_seconds > 0 && sleep(wait_seconds)
+    NORKYST_NEXT_REQUEST[] = time() + requests * NORKYST_REQUEST_INTERVAL_SECONDS
+
+    return body()
+end
 
 function bounding_range(mask, dimension)
     reduced_dims = Tuple(i for i in 1:ndims(mask) if i != dimension)
@@ -326,7 +355,7 @@ end
 function write_parameter_chunk!(output, source, name, subset::NorKystSubset, time_start)
     variable = source[name]
     input_indices = variable_indices(variable, subset.ranges)
-    data = concrete_float_data(with_retries(() -> variable[input_indices...], "$name in $(path(source))"))
+    data = concrete_float_data(read_remote(variable, input_indices, source))
     data = apply_spatial_mask(data, variable, subset)
 
     output_variable = output[name]
@@ -354,7 +383,7 @@ function write_time_dependent_coordinates!(output, source, subset::NorKystSubset
         haskey(output, name) || continue
 
         input_indices = variable_indices(variable, subset.ranges)
-        data = with_retries(() -> variable[input_indices...], "$name in $(path(source))")
+        data = read_remote(variable, input_indices, source)
         output_variable = NCDatasets.variable(output, name)
         output_indices = ntuple(ndims(output_variable)) do i
             if i == time_index

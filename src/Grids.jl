@@ -1,13 +1,6 @@
 module Grids
 
-export ImmersedBoundaryGrid,
-    EvenGrid,
-    domain_grid,
-    simulation_grid,
-    LATERAL_EDGES,
-    validate_open_edge,
-    lateral_edges,
-    open_edges
+export EvenGrid
 
 using Oceananigans
 using Oceananigans.BoundaryConditions: fill_halo_regions!

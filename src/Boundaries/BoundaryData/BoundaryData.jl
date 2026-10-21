@@ -16,18 +16,9 @@ module BoundaryData
 # edge is a `Val` everywhere it decides anything.
 
 export download_boundaries,
-    boundary_data_path,
-    boundary_data_directory,
     prepare_boundaries,
-    boundary_series,
-    boundary_time_steps,
-    boundary_source_grid,
-    boundary_variable_names,
-    boundary_date_range,
-    boundary_variable_name,
-    boundary_source_slab,
-    NorKystHindcastBoundariesConfig,
-    NorKystBoundariesConfig
+    NorKystBoundariesConfig,
+    NorKystHindcastBoundariesConfig
 
 using Oceananigans
 using Oceananigans.Units: Time

@@ -1,7 +1,5 @@
 module Plotting
 
-export plot_bathymetry, plot_forcing, plot_rivers, plot_boundaries, plot_atmosphere, plot_path
-
 using CairoMakie
 using NCDatasets
 using Oceananigans

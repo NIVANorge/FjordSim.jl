@@ -43,6 +43,9 @@
 # `add_rivers` needs `NVE_API_KEY`, exactly as `oslofjorden.jl` does.
 
 using FjordSim
+using FjordSim: BoundaryData, Rivers, Simulations
+using FjordSim.Configs:
+    AbstractBoundaryDataConfig, AbstractCoupledSimulationConfig, AbstractRiverConfig
 using Oceananigans
 using Oceananigans.Units
 using OceanBioME
@@ -318,7 +321,7 @@ function append_boundary_variables!(filepath, edges, profiles)
             n_along = ds.dim[along]
 
             for (row, name) in enumerate(keys(profiles))
-                variable_name = boundary_variable_name(edge, String(name))
+                variable_name = BoundaryData.boundary_variable_name(edge, String(name))
                 @info "Writing $variable_name into $(basename(filepath))"
 
                 variable = defVar(
@@ -366,7 +369,7 @@ end
 NPZDModel(base; tracers, surface_PAR, scale_negatives) =
     NPZDModel(base, Tuple(Symbol.(tracers)), surface_PAR, Bool(scale_negatives))
 
-FjordSim.model_tracers(model::NPZDModel) = model.tracers
+Simulations.model_tracers(model::NPZDModel) = model.tracers
 
 """
     negative_tracer_scaler(scale_negatives)
@@ -429,8 +432,8 @@ npzd_model(model::NPZDModel, grid) = CoupledHydrostaticSimulation(
     extra_kwargs = model.base.extra_kwargs,
 )
 
-FjordSim.coupled_simulation(model::NPZDModel, grid; kwargs...) =
-    coupled_simulation(npzd_model(model, grid), grid; kwargs...)
+Simulations.coupled_simulation(model::NPZDModel, grid; kwargs...) =
+    Simulations.coupled_simulation(npzd_model(model, grid), grid; kwargs...)
 
 # --- NPZDRivers: a new AbstractRiverConfig ------------------------------------------------------
 
@@ -466,12 +469,13 @@ NPZDRivers(base; output_file, plot_file) = NPZDRivers(
     base.maximum_inflow_velocity,
 )
 
-FjordSim.river_locations(rivers::NPZDRivers) = river_locations(rivers.base)
-FjordSim.river_discharge(rivers::NPZDRivers, times) = river_discharge(rivers.base, times)
-FjordSim.river_search_radius(rivers::NPZDRivers) = river_search_radius(rivers.base)
-FjordSim.river_maximum_inflow_velocity(rivers::NPZDRivers) =
-    river_maximum_inflow_velocity(rivers.base)
-FjordSim.download_rivers(target_grid, rivers::NPZDRivers) = download_rivers(target_grid, rivers.base)
+Rivers.river_locations(rivers::NPZDRivers) = Rivers.river_locations(rivers.base)
+Rivers.river_discharge(rivers::NPZDRivers, times) = Rivers.river_discharge(rivers.base, times)
+Rivers.river_search_radius(rivers::NPZDRivers) = Rivers.river_search_radius(rivers.base)
+Rivers.river_maximum_inflow_velocity(rivers::NPZDRivers) =
+    Rivers.river_maximum_inflow_velocity(rivers.base)
+Rivers.download_rivers(target_grid, rivers::NPZDRivers) =
+    Rivers.download_rivers(target_grid, rivers.base)
 
 """
     river_series(rivers::NPZDRivers, times)
@@ -490,9 +494,9 @@ gauged rivers are named only because that setup's overrides state a `name`, and 
 would drop it to `RIVER_TOTAL_NITROGEN_DEFAULT` with nothing to notice. Hence the log line, which
 says which outlets were matched and which took the default.
 """
-function FjordSim.river_series(rivers::NPZDRivers, times)
-    series = river_series(rivers.base, times)
-    locations = river_locations(rivers)
+function Rivers.river_series(rivers::NPZDRivers, times)
+    series = Rivers.river_series(rivers.base, times)
+    locations = Rivers.river_locations(rivers)
 
     series["N"] = Float32[
         river_nitrate(location.name) for location in locations, _ in times
@@ -536,12 +540,12 @@ end
 NPZDBoundaries(base) =
     NPZDBoundaries(base, base.data_root, base.output_file, base.plot_file, base.open_edges)
 
-FjordSim.boundary_variable_names(config::NPZDBoundaries) = merge(
-    boundary_variable_names(config.base),
+BoundaryData.boundary_variable_names(config::NPZDBoundaries) = merge(
+    BoundaryData.boundary_variable_names(config.base),
     Dict(String(name) => String(name) for name in keys(NPZD_PROFILES)),
 )
 
-FjordSim.download_boundaries(target_grid, config::NPZDBoundaries) =
+BoundaryData.download_boundaries(target_grid, config::NPZDBoundaries) =
     download_boundaries(target_grid, config.base)
 
 """
@@ -553,13 +557,13 @@ Appended after the pipeline rather than inside it: `boundary_source_slab` can *d
 from others in the download, but `prepared_boundary_variable` still validates the source name
 against the downloaded file, so a variable with no source at all has no place there.
 """
-function FjordSim.prepare_boundaries(target_grid, config::NPZDBoundaries; coverage = nothing)
+function BoundaryData.prepare_boundaries(target_grid, config::NPZDBoundaries; coverage = nothing)
     result = prepare_boundaries(target_grid, config.base; coverage)
     edges = config.open_edges
     append_boundary_variables!(result.output_file, edges, NPZD_PROFILES)
 
     appended = [
-        boundary_variable_name(edge, String(name))
+        BoundaryData.boundary_variable_name(edge, String(name))
         for edge in edges for name in keys(NPZD_PROFILES)
     ]
 

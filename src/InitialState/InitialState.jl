@@ -5,14 +5,8 @@ module InitialState
 # same as the forcing's and the open boundaries'; the dataset enters only through the hooks below.
 
 export download_initial_state,
-    initial_state_path,
-    initial_state_directory,
     prepare_initial_state,
-    initial_state_record,
-    initial_state_source_grid,
-    initial_state_variable_names,
-    NorKystInitialStateConfig,
-    INITIAL_STATE_DATE_ATTRIBUTE
+    NorKystInitialStateConfig
 
 using Oceananigans
 using NCDatasets

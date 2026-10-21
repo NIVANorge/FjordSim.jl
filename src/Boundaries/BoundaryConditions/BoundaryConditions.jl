@@ -1,14 +1,9 @@
 module BoundaryConditions
 
-export air_sea_flux_boundary_conditions,
-    quadratic_bottom_drag_boundary_conditions,
-    top_bottom_boundary_conditions,
-    boundary_condition_sides,
-    field_boundary_conditions,
+export MergedBoundaryConditions,
     AirSeaFluxes,
     QuadraticBottomDrag,
-    OpenLateralBoundaryFromData,
-    MergedBoundaryConditions
+    OpenLateralBoundaryFromData
 
 using Oceananigans
 using Oceananigans.BoundaryConditions: FluxBoundaryCondition
@@ -124,10 +119,8 @@ then by side: `(u = (top = …, bottom = …), T = (top = …,))`.
 
 The per-piece hook. Named for what it returns — the per-field *sides* that
 `field_boundary_conditions` materializes — rather than `boundary_conditions`, which is what it used
-to be called. That name shadowed `Oceananigans.Fields.boundary_conditions`, so it was the one
-FjordSim hook that could not be re-exported and had to be reached as
-`FjordSim.BoundaryConditions.boundary_conditions`; and any caller binding a local of that name
-shadowed the hook it was trying to call.
+to be called. That name shadowed `Oceananigans.Fields.boundary_conditions`, and any caller binding
+a local of that name shadowed the hook it was trying to call.
 
 `boundary_config` is the setup's `AbstractBoundaryDataConfig`, or `nothing` — what a piece reads
 `open_edges` from. It was the *forcing* config while the boundary dataset and the open edge both hung

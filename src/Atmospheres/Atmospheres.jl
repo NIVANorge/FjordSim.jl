@@ -1,22 +1,8 @@
 module Atmospheres
 
-export prepare_atmosphere,
-    atmosphere_path,
-    atmosphere_directory,
-    download_atmosphere,
-    atmosphere_time_steps,
-    atmosphere_source_grid,
-    atmosphere_variable_names,
-    atmosphere_target_axes,
-    prescribed_atmosphere,
-    prescribed_radiation,
-    atmosphere_date_range,
-    AtmosphereRecord,
-    ProjectedAtmosphereGrid,
-    NORA3Config,
-    NORA3PrescribedAtmosphere,
-    NORA3PrescribedRadiation,
-    MultiYearNORA3
+export download_atmosphere,
+    prepare_atmosphere,
+    NORA3Config
 
 using Oceananigans
 using Oceananigans.Grids: x_domain, y_domain

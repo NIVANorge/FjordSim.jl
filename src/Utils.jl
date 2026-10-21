@@ -1,14 +1,6 @@
 module Utils
 
-export compute_faces,
-    progress,
-    safe_execute,
-    extract_z_faces,
-    netcdf_to_jld2,
-    save_fts,
-    recursive_merge,
-    cell_advection_timescale_coupled_model,
-    coverage_window,
+export progress,
     fjord_data_root,
     fjord_results_root
 

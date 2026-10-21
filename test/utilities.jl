@@ -16,6 +16,11 @@ using Oceananigans.TurbulenceClosures: HorizontalScalarBiharmonicDiffusivity
 using Oceananigans.Units: day, days, hour, minute, minutes, second
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using NumericalEarth: FreezingLimitedOceanTemperature
+using FjordSim.Configs: AbstractAtmosphereConfig, AbstractBathymetryConfig,
+    AbstractBoundaryConditionConfig, AbstractBoundaryConditionSetConfig, AbstractCallbackConfig,
+    AbstractCoupledSimulationConfig, AbstractForcingConfig, AbstractFreeSurfaceConfig,
+    AbstractGridConfig, AbstractRiverConfig, AbstractSimulationConfig, AbstractTimeSteppingConfig,
+    AbstractWriterConfig
 
 # Alternative config types
 
@@ -122,7 +127,7 @@ FjordSim.Rivers.river_series(config::StubRivers, times) = config.series
 # and `simulation_grid` deliberately is not, so the extensibility testset can assert both halves of
 # the grid contract: one hook picked up at every existing call site, the other missing as a
 # `MethodError` naming what the subtype still owes.
-FjordSim.domain_grid(config::SingleColumnGrid, architecture) = LatitudeLongitudeGrid(
+FjordSim.Grids.domain_grid(config::SingleColumnGrid, architecture) = LatitudeLongitudeGrid(
     architecture;
     size = (1, 1, 2),
     halo = (1, 1, 1),

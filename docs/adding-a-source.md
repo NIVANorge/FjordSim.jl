@@ -9,6 +9,22 @@ adapter files (`src/Bathymetry/geonorge.jl`, `src/Forcing/norkyst.jl`,
 `src/InitialState/norkyst_initial_state.jl`, `src/Rivers/nve_rivers.jl`,
 `src/Boundaries/BoundaryData/norkyst_boundaries.jl`) are the templates.
 
+Neither the supertypes nor the hooks are exported — `using FjordSim` gives a setup only what it
+names. Code adding a source imports the supertype from `FjordSim.Configs` and extends each hook
+through the module that declares it — the pipeline's own (`Rivers`, `BoundaryData`, ...), or
+`Grids` for `open_edges` and `Plotting` for `plot_path`:
+
+```julia
+using FjordSim: Rivers
+using FjordSim.Configs: AbstractRiverConfig
+
+struct MyRivers <: AbstractRiverConfig
+    # ...
+end
+
+Rivers.river_locations(config::MyRivers) = ...
+```
+
 Where an adapter's code goes:
 
 - **The module file holds only what every source of the pipeline shares.** `Forcing.jl`,

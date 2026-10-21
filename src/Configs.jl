@@ -1,22 +1,6 @@
 module Configs
 
-export AbstractGridConfig,
-    AbstractBathymetryConfig,
-    AbstractForcingConfig,
-    AbstractInitialStateConfig,
-    AbstractRiverConfig,
-    AbstractBoundaryDataConfig,
-    AbstractAtmosphereConfig,
-    AbstractSimulationConfig,
-    AbstractCoupledSimulationConfig,
-    AbstractFreeSurfaceConfig,
-    AbstractClosureConfig,
-    AbstractBoundaryConditionConfig,
-    AbstractBoundaryConditionSetConfig,
-    AbstractWriterConfig,
-    AbstractCallbackConfig,
-    AbstractTimeSteppingConfig,
-    FjordConfig
+export FjordConfig
 
 """
     AbstractGridConfig
@@ -555,12 +539,15 @@ functions taking it are untouched. Each instantiation still has concrete field t
 # Example
 
 ```julia
+using FjordSim: Grids
+using FjordSim.Configs: AbstractGridConfig
+
 struct SingleColumn <: AbstractGridConfig
     depth::Float64
 end
 
-FjordSim.domain_grid(config::SingleColumn, architecture) = ...      # new behavior
-FjordSim.simulation_grid(config::SingleColumn, file, architecture) = ...
+Grids.domain_grid(config::SingleColumn, architecture) = ...      # new behavior
+Grids.simulation_grid(config::SingleColumn, file, architecture) = ...
 ```
 """
 Base.@kwdef mutable struct FjordConfig{

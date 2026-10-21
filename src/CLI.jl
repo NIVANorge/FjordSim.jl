@@ -1,6 +1,6 @@
 module CLI
 
-export parse_arguments, fjord_config
+export fjord_config
 
 using ..Configs: AbstractSimulationConfig, FjordConfig
 using ..Bathymetry: prepare_bathymetry

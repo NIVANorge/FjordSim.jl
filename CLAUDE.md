@@ -136,6 +136,10 @@ forcings.
 
 - Extend functions via `function Mod.foo(...) ... end` — never `import Mod: foo` to extend
 - Exports go at the top of each module file, before other code
+- Export only what a setup names: built-in configs, writers, boundary conditions, pipeline steps.
+  Abstract supertypes, hooks and internals stay unexported and are reached through their module
+  (`using FjordSim.Configs: AbstractRiverConfig`, `Rivers.river_series(config::MyRivers, times)`).
+  A submodule exports nothing the top level does not re-export
 - Keep imports explicit so the dependency surface stays auditable
 
 ## Tests

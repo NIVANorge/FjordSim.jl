@@ -1,7 +1,36 @@
 using FjordSim
-using FjordSim.Bathymetry: write_bathymetry_file
-using FjordSim.Grids: open_edges
+using FjordSim.Configs: AbstractAtmosphereConfig, AbstractBathymetryConfig,
+    AbstractBoundaryConditionConfig, AbstractBoundaryConditionSetConfig, AbstractBoundaryDataConfig,
+    AbstractCallbackConfig, AbstractClosureConfig, AbstractCoupledSimulationConfig,
+    AbstractForcingConfig, AbstractFreeSurfaceConfig, AbstractGridConfig, AbstractRiverConfig,
+    AbstractSimulationConfig, AbstractTimeSteppingConfig, AbstractWriterConfig
 using FjordSim.Utils: coverage_window
+using FjordSim.Grids: domain_grid, open_edges, simulation_grid
+using FjordSim.Plotting: plot_boundaries, plot_path
+using FjordSim.Bathymetry: bathymetry_dataset, bathymetry_path, geodatabase_path, regrid_options,
+    write_bathymetry_file
+using FjordSim.Regridding: interpolation_architecture, ProjectedSourceGrid
+using FjordSim.Atmospheres: atmosphere_date_range, atmosphere_directory, atmosphere_path,
+    atmosphere_source_grid, atmosphere_target_axes, atmosphere_time_steps,
+    atmosphere_variable_names, AtmosphereRecord, MultiYearNORA3, NORA3PrescribedAtmosphere,
+    NORA3PrescribedRadiation, prescribed_atmosphere, prescribed_radiation, ProjectedAtmosphereGrid
+using FjordSim.Forcing: forcing_date_range, forcing_directory, forcing_from_file,
+    forcing_monthly_filename, forcing_path, forcing_source_grid, forcing_time_steps,
+    forcing_variable_names, simulation_forcing
+using FjordSim.InitialState: initial_state_directory, initial_state_path
+using FjordSim.Rivers: river_discharge, river_forcing_path, river_locations,
+    river_maximum_inflow_velocity, river_search_radius, river_series
+using FjordSim.BoundaryConditions: boundary_condition_sides, field_boundary_conditions,
+    top_bottom_boundary_conditions
+using FjordSim.BoundaryData: boundary_data_directory, boundary_data_path, boundary_variable_name,
+    boundary_variable_names
+using FjordSim.Simulations: attach_callback!, attach_time_stepping!, attach_writer!,
+    coupled_simulation, free_surface, initial_time_step, model_closure, model_tracers, results_path,
+    run_tag, simulation_architecture
+using FjordSim.Validation: baroclinic_deviation, CsvObservations, depth_average,
+    direction_statistics, harmonic_fit, KartverketSeaLevel, monthly_statistics, observation_series,
+    observation_stations, observations_directory, ObservationSeries, quantiles, reconstruct,
+    running_mean, skill_metrics, station_files, TIDAL_CONSTITUENTS, tidal_ellipses, TidalConstituent
 using FjordSim: Rivers
 using Dates: Date, DateFormat, DateTime, Day, Hour, Millisecond, Minute, Month
 using JLD2
@@ -20,200 +49,78 @@ include("utilities.jl")
 
 @testset "Public interface" begin
     @testset "exports" begin
-        exported_symbols = [
-            :ImmersedBoundaryGrid,
+        # What a setup names, and nothing else: the abstract supertypes, the hooks and the internals
+        # are reached through their module, `FjordSim.Rivers.river_series`.
+        setup_symbols = [
             :FjordConfig,
-            :AbstractGridConfig,
-            :AbstractBathymetryConfig,
-            :AbstractForcingConfig,
-            :AbstractInitialStateConfig,
-            :AbstractRiverConfig,
-            :AbstractSimulationConfig,
-            :EvenGrid,
-            :DybdedataConfig,
-            :NorKystConfig,
-            :NVERiversConfig,
-            :NVERiver,
-            :forcing_from_file,
-            :simulation_forcing,
-            :forcing_path,
-            :forcing_directory,
-            :river_forcing_path,
-            :plot_path,
-            :bathymetry_path,
+            :fjord_config,
             :fjord_data_root,
             :fjord_results_root,
             :prepare_bathymetry,
-            :prepare_forcing,
             :download_forcing,
+            :prepare_forcing,
             :download_initial_state,
             :prepare_initial_state,
-            :initial_state_path,
-            :initial_state_directory,
-            :initial_state_record,
-            :initial_state_source_grid,
-            :initial_state_variable_names,
-            :NorKystInitialStateConfig,
-            :FromInitialState,
             :add_rivers,
-            :download_rivers,
-            :interpolation_architecture,
-            :plot_bathymetry,
-            :plot_forcing,
-            :plot_rivers,
-            :plot_boundaries,
             :download_boundaries,
             :prepare_boundaries,
-            # extension hooks a new config subtype overloads
-            :bathymetry_dataset,
-            :regrid_options,
-            :forcing_time_steps,
-            :forcing_source_grid,
-            :forcing_variable_names,
-            :forcing_monthly_filename,
-            :river_locations,
-            :river_series,
-            :river_search_radius,
-            :river_discharge,
-            :river_maximum_inflow_velocity,
-            :boundary_time_steps,
-            :boundary_source_grid,
-            :boundary_variable_names,
-            :boundary_date_range,
-            :boundary_series,
-            :boundary_data_path,
-            :boundary_data_directory,
+            :download_atmosphere,
+            :prepare_atmosphere,
+            :build_simulation,
+            :run_simulation,
+            :validate_simulation,
+            :EvenGrid,
+            :DybdedataConfig,
+            :NorKystConfig,
+            :NorKystHindcastConfig,
+            :NorKystInitialStateConfig,
+            :NVERiversConfig,
+            :NVERiver,
             :NorKystBoundariesConfig,
-            :AbstractBoundaryDataConfig,
-            :AbstractClosureConfig,
-            :model_closure,
+            :NorKystHindcastBoundariesConfig,
+            :NORA3Config,
+            :SimulationConfig,
+            :CoupledHydrostaticSimulation,
+            :SplitExplicitFreeSurfaceConfig,
             :BoundarySponge,
             :RiverMouthMixing,
-            :ProjectedSourceGrid,
-            :RiverLocation,
-            :geodatabase_path,
-            :top_bottom_boundary_conditions,
-            :air_sea_flux_boundary_conditions,
-            :quadratic_bottom_drag_boundary_conditions,
-            :boundary_condition_sides,
-            :field_boundary_conditions,
-            :AirSeaFluxes,
-            :QuadraticBottomDrag,
-            :OpenLateralBoundaryFromData,
-            :MergedBoundaryConditions,
-            :domain_grid,
-            :simulation_grid,
-            :forcing_date_range,
-            :ProgressCallback,
+            :SnapshotWriter,
             :FieldSnapshotWriter,
-            :attach_callback!,
-            :coupled_simulation,
-            :recursive_merge,
-            :progress,
-            :cell_advection_timescale_coupled_model,
-            :NORA3PrescribedAtmosphere,
-            :NORA3PrescribedRadiation,
-            :MultiYearNORA3,
-            :AbstractAtmosphereConfig,
-            :prepare_atmosphere,
-            :download_atmosphere,
-            :plot_atmosphere,
-            :atmosphere_path,
-            :atmosphere_directory,
-            :atmosphere_time_steps,
-            :atmosphere_source_grid,
-            :atmosphere_variable_names,
-            :atmosphere_target_axes,
-            :ProjectedAtmosphereGrid,
-            :AtmosphereRecord,
-            :NORA3Config,
-            :NorKystHindcastConfig,
-            :NorKystHindcastBoundariesConfig,
             :Station,
             :StationWriter,
             :FieldStationWriter,
-            # validation
-            :AbstractObservationConfig,
-            :ObservationSeries,
-            :download_observations,
-            :observation_series,
-            :observation_stations,
-            :observations_directory,
-            :KartverketSeaLevel,
-            :SkillMetrics,
-            :skill_metrics,
-            :monthly_statistics,
-            :running_mean,
-            :depth_average,
-            :baroclinic_deviation,
-            :TidalConstituent,
-            :TIDAL_CONSTITUENTS,
-            :HarmonicFit,
-            :harmonic_fit,
-            :reconstruct,
-            :TidalEllipse,
-            :tidal_ellipses,
-            :quantiles,
-            :direction_statistics,
-            :fjord_config,
-            # simulation
-            :SimulationConfig,
-            :AbstractCoupledSimulationConfig,
-            :AbstractFreeSurfaceConfig,
-            :AbstractBoundaryConditionConfig,
-            :AbstractWriterConfig,
-            :AbstractTimeSteppingConfig,
-            :CoupledHydrostaticSimulation,
-            :SplitExplicitFreeSurfaceConfig,
-            :free_surface,
-            :SnapshotWriter,
             :CheckpointWriter,
+            :ProgressCallback,
+            :progress,
             :AdaptiveTimeStep,
-            :model_tracers,
-            :attach_writer!,
-            :attach_time_stepping!,
-            :initial_time_step,
-            :build_simulation,
-            :run_simulation,
-            :simulation_architecture,
-            :results_path,
-            :prescribed_atmosphere,
-            :prescribed_radiation,
+            :FromForcing,
+            :FromInitialState,
+            :FromResults,
+            :MergedBoundaryConditions,
+            :AirSeaFluxes,
+            :QuadraticBottomDrag,
+            :OpenLateralBoundaryFromData,
         ]
 
-        for sym in exported_symbols
-            @test isdefined(FjordSim, sym)
+        exported(mod) = filter(sym -> sym !== nameof(mod) && Base.isexported(mod, sym), names(mod))
+        @test Set(exported(FjordSim)) == Set(setup_symbols)
+
+        # A submodule exports only what the top level re-exports, so `using FjordSim.Rivers` brings in
+        # no more than `using FjordSim` does.
+        submodules = filter(names(FjordSim; all = true)) do sym
+            isdefined(FjordSim, sym) && getfield(FjordSim, sym) isa Module &&
+                parentmodule(getfield(FjordSim, sym)) === FjordSim && sym !== :FjordSim
+        end
+        @test :Bathymetry in submodules
+        for sym in submodules
+            @test exported(getfield(FjordSim, sym)) ⊆ setup_symbols
         end
 
-        submodule_exports = [
-            (:Utils, :compute_faces),
-            (:Utils, :safe_execute),
-            (:Utils, :extract_z_faces),
-            (:Utils, :netcdf_to_jld2),
-            (:Utils, :save_fts),
-            (:CLI, :fjord_config),
-            (:Simulations, :SimulationConfig),
-            (:Simulations, :run_simulation),
-            # Moved out of FjordSim.jl into Simulations; still re-exported, so the entry above in
-            # `exported_symbols` and this one together pin both halves of that move.
-            (:Simulations, :coupled_simulation),
-            (:BoundaryConditions, :boundary_condition_sides),
-            (:CLI, :parse_arguments),
-        ]
-
-        # `getfield` already errors on a missing module, so the loop covers every module it names.
-        for (module_name, sym) in submodule_exports
-            @test isdefined(getfield(FjordSim, module_name), sym)
-        end
-
-        @test isdefined(FjordSim, :Bathymetry)   # the one module no export above reaches through
-        @test parentmodule(coupled_simulation) === FjordSim.Simulations
+        @test parentmodule(FjordSim.Simulations.coupled_simulation) === FjordSim.Simulations
         # The per-piece boundary hook used to be called `boundary_conditions`, which collided with
-        # `Oceananigans.Fields.boundary_conditions` and so was the one hook FjordSim could not
-        # re-export. Renamed to `boundary_condition_sides`, it is exported like every other hook,
-        # and the old name is gone rather than deprecated.
-        @test :boundary_condition_sides ∈ names(FjordSim)
-        @test :boundary_conditions ∉ names(FjordSim)
+        # `Oceananigans.Fields.boundary_conditions`. Renamed to `boundary_condition_sides`, and the
+        # old name is gone rather than deprecated.
+        @test isdefined(FjordSim.BoundaryConditions, :boundary_condition_sides)
         @test !isdefined(FjordSim.BoundaryConditions, :boundary_conditions)
     end
 
@@ -281,12 +188,12 @@ include("utilities.jl")
             (; grid) = immersed_test_grid(joinpath(tmp, "bathymetry.nc"); size = (2, 3, 2))
             boundaries_config = test_boundaries_config(data_root = tmp)
             write_prepared_boundaries(
-                FjordSim.boundary_data_path(boundaries_config);
+                FjordSim.BoundaryData.boundary_data_path(boundaries_config);
                 size = (2, 3, 2),
                 edges = :south,
                 value = (name, index) -> name == "T" ? 6.0f0 : name == "S" ? 30.0f0 : 0.5f0,
             )
-            boundaries = FjordSim.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1))
+            boundaries = FjordSim.BoundaryData.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1))
 
             # Every part of the state gets its own condition. The predecessor of this config put a
             # closed wall on the normal velocity and opened only the tracers, so the barotropic `V`
@@ -335,9 +242,9 @@ include("utilities.jl")
             )
                 edge_config = test_boundaries_config(data_root = tmp, open_edges = edge)
                 write_prepared_boundaries(
-                    FjordSim.boundary_data_path(edge_config); size = (2, 3, 2), edges = edge,
+                    FjordSim.BoundaryData.boundary_data_path(edge_config); size = (2, 3, 2), edges = edge,
                 )
-                edge_boundaries = FjordSim.boundary_series(edge_config, grid, DateTime(2020, 1, 1))
+                edge_boundaries = FjordSim.BoundaryData.boundary_series(edge_config, grid, DateTime(2020, 1, 1))
                 edge_sides = boundary_condition_sides(
                     OpenLateralBoundaryFromData(inflow_timescale = 1day, outflow_timescale = 360days),
                     grid, NamedTuple(), edge_config, (:T,), edge_boundaries,
@@ -363,9 +270,9 @@ include("utilities.jl")
             all_edges = (:south, :north, :west, :east)
             open_ocean = test_boundaries_config(data_root = tmp, open_edges = all_edges)
             write_prepared_boundaries(
-                FjordSim.boundary_data_path(open_ocean); size = (2, 3, 2), edges = all_edges,
+                FjordSim.BoundaryData.boundary_data_path(open_ocean); size = (2, 3, 2), edges = all_edges,
             )
-            ocean_series = FjordSim.boundary_series(open_ocean, grid, DateTime(2020, 1, 1))
+            ocean_series = FjordSim.BoundaryData.boundary_series(open_ocean, grid, DateTime(2020, 1, 1))
             @test Set(keys(ocean_series)) == Set(all_edges)
 
             ocean_sides = boundary_condition_sides(
@@ -400,9 +307,9 @@ include("utilities.jl")
             # ...and so is a tracer the prepared file does not carry.
             boundaries_config = test_boundaries_config(data_root = tmp)
             write_prepared_boundaries(
-                FjordSim.boundary_data_path(boundaries_config); size = (2, 3, 2),
+                FjordSim.BoundaryData.boundary_data_path(boundaries_config); size = (2, 3, 2),
             )
-            boundaries = FjordSim.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1))
+            boundaries = FjordSim.BoundaryData.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1))
             @test_throws ErrorException boundary_condition_sides(
                 open_boundary, grid, NamedTuple(), nothing, (:T, :not_prepared), boundaries,
             )
@@ -557,10 +464,10 @@ include("utilities.jl")
             forcing_config = test_forcing_config(data_root = tmp)
             write_prepared_forcing(forcing_path(forcing_config); size = (2, 3, 2))
             write_prepared_boundaries(
-                FjordSim.boundary_data_path(boundaries_config); size = (2, 3, 2),
+                FjordSim.BoundaryData.boundary_data_path(boundaries_config); size = (2, 3, 2),
             )
             forcing = forcing_from_file(forcing_config; grid, tracers = (:T, :S))
-            boundaries = FjordSim.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1))
+            boundaries = FjordSim.BoundaryData.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1))
 
             # The surface and the bottom are separate pieces now, so each must contribute its own
             # half and nothing else — that separability is the whole point of the split.
@@ -579,7 +486,7 @@ include("utilities.jl")
 
             # Together they are still exactly what `top_bottom_boundary_conditions` returns, which
             # is what the "boundary condition signatures" testset asserts the shape of.
-            both = FjordSim.recursive_merge(surface, drag)
+            both = FjordSim.Utils.recursive_merge(surface, drag)
             @test Set(keys(both)) == Set((:u, :v, :T, :S))
             @test Set(keys(both.u)) == Set((:top, :bottom, :immersed))
             @test keys(both.T) == (:top,)
@@ -3727,7 +3634,7 @@ end
 
             # Reading it back gives reduced series on the model grid, keyed by the bare names, with
             # the dry column filled and the time axis zeroed at the instant the run starts.
-            all_series = FjordSim.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1))
+            all_series = FjordSim.BoundaryData.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1))
             @test keys(all_series) == (:south,)
             series = all_series.south
             @test Set(keys(series)) == Set((:T, :S, :u, :v, :eta, :ubar, :vbar))
@@ -3741,12 +3648,12 @@ end
             # An `Hour(1)` axis zeroed at a later instant is negative before it, which is what keeps
             # the boundary in phase with the forcing and the atmosphere rather than with its own
             # first record.
-            shifted = FjordSim.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1, 2))
+            shifted = FjordSim.BoundaryData.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1, 2))
             @test shifted.south.T.times == [-7200, -3600, 0]
 
             # A file written for one edge cannot be read as a config that opens another: the
             # variables would be missing, and the stated edge says so first.
-            @test_throws ErrorException FjordSim.boundary_series(
+            @test_throws ErrorException FjordSim.BoundaryData.boundary_series(
                 test_boundaries_config(data_root = tmp, open_edges = :north), grid, DateTime(2020, 1, 1),
             )
 
@@ -3784,7 +3691,7 @@ end
             )
             prepare_boundaries(grid, boundaries_config)
 
-            eta = FjordSim.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1)).south.eta
+            eta = FjordSim.BoundaryData.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1)).south.eta
             stored = NCDataset(ds -> Float64.(ds["south_eta"][1, :]), boundary_data_path(boundaries_config))
 
             # Ten seconds before 02:00 the clock's pair is records 2 and 3; the window starts at the
@@ -3862,7 +3769,7 @@ end
                 @test size(ds["south_ubar"]) == (5, length(dates))
             end
 
-            series = FjordSim.boundary_series(config, grid, DateTime(2020, 1, 1))
+            series = FjordSim.BoundaryData.boundary_series(config, grid, DateTime(2020, 1, 1))
             @test Set(keys(series)) == Set(edges)
             for edge in edges
                 @test Set(keys(getproperty(series, edge))) ==

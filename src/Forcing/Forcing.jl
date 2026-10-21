@@ -44,17 +44,8 @@ using ..Regridding:
     data_location,
     forcing_dimension_names
 
-export forcing_from_file,
-    forcing_path,
-    forcing_directory,
-    simulation_forcing,
-    forcing_date_range,
+export download_forcing,
     prepare_forcing,
-    download_forcing,
-    forcing_time_steps,
-    forcing_source_grid,
-    forcing_variable_names,
-    forcing_monthly_filename,
     NorKystConfig,
     NorKystHindcastConfig
 

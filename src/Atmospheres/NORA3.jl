@@ -1,7 +1,5 @@
 module NORA3
 
-export NORA3PrescribedAtmosphere, NORA3PrescribedRadiation, MultiYearNORA3
-
 using ...Utils: compute_faces, fjord_data_root
 using ...Configs: AbstractAtmosphereConfig
 using ..Atmospheres: atmosphere_path

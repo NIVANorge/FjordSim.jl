@@ -1,12 +1,7 @@
 module Bathymetry
 
 export DybdedataConfig,
-    bathymetry_path,
-    prepare_bathymetry,
-    bathymetry_dataset,
-    regrid_options,
-    smoothing_options,
-    geodatabase_path
+    prepare_bathymetry
 
 using NCDatasets
 using NumericalEarth

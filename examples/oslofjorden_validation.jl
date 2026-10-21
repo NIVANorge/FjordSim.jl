@@ -148,7 +148,9 @@
 # scope: FjordSim has no particle tracking.
 
 using FjordSim
-using FjordSim: AbstractBoundaryDataConfig, BoundaryData, Grids, Plotting
+using FjordSim: BoundaryData, Grids, Plotting
+using FjordSim.Bathymetry: geodatabase_path
+using FjordSim.Configs: AbstractBoundaryDataConfig
 using FjordSim.Validation: TIDAL_CONSTITUENTS
 using LinearAlgebra: qr
 using NCDatasets: NCDataset

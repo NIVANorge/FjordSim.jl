@@ -3,7 +3,6 @@ module Simulations
 export SimulationConfig,
     CoupledHydrostaticSimulation,
     SplitExplicitFreeSurfaceConfig,
-    free_surface,
     BoundarySponge,
     RiverMouthMixing,
     SnapshotWriter,
@@ -17,18 +16,8 @@ export SimulationConfig,
     FromForcing,
     FromInitialState,
     FromResults,
-    simulation_architecture,
-    model_tracers,
-    coupled_simulation,
-    attach_writer!,
-    attach_callback!,
-    attach_time_stepping!,
-    initial_time_step,
     build_simulation,
-    run_simulation,
-    model_closure,
-    run_tag,
-    results_path
+    run_simulation
 
 using Oceananigans
 using Oceananigans: fields

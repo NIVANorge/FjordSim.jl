@@ -10,18 +10,6 @@ module Rivers
 # cell of the same columns. `RiverTracerSource` says why that pair is what makes the budgets close.
 
 export add_rivers,
-    river_forcing_path,
-    download_rivers,
-    river_locations,
-    river_series,
-    river_discharge,
-    river_search_radius,
-    river_maximum_inflow_velocity,
-    river_forcing,
-    river_date_range,
-    read_river_columns,
-    combine_forcing,
-    RiverLocation,
     NVERiversConfig,
     NVERiver
 

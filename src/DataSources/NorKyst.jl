@@ -5,28 +5,6 @@ module NorKyst
 # it is listed, downloaded and written. Nothing here names a pipeline — a config type and the hooks
 # it implements belong to the adapter in that pipeline's directory.
 
-export NORKYST_CATALOG_URL,
-    NORKYST_OPENDAP_URL,
-    NORKYST_HOURLY_CATALOG_URL,
-    NORKYST_HOURLY_OPENDAP_URL,
-    NORKYST_HINDCAST_CATALOG_URL,
-    NORKYST_HINDCAST_OPENDAP_URL,
-    NORKYST_HINDCAST_BAROTROPIC_CATALOG_URL,
-    NORKYST_HINDCAST_BAROTROPIC_OPENDAP_URL,
-    NORKYST_VARIABLE_NAMES,
-    NORKYST_PROJECTION_VARIABLE,
-    norkyst_source_grid,
-    list_opendap_files,
-    list_hindcast_files,
-    NorKystSubset,
-    subset_ranges,
-    time_length,
-    time_dimension,
-    define_output_file,
-    write_parameter_chunk!,
-    write_time_dependent_coordinates!,
-    decoded_attributes
-
 using Downloads
 using NCDatasets
 

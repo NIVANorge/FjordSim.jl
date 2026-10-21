@@ -46,6 +46,14 @@ option and is required. From the REPL each step is a function of the same name o
   bathymetry knob does nothing until the listed prepare steps are re-run — `simulation_grid` reads
   `bathymetry.nc`, not the config. Lists in `docs/running.md`.
 
+## Branches
+
+- **Never change code on `main`.** Before the first edit for a task, check the current branch
+  (`git branch --show-current`). If it is `main`, create a branch named for the task
+  (e.g. `river-mouth-salinity`) and switch to it with `git switch -c <name>`; every change for the
+  task goes there.
+- When the work is ready, ask before merging the branch back into `main` — never merge on your own.
+
 ## Architecture
 
 FjordSim wraps [Oceananigans.jl](https://github.com/CliMA/Oceananigans.jl) and

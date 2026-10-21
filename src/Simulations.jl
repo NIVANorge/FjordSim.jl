@@ -25,7 +25,10 @@ export SimulationConfig,
     attach_time_stepping!,
     initial_time_step,
     build_simulation,
-    run_simulation
+    run_simulation,
+    model_closure,
+    run_tag,
+    results_path
 
 using Oceananigans
 using Oceananigans: fields
@@ -36,11 +39,10 @@ using Oceananigans.Grids: x_domain, y_domain, node, λnodes, φnodes, znodes, Ce
 using Oceananigans.Fields: location
 using Oceananigans.AbstractOperations: @at
 using NumericalEarth
-using Dates: DateTime, Millisecond, Second
+using Dates: DateTime, Millisecond, Second, format, now
 using Printf: @sprintf
 using NCDatasets
 
-using ..Configs
 using ..Configs:
     AbstractSimulationConfig,
     AbstractCoupledSimulationConfig,
@@ -52,23 +54,16 @@ using ..Configs:
     AbstractForcingConfig,
     AbstractInitialStateConfig,
     AbstractRiverConfig,
-    FjordConfig,
-    bathymetry_path,
-    forcing_path,
-    initial_state_path,
-    river_forcing_path,
-    results_path,
-    run_tag,
-    simulation_grid,
-    open_edges,
-    model_closure
+    FjordConfig
 using ..Utils: progress, cell_advection_timescale_coupled_model
+using ..Grids: simulation_grid, open_edges
 using ..Atmospheres: prescribed_atmosphere, prescribed_radiation, atmosphere_date_range
 using ..Regridding: interpolation_architecture, column_wet_levels
-using ..Forcing: simulation_forcing, forcing_date_range
-using ..InitialState: INITIAL_STATE_DATE_ATTRIBUTE
-using ..Rivers: river_forcing, river_date_range, read_river_columns, combine_forcing
-using ..Boundaries: boundary_series, boundary_date_range
+using ..Bathymetry: bathymetry_path
+using ..Forcing: simulation_forcing, forcing_date_range, forcing_path
+using ..InitialState: INITIAL_STATE_DATE_ATTRIBUTE, initial_state_path
+using ..Rivers: river_forcing, river_date_range, read_river_columns, combine_forcing, river_forcing_path
+using ..BoundaryData: boundary_series, boundary_date_range
 using ..BoundaryConditions: field_boundary_conditions
 
 """
@@ -93,6 +88,18 @@ Build the `SplitExplicitFreeSurface` `coupled_simulation` passes to `Hydrostatic
 """
 free_surface(config::SplitExplicitFreeSurfaceConfig, grid) =
     SplitExplicitFreeSurface(grid, cfl = config.cfl)
+
+"""
+    model_closure(closure, grid, boundary_config, river_columns)
+
+The closure `coupled_simulation` gives `HydrostaticFreeSurfaceModel`.
+
+The fallback is the identity, so anything a setup already writes — a single Oceananigans closure, or
+a tuple of them — passes through unchanged. An `AbstractClosureConfig` overloads it to build one
+from the grid, the setup's open-boundary data config, and `river_columns` — every column a river
+enters through, as `(; target_i, target_j)`, or `nothing` for a setup with no rivers.
+"""
+model_closure(closure, grid, boundary_config, river_columns) = closure
 
 """
     BoundarySponge(; base, width_cells, viscosity, diffusivity)
@@ -268,7 +275,7 @@ coordinates, so it needs no field, no allocation and no architecture — the sam
 and GPU. `discrete_form = true` because that is the only form `ScalarDiffusivity` passes
 `parameters` to; see `sponge_viscosity`.
 """
-function Configs.model_closure(config::BoundarySponge, grid, boundary_config, river_columns)
+function model_closure(config::BoundarySponge, grid, boundary_config, river_columns)
     edges = open_edges(boundary_config)
     isempty(edges) && return config.base
 
@@ -329,7 +336,7 @@ RiverMouthMixing(; base, diffusivity, mixing_depth) =
 `config.base`'s closure with NumericalEarth's `river_mouth_vertical_diffusivity` appended over
 `river_columns`. An error for a setup with no rivers, which has no columns to mix.
 """
-function Configs.model_closure(config::RiverMouthMixing, grid, boundary_config, river_columns)
+function model_closure(config::RiverMouthMixing, grid, boundary_config, river_columns)
     isnothing(river_columns) && error(
         "RiverMouthMixing mixes the columns the rivers enter through, but this setup names no " *
         "rivers. Name a `river_config` on the `FjordConfig`, or drop RiverMouthMixing.",
@@ -517,6 +524,77 @@ condition per tracer, and `resolve_initial_conditions` reads one state variable 
 config what it simulates rather than being told a second time.
 """
 model_tracers(model::CoupledHydrostaticSimulation) = model.tracers
+
+"""
+The wall-clock instant this process started, as the fragment `run_tag` names a run's files with.
+
+Filled in by `__init__` rather than by a `const` initialized with `now()`, which would freeze the
+moment the package was precompiled into every later run.
+"""
+const LAUNCH_TAG = Ref("")
+
+__init__() = LAUNCH_TAG[] = format(now(), "yyyymmddTHHMMSS")
+
+"""
+    run_tag(config)
+
+The run's identity as a filename fragment: the wall-clock instant this process started, as
+`yyyymmddTHHMMSS`.
+
+The launch instant rather than the simulated `start_date`, so it distinguishes *invocations* and a
+re-run cannot overwrite an earlier one's output. Which simulated window a file covers is recorded in
+the snapshot's `start_date` global attribute rather than in its name. Seconds are in the format so a
+crash and an immediate relaunch do not collide.
+
+Constant for the life of the process, so `results_path`, `FjordSim.CLI.log_path` and the checkpointer
+all agree however often they ask. `config` is taken only so a simulation-config subtype can name its
+runs differently.
+"""
+run_tag(::AbstractSimulationConfig) = LAUNCH_TAG[]
+
+"""
+    results_path(writer, config)
+    results_path(writer, config, loop)
+
+Resolve `writer.output_file` against `config.results_root`: the file that writer writes to. Results
+are rooted separately from the input data, which is why this reads `results_root` rather than
+`data_root`. An absolute `output_file` keeps its own directory.
+
+`run_tag(config)` is inserted before the extension so separate runs do not overwrite each other, and
+the three-argument form appends the loop index on top of it, which is how a looped run gives each
+repetition its own file.
+
+The filename is the *writer's* rather than the simulation config's, so a setup can name several
+outputs at different intervals. A writer that names no product file has no `output_file` and gets an
+error saying so, rather than a `getproperty` failure — see `AbstractWriterConfig`.
+"""
+results_path(writer::AbstractWriterConfig, config::AbstractSimulationConfig) =
+    tagged_path(writer, config, run_tag(config))
+
+results_path(writer::AbstractWriterConfig, config::AbstractSimulationConfig, loop::Int) =
+    tagged_path(writer, config, string(run_tag(config), "_loop", lpad(loop, 2, '0')))
+
+"""
+    tagged_path(writer, config, tag)
+
+`writer.output_file` with `_tag` inserted before its extension, resolved against `results_root`
+unless it is absolute — so an absolute `output_file` still relocates just that file, and the tag
+lands on the basename either way.
+"""
+function tagged_path(writer::AbstractWriterConfig, config::AbstractSimulationConfig, tag)
+    hasproperty(writer, :output_file) || throw(
+        ArgumentError(
+            "$(typeof(writer)) names no `output_file`, so it has no `results_path`. Only a writer " *
+            "whose `output_path_trait` is `NamesOutputFile` resolves to one.",
+        ),
+    )
+
+    directory, file = splitdir(writer.output_file)
+    stem, extension = splitext(file)
+    tagged = string(stem, "_", tag, extension)
+    isabspath(writer.output_file) && return joinpath(directory, tagged)
+    return joinpath(config.results_root, directory, tagged)
+end
 
 """
     SnapshotWriter(; name, output_file, variables, interval, overwrite_existing)

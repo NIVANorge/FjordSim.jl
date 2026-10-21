@@ -7,12 +7,12 @@ Every pipeline is a generic function on the config supertype plus a small set of
 source by subtyping and overloading the hooks — never by editing the generic function. The
 adapter files (`src/Bathymetry/geonorge.jl`, `src/Forcing/norkyst.jl`,
 `src/InitialState/norkyst_initial_state.jl`, `src/Rivers/nve_rivers.jl`,
-`src/Boundaries/norkyst_boundaries.jl`) are the templates.
+`src/Boundaries/BoundaryData/norkyst_boundaries.jl`) are the templates.
 
 Where an adapter's code goes:
 
 - **The module file holds only what every source of the pipeline shares.** `Forcing.jl`,
-  `Boundaries.jl` and the rest import `Configs`, `Regridding`, `Utils` and `Plotting`, never a
+  `BoundaryData.jl` and the rest import `Configs`, `Grids`, `Regridding`, `Utils` and `Plotting`, never a
   dataset. Everything one dataset needs — its config type, its hook methods, its download, and the
   `using` lines for them — goes in the adapter file the module `include`s at its end.
 - **A dataset more than one pipeline reads gets its own module in `src/DataSources/`**, holding what
@@ -29,8 +29,8 @@ Grid — `AbstractGridConfig`:
 | `domain_grid(config, architecture)` → the bare grid, no bathymetry | yes |
 | `simulation_grid(config, bathymetry_file, architecture)` → the grid the simulation runs on | yes |
 
-Both are declared in `Configs`, since `Bathymetry`, `Atmospheres`, `Forcing`, `Rivers` and
-`Boundaries` all call `domain_grid` and are included before `Grids`. Neither names a result type, so a grid that is not a
+Both are declared in `Grids`, which is included before every pipeline, since `Bathymetry`,
+`Atmospheres`, `Forcing`, `Rivers` and `BoundaryData` all call `domain_grid`. Neither names a result type, so a grid that is not a
 `LatitudeLongitudeGrid` can implement them.
 
 Bathymetry — `AbstractBathymetryConfig`, consumed by `prepare_bathymetry`:

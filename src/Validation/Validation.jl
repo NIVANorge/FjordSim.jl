@@ -75,7 +75,8 @@ using JLD2
 using NCDatasets
 using Statistics: cor, mean, std, var
 
-using ..Configs: AbstractSimulationConfig, FjordConfig, coverage_window
+using ..Configs: AbstractSimulationConfig, FjordConfig
+using ..Utils: coverage_window
 using ..Simulations:
     Station,
     StationWriter,

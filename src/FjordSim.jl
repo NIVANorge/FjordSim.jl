@@ -210,8 +210,11 @@ using Adapt
 
 include("Configs.jl")
 include("Utils.jl")
+# Grids comes before every pipeline: each builds its target grid with `domain_grid`, and most read
+# the edge vocabulary.
+include("Grids.jl")
 # Plotting comes before the pipelines that call it: their setup-level drivers plot as their last
-# step, and Plotting itself only needs Configs.
+# step, and Plotting itself only needs Configs and Grids.
 include("Plotting.jl")
 include("Bathymetry/Bathymetry.jl")
 include("Regridding.jl")
@@ -220,10 +223,8 @@ include("DataSources/NorKyst.jl")
 include("Forcing/Forcing.jl")
 include("InitialState/InitialState.jl")
 include("Rivers/Rivers.jl")
-include("BoundaryConditions.jl")
-include("Boundaries/Boundaries.jl")
-include("Grids.jl")
-# Simulations reads the grid back from the processed bathymetry, so it comes after Grids.
+include("Boundaries/BoundaryConditions/BoundaryConditions.jl")
+include("Boundaries/BoundaryData/BoundaryData.jl")
 include("Simulations.jl")
 include("Validation/Validation.jl")
 # CLI names every driver, so it comes last.
@@ -231,6 +232,7 @@ include("CLI.jl")
 
 using .Configs
 using .Utils
+using .Grids
 using .Plotting
 using .Bathymetry
 using .Regridding
@@ -239,8 +241,7 @@ using .Forcing
 using .InitialState
 using .Rivers
 using .BoundaryConditions
-using .Boundaries
-using .Grids
+using .BoundaryData
 using .Simulations
 using .Validation
 using .CLI

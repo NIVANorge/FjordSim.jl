@@ -1,6 +1,5 @@
 # The open lateral boundary condition: an `AbstractBoundaryConditionConfig` piece whose exterior
-# state is the prepared boundary series this module reads. The generic hooks and the other pieces
-# are `BoundaryConditions`'.
+# state is the prepared boundary series `FjordSim.BoundaryData.boundary_series` reads.
 
 using Oceananigans.BoundaryConditions:
     GravityWaveRadiationBoundaryCondition,
@@ -8,10 +7,9 @@ using Oceananigans.BoundaryConditions:
     NormalRadiation,
     ValueBoundaryCondition
 using Oceananigans.Grids: column_depthᶜᶠᵃ, column_depthᶠᶜᵃ
+using Oceananigans.Units: Time
 
-using ..Configs: AbstractBoundaryConditionConfig
-using ..Utils: recursive_merge
-using ..BoundaryConditions: BoundaryConditions
+using ..Grids: open_edges, LATERAL_EDGES
 
 #####
 ##### The open lateral boundary
@@ -59,8 +57,8 @@ boundary_radiation_scheme(config) = NormalRadiation(;
 ##### One function per edge rather than one function branching on an index: the boundary node is a
 ##### different index of a different operator on each side.
 #####
-##### No land guard: `FjordSim.Boundaries.fill_boundary_gaps!` has already filled every dry boundary
-##### cell from its nearest wet neighbour, so a boundary series is finite everywhere. That is the
+##### No land guard: `FjordSim.BoundaryData.fill_boundary_gaps!` has already filled every dry
+##### boundary cell from its nearest wet neighbour, so a boundary series is finite everywhere. That is the
 ##### one place the fill can live — see that function for why a sentinel reaching a scheme is not
 ##### hypothetical.
 
@@ -133,7 +131,7 @@ end
 ##### The four groups, one method per edge each
 #####
 ##### Each takes *one* edge's series — the `(; T, S, u, v, eta, ubar, vbar)` group
-##### `FjordSim.Boundaries.boundary_series` returns under that edge's key, not the whole per-edge
+##### `FjordSim.BoundaryData.boundary_series` returns under that edge's key, not the whole per-edge
 ##### collection. `open_edge_boundary_conditions` is what unwraps a group per edge and merges the
 ##### four; these functions never see a second side.
 
@@ -297,7 +295,7 @@ first version of this config, `OpenLateralBoundary`, put `NormalFlowBoundaryCond
 normal velocity, which is a closed wall, so only the tracers there were ever open.
 
 The values come from the boundary data config a setup names on its `FjordConfig`, read by
-`FjordSim.Boundaries.boundary_series` and handed in by `build_simulation` — hourly NorKyst for the
+`FjordSim.BoundaryData.boundary_series` and handed in by `build_simulation` — hourly NorKyst for the
 setups in `examples/`, because a Flather boundary without a tide is not worth prescribing and the interior
 forcing is daily means.
 
@@ -324,7 +322,7 @@ end
 OpenLateralBoundaryFromData(; inflow_timescale, outflow_timescale) =
     OpenLateralBoundaryFromData(Float64(inflow_timescale), Float64(outflow_timescale))
 
-function BoundaryConditions.boundary_condition_sides(
+function boundary_condition_sides(
     config::OpenLateralBoundaryFromData,
     grid,
     forcing,

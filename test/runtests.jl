@@ -1,6 +1,7 @@
 using FjordSim
 using FjordSim.Bathymetry: write_bathymetry_file
-using FjordSim.Configs: open_edges, coverage_window
+using FjordSim.Grids: open_edges
+using FjordSim.Utils: coverage_window
 using FjordSim: Rivers
 using Dates: Date, DateFormat, DateTime, Day, Hour, Millisecond, Minute, Month
 using JLD2
@@ -190,7 +191,7 @@ include("utilities.jl")
             (:Utils, :extract_z_faces),
             (:Utils, :netcdf_to_jld2),
             (:Utils, :save_fts),
-            (:Configs, :fjord_config),
+            (:CLI, :fjord_config),
             (:Simulations, :SimulationConfig),
             (:Simulations, :run_simulation),
             # Moved out of FjordSim.jl into Simulations; still re-exported, so the entry above in
@@ -351,8 +352,8 @@ include("utilities.jl")
             @test_throws ArgumentError test_boundaries_config(data_root = tmp, open_edges = :middle)
             # ...and the `Val` fallback behind that check is itself an `ArgumentError` rather than a
             # missing method, which is what makes an out-of-tree caller's mistake legible.
-            @test_throws ArgumentError FjordSim.Boundaries.boundary_along_axis(Val(:middle))
-            @test_throws ArgumentError FjordSim.Boundaries.open_normal_velocity_boundary_conditions(
+            @test_throws ArgumentError FjordSim.BoundaryData.boundary_along_axis(Val(:middle))
+            @test_throws ArgumentError FjordSim.BoundaryConditions.open_normal_velocity_boundary_conditions(
                 Val(:middle), boundaries.south, nothing,
             )
 
@@ -1011,7 +1012,7 @@ end
         # inherits the run tag, the loop-indexed variant and the coverage window for free. The
         # *filename* is the writer's, so this also proves a built-in writer type composes with a
         # foreign simulation config.
-        @test run_tag(config.simulation_config) == FjordSim.Configs.LAUNCH_TAG[]
+        @test run_tag(config.simulation_config) == FjordSim.Simulations.LAUNCH_TAG[]
         column_writer = test_snapshot_writer(output_file = "column_snapshots.nc")
         with_run_tag() do
             @test results_path(column_writer, config.simulation_config) ==
@@ -1351,7 +1352,7 @@ end
                 @test FjordSim.main(["run_simulation", "--config", config_file]) == 1
                 @test isempty(filter(name -> startswith(name, "fjordsim"), readdir(tmp)))
 
-                log_file = joinpath(results, "fjordsim_$(FjordSim.Configs.LAUNCH_TAG[]).log")
+                log_file = joinpath(results, "fjordsim_$(FjordSim.Simulations.LAUNCH_TAG[]).log")
                 logged = read(log_file, String)
                 @test occursin("Processed bathymetry", logged)
                 @test occursin("Stacktrace", logged)
@@ -3496,18 +3497,18 @@ end
     end
 end
 
-@testset "Boundaries" begin
+@testset "BoundaryData" begin
     @testset "boundary preparation helpers" begin
-        boundary_dimension_names = FjordSim.Boundaries.boundary_dimension_names
-        boundary_location = FjordSim.Boundaries.boundary_location
-        boundary_variable_name = FjordSim.Boundaries.boundary_variable_name
-        boundary_mask_slice = FjordSim.Boundaries.boundary_mask_slice
-        boundary_domain = FjordSim.Boundaries.boundary_domain
-        fill_boundary_gaps! = FjordSim.Boundaries.fill_boundary_gaps!
-        hourly_time_steps = FjordSim.Boundaries.hourly_time_steps
+        boundary_dimension_names = FjordSim.BoundaryData.boundary_dimension_names
+        boundary_location = FjordSim.BoundaryData.boundary_location
+        boundary_variable_name = FjordSim.BoundaryData.boundary_variable_name
+        boundary_mask_slice = FjordSim.BoundaryData.boundary_mask_slice
+        boundary_domain = FjordSim.BoundaryData.boundary_domain
+        fill_boundary_gaps! = FjordSim.BoundaryData.fill_boundary_gaps!
+        hourly_time_steps = FjordSim.BoundaryData.hourly_time_steps
         SourceRecord = FjordSim.Regridding.SourceRecord
 
-        boundary_source_slab = FjordSim.Boundaries.boundary_source_slab
+        boundary_source_slab = FjordSim.BoundaryData.boundary_source_slab
         blended_slab = FjordSim.Regridding.blended_slab
 
         # `ubar`/`vbar` are the one pair NorKyst publishes along its own curvilinear axes rather than
@@ -3520,7 +3521,7 @@ end
             stub = write_hourly_source_stub(
                 joinpath(
                     boundary_data_directory(config),
-                    FjordSim.Boundaries.boundary_monthly_filename(config, 2020, 1),
+                    FjordSim.BoundaryData.boundary_monthly_filename(config, 2020, 1),
                 );
                 dates,
                 longitude = (10.0, 11.0),
@@ -3678,7 +3679,7 @@ end
             write_hourly_source_stub(
                 joinpath(
                     boundary_data_directory(boundaries_config),
-                    FjordSim.Boundaries.boundary_monthly_filename(boundaries_config, 2020, 1),
+                    FjordSim.BoundaryData.boundary_monthly_filename(boundaries_config, 2020, 1),
                 );
                 dates,
                 # Wider than the target grid, so every target node has source cells around it.
@@ -3750,7 +3751,7 @@ end
             )
 
             # The plot reads both panel shapes out of the same file, taking the side from the config.
-            @test isfile(plot_boundaries(boundaries_config))
+            @test isfile(plot_boundaries(boundaries_config, boundary_data_path(boundaries_config)))
         end
     end
 
@@ -3775,7 +3776,7 @@ end
             write_hourly_source_stub(
                 joinpath(
                     boundary_data_directory(boundaries_config),
-                    FjordSim.Boundaries.boundary_monthly_filename(boundaries_config, 2020, 1),
+                    FjordSim.BoundaryData.boundary_monthly_filename(boundaries_config, 2020, 1),
                 );
                 dates,
                 longitude = (longitude[1] - 0.2, longitude[2] + 0.2),
@@ -3825,7 +3826,7 @@ end
             write_hourly_source_stub(
                 joinpath(
                     boundary_data_directory(config),
-                    FjordSim.Boundaries.boundary_monthly_filename(config, 2020, 1),
+                    FjordSim.BoundaryData.boundary_monthly_filename(config, 2020, 1),
                 );
                 dates,
                 longitude = (longitude[1] - 0.2, longitude[2] + 0.2),
@@ -3834,7 +3835,7 @@ end
 
             # The download box is the bounding box of the four bands, which for opposite edges is the
             # whole domain — the thin-band saving is a single-edge one, and this is where that shows.
-            box_longitude, box_latitude = FjordSim.Boundaries.boundary_domain(edges, grid, 0.05)
+            box_longitude, box_latitude = FjordSim.BoundaryData.boundary_domain(edges, grid, 0.05)
             @test box_longitude == (longitude[1] - 0.05, longitude[2] + 0.05)
             @test box_latitude == (latitude[1] - 0.05, latitude[2] + 0.05)
 
@@ -3880,7 +3881,7 @@ end
             @test any(v_mask[:, 1, :]) && any(v_mask[:, 4, :])
 
             # One plot, one block of rows per edge.
-            @test isfile(plot_boundaries(config))
+            @test isfile(plot_boundaries(config, boundary_data_path(config)))
         end
     end
 end
@@ -4440,9 +4441,9 @@ end
         # `start_date` — which used to be the tag — leaves it alone. It is constant for the life of the
         # process, since `results_path`, `log_path` and the checkpointer all have to agree.
         @test occursin(r"^\d{8}T\d{6}$", run_tag(config))
-        @test run_tag(config) == FjordSim.Configs.LAUNCH_TAG[]
+        @test run_tag(config) == FjordSim.Simulations.LAUNCH_TAG[]
         @test run_tag(test_simulation_config(start_date = DateTime(1999, 12, 31))) ==
-              FjordSim.Configs.LAUNCH_TAG[]
+              FjordSim.Simulations.LAUNCH_TAG[]
 
         # The tag is inserted before the extension either way, and the loop index goes on top of it so a
         # looped run gives each repetition its own file. The filename is the writer's; only the root
@@ -4516,7 +4517,7 @@ end
 
         # Which edge the domain is open on is stated once, on the open-boundary data config, and read
         # from there by everything that acts on it — see the "open lateral boundary" testset for the
-        # per-edge dispatch. It is a `Configs` accessor rather than a pair of one-liners reaching
+        # per-edge dispatch. It is a `Grids` accessor rather than a pair of one-liners reaching
         # through the forcing config, which is what a `boundary_config` independent of forcing needs.
         @test open_edges(test_boundaries_config(open_edges = :west)) == [:west]
         @test isempty(open_edges(nothing))
@@ -6037,14 +6038,14 @@ end
         )
 
         @test config isa FjordSim.Configs.AbstractBoundaryDataConfig
-        @test config isa FjordSim.Boundaries.AbstractNorKystBoundariesConfig
+        @test config isa FjordSim.BoundaryData.AbstractNorKystBoundariesConfig
         @test NorKystBoundariesConfig(data_root = "/x", output_directory = "y",
                                       open_edges = :south, parameters = String[], years = Int[]) isa
-              FjordSim.Boundaries.AbstractNorKystBoundariesConfig
+              FjordSim.BoundaryData.AbstractNorKystBoundariesConfig
 
         @test open_edges(config) == [:south]
         # Not exported, unlike its forcing counterpart; reached through the module.
-        @test FjordSim.Boundaries.boundary_monthly_filename(config, 2014, 9) ==
+        @test FjordSim.BoundaryData.boundary_monthly_filename(config, 2014, 9) ==
               "Norkyst-v3_boundary_201409.nc"
         @test occursin("zdepth", config.opendap_url)
         # The barotropic pair comes from the sibling collection, which is stated separately rather
@@ -6061,7 +6062,7 @@ end
         @test names["temperature"] == "T"
         # ...and unlike the operational collection, it needs no rotation, so it defines no
         # `boundary_source_slab` method of its own.
-        @test FjordSim.Boundaries.NORKYST_HINDCAST_BAROTROPIC_VARIABLES ==
+        @test FjordSim.BoundaryData.NORKYST_HINDCAST_BAROTROPIC_VARIABLES ==
               ("ubar_eastward", "vbar_northward")
 
         @test_throws ArgumentError NorKystHindcastBoundariesConfig(

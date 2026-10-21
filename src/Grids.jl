@@ -1,6 +1,13 @@
 module Grids
 
-export ImmersedBoundaryGrid, EvenGrid, domain_grid, simulation_grid
+export ImmersedBoundaryGrid,
+    EvenGrid,
+    domain_grid,
+    simulation_grid,
+    LATERAL_EDGES,
+    validate_open_edge,
+    lateral_edges,
+    open_edges
 
 using Oceananigans
 using Oceananigans.BoundaryConditions: fill_halo_regions!
@@ -9,8 +16,96 @@ using NCDatasets
 import Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid
 import Oceananigans: LatitudeLongitudeGrid
 using ..Utils: compute_faces
-using ..Configs
-using ..Configs: AbstractGridConfig, domain_grid, simulation_grid
+using ..Configs: AbstractGridConfig, AbstractBoundaryDataConfig
+
+"""
+    domain_grid(config::AbstractGridConfig, architecture)
+
+The bare grid a config describes, with no bathymetry immersed into it.
+
+The geometry every `prepare_*` pipeline regrids onto, and the underlying grid `simulation_grid`
+wraps. Declared with no method, so a subtype that does not implement it fails as a `MethodError`
+naming the hook rather than silently inheriting some other config's idea of a grid.
+
+Named for the role rather than for a result type — it replaced a method on
+`Oceananigans.LatitudeLongitudeGrid`, under which a config describing a rectilinear, single-column
+or curvilinear grid could not have implemented the hook without lying about what it returns.
+"""
+function domain_grid end
+
+"""
+    simulation_grid(config::AbstractGridConfig, bathymetry_file, architecture)
+
+The grid the simulation runs on: `domain_grid`'s geometry with the processed bathymetry immersed
+into it.
+
+Separate from `domain_grid` because the two are needed at different moments and from different
+inputs — the prepare steps have no bathymetry file yet, while `build_simulation` must read back the
+very grid the bathymetry was written on.
+"""
+function simulation_grid end
+
+"""
+The four lateral boundaries a regional domain can be open on, in the order every error message
+lists them.
+
+`Bathymetry` clears land along the open ones, `Regridding` restores their velocity face rows,
+`BoundaryData` regrids along them, and every `Val{edge}` dispatch of `OpenLateralBoundaryFromData`
+falls back to an `ArgumentError` naming this tuple.
+"""
+const LATERAL_EDGES = (:south, :north, :west, :east)
+
+"""
+    validate_open_edge(edge)
+
+Return `edge` if it names a lateral boundary, else throw. Checked up front so a typo fails
+before any regridding rather than deep inside the variable loop.
+
+Checked here rather than in each pipeline so one typo produces one error message wherever it is
+written — in a boundary data config's `open_edges`, or in the `edges` a prepare step is handed.
+"""
+function validate_open_edge(edge)
+    edge in LATERAL_EDGES ||
+        throw(ArgumentError("open_edge must be one of $LATERAL_EDGES, got :$edge"))
+    return edge
+end
+
+"""
+    lateral_edges(edges)
+
+Normalize whatever a caller names its open edges as into a validated `Vector{Symbol}`: one `Symbol`,
+an iterable of them, or `nothing` for none.
+
+Every consumer iterates, so a domain open on one edge, on all four, or on none is the same code path
+rather than a scalar case and a plural one. Duplicates are rejected — a repeated edge would prepare
+and write the same variables twice, and mean nothing the second time.
+"""
+lateral_edges(::Nothing) = Symbol[]
+lateral_edges(edge::Symbol) = [validate_open_edge(edge)]
+
+function lateral_edges(edges)
+    normalized = Symbol[validate_open_edge(edge) for edge in edges]
+    allunique(normalized) ||
+        throw(ArgumentError("open_edges names an edge more than once: $normalized"))
+    return normalized
+end
+
+"""
+    open_edges(config)
+
+Which lateral boundaries the domain is open on, as named by an `AbstractBoundaryDataConfig` — a
+`Vector{Symbol}`, empty for a setup naming no open-boundary data, whose lateral boundaries are
+therefore all closed walls.
+
+Always a collection, never a bare `Symbol`, so a domain open on one edge, on all four, or on none is
+one code path in every consumer rather than a scalar case and a plural one. A built-in config's
+keyword constructor accepts either shape and normalizes with `lateral_edges`.
+
+Every consumer reads it through this accessor, so the edges are stated in exactly one place — the
+config that describes the boundary.
+"""
+open_edges(::Nothing) = Symbol[]
+open_edges(config::AbstractBoundaryDataConfig) = config.open_edges
 
 """
     EvenGrid
@@ -46,16 +141,16 @@ end
 """
     domain_grid(config::EvenGrid, architecture)
 
-The `LatitudeLongitudeGrid` an `EvenGrid` describes. See `Configs.domain_grid`.
+The `LatitudeLongitudeGrid` an `EvenGrid` describes.
 """
-Configs.domain_grid(config::EvenGrid, architecture) = LatitudeLongitudeGrid(architecture, config)
+domain_grid(config::EvenGrid, architecture) = LatitudeLongitudeGrid(architecture, config)
 
 """
     simulation_grid(config::EvenGrid, bathymetry_file, architecture)
 
-The `ImmersedBoundaryGrid` an `EvenGrid` runs on. See `Configs.simulation_grid`.
+The `ImmersedBoundaryGrid` an `EvenGrid` runs on.
 """
-Configs.simulation_grid(config::EvenGrid, bathymetry_file, architecture) =
+simulation_grid(config::EvenGrid, bathymetry_file, architecture) =
     ImmersedBoundaryGrid(bathymetry_file, architecture, config.halo, config.float_type)
 
 function LatitudeLongitudeGrid(architecture, config::EvenGrid)

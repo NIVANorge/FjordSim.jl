@@ -49,7 +49,7 @@ using ArchGDAL
 using CUDA  # needed for GPU() to be usable, and for CUDA.functional()
 using NCDatasets
 
-using ..Configs: lateral_edges
+using ..Grids: lateral_edges
 
 function native_times_to_seconds(native_times, start_time = native_times[1])
     return [Second(t - start_time).value for t in native_times]
@@ -71,7 +71,7 @@ Where `prepare_forcing` and `prepare_boundaries` run their interpolation kernel,
 Only the kernel moves; `target_grid` and the masks stay on the CPU because building them walks
 `peripheral_node` cell by cell.
 
-`Forcing` and `Boundaries` each add the method reading their config's `architecture` field.
+`Forcing` and `BoundaryData` each add the method reading their config's `architecture` field.
 `Simulations.simulation_architecture` also reuses the `Val` methods below, which is why the
 resolution and the field read are separate methods rather than one function.
 """

@@ -1,6 +1,8 @@
 module Atmospheres
 
 export prepare_atmosphere,
+    atmosphere_path,
+    atmosphere_directory,
     download_atmosphere,
     atmosphere_time_steps,
     atmosphere_source_grid,
@@ -26,12 +28,23 @@ using NumericalEarth.DataWrangling: first_date, last_date
 
 using ..Configs:
     AbstractAtmosphereConfig,
-    FjordConfig,
-    atmosphere_path,
-    atmosphere_directory,
-    coverage_window,
-    domain_grid
-using ..Plotting: plot_atmosphere
+    FjordConfig
+using ..Utils: coverage_window
+using ..Grids: domain_grid
+using ..Plotting: Plotting, plot_atmosphere
+
+"""
+    atmosphere_path(config)
+    atmosphere_directory(config)
+
+Resolve `config.output_file` and `config.output_directory` against `config.data_root`: the file
+`prepare_atmosphere` writes, and the directory an atmosphere dataset downloads its intermediate files
+into. Defined for every `AbstractAtmosphereConfig`, so a new dataset inherits path resolution; one
+without those fields overloads them. An absolute field is returned unchanged.
+"""
+atmosphere_path(config::AbstractAtmosphereConfig) = joinpath(config.data_root, config.output_file)
+atmosphere_directory(config::AbstractAtmosphereConfig) = joinpath(config.data_root, config.output_directory)
+Plotting.plot_path(config::AbstractAtmosphereConfig) = joinpath(config.data_root, config.plot_file)
 
 # Compression level for the prepared file, matching the forcing writer.
 const ATMOSPHERE_DEFLATE_LEVEL = 5
@@ -443,7 +456,7 @@ function prepare_atmosphere(config::FjordConfig)
         atmosphere_config;
         coverage = coverage_window(config.simulation_config),
     )
-    plot_file = plot_atmosphere(atmosphere_config)
+    plot_file = plot_atmosphere(atmosphere_config, atmosphere_path(atmosphere_config))
 
     @info "Prepared variables: $(join(result.variables, ", "))"
     @info "Time range: $(first(result.times)) to $(last(result.times)) ($(length(result.times)) steps)"

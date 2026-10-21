@@ -148,7 +148,7 @@
 # scope: FjordSim has no particle tracking.
 
 using FjordSim
-using FjordSim: AbstractBoundaryDataConfig, Boundaries, Configs
+using FjordSim: AbstractBoundaryDataConfig, BoundaryData, Grids, Plotting
 using FjordSim.Validation: TIDAL_CONSTITUENTS
 using LinearAlgebra: qr
 using NCDatasets: NCDataset
@@ -385,24 +385,24 @@ struct TideCorrectedBoundaries{C <: AbstractBoundaryDataConfig} <: AbstractBound
     gains::Vector{TidalGain}
 end
 
-Configs.boundary_data_path(config::TideCorrectedBoundaries) =
-    Configs.boundary_data_path(config.source)
-Configs.boundary_data_directory(config::TideCorrectedBoundaries) =
-    Configs.boundary_data_directory(config.source)
-Configs.plot_path(config::TideCorrectedBoundaries) = Configs.plot_path(config.source)
-Configs.open_edges(config::TideCorrectedBoundaries) = Configs.open_edges(config.source)
-Boundaries.boundary_variable_names(config::TideCorrectedBoundaries) =
-    Boundaries.boundary_variable_names(config.source)
-Boundaries.download_boundaries(target_grid, config::TideCorrectedBoundaries) =
-    Boundaries.download_boundaries(target_grid, config.source)
+BoundaryData.boundary_data_path(config::TideCorrectedBoundaries) =
+    BoundaryData.boundary_data_path(config.source)
+BoundaryData.boundary_data_directory(config::TideCorrectedBoundaries) =
+    BoundaryData.boundary_data_directory(config.source)
+Plotting.plot_path(config::TideCorrectedBoundaries) = Plotting.plot_path(config.source)
+Grids.open_edges(config::TideCorrectedBoundaries) = Grids.open_edges(config.source)
+BoundaryData.boundary_variable_names(config::TideCorrectedBoundaries) =
+    BoundaryData.boundary_variable_names(config.source)
+BoundaryData.download_boundaries(target_grid, config::TideCorrectedBoundaries) =
+    BoundaryData.download_boundaries(target_grid, config.source)
 
-function Boundaries.prepare_boundaries(
+function BoundaryData.prepare_boundaries(
     target_grid,
     config::TideCorrectedBoundaries;
     coverage = nothing,
 )
-    result = Boundaries.prepare_boundaries(target_grid, config.source; coverage)
-    correct_boundary_tide!(result.output_file, Configs.open_edges(config), config.gains)
+    result = BoundaryData.prepare_boundaries(target_grid, config.source; coverage)
+    correct_boundary_tide!(result.output_file, Grids.open_edges(config), config.gains)
     return result
 end
 

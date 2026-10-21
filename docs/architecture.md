@@ -32,43 +32,16 @@ methods (`docs/adding-a-source.md`).
 
 ## 1. Configs (`src/Configs.jl`)
 
-Everything that more than one later module needs lives here, because the modules are included in a
-line and none can see a later one:
-
-- **The grid hooks** `domain_grid`/`simulation_grid` are declared here, not in `Grids`, because
-  `Bathymetry`, `Atmospheres`, `Forcing`, `Rivers` and `Boundaries` call `domain_grid` and are all
-  included before `Grids`. `model_closure` is declared here too: its fallback is the identity, which
-  is only useful if it is the first method anyone sees.
-- **The edge vocabulary** (`LATERAL_EDGES`, `validate_open_edge`, `lateral_edges`, `open_edges`):
-  `Bathymetry` clears land along open edges, `Regridding` restores their velocity face rows,
-  `Boundaries` regrids along them, `OpenLateralBoundaryFromData` and `BoundarySponge` act on them.
-  `Configs` is the one module all of them can see.
-- **The path helpers** (`bathymetry_path`, `forcing_path`, …) are defined on the supertypes so a new
-  source inherits them without loading the built-in source's module.
+The abstract supertypes a setup subtypes, and `FjordConfig`. Nothing else: each pipeline module
+defines the path helpers for its own supertype (`bathymetry_path` in `Bathymetry`, `forcing_path` in
+`Forcing`, …), with a default that resolves the `data_root`/`output_file` fields, so a new source
+inherits them and one without those fields overloads them.
 
 Rivers and open-boundary data are `FjordConfig` fields of their own (`river_config`,
 `boundary_config`), not parts of the forcing config: each is a separate file written by a separate
 pipeline, and a setup can have either with no interior forcing. `AbstractBoundaryDataConfig` (the exterior *values*) and
 `AbstractBoundaryConditionConfig` (the *scheme* acting on them) are configured separately for the
 same reason.
-
-**The run tag is the wall-clock launch instant** (`yyyymmddTHHMMSS`, `Configs.LAUNCH_TAG`, filled by
-`__init__` — a `const` initialized with `now()` would freeze the precompilation instant). So it
-distinguishes invocations, not configurations: re-running a config never overwrites an earlier run's
-snapshots or log. Seconds are in it because a crash and an immediate relaunch otherwise collide.
-Consequences: which window a file covers is not in its name but in the snapshot's `start_date`
-attribute, and checkpoints carry no tag at all (see Checkpointing).
-
-**No setup is part of the package.** A setup is a script ending in its `FjordConfig`, and
-`fjord_config(path)` `Base.include`s it into `Main` on every call. So each step gets a fresh config —
-the structs are mutable and `native_region!` edits the bathymetry config, so a shared instance would
-leak state between steps — built after `__init__` has filled `DybdedataConfig`'s scratch
-`raw_directory`, which is still `""` during precompilation. How to write one is `docs/setups.md`;
-the measurements behind a setup's values are in its own comments.
-
-`coverage_window(simulation_config)` is the `(first, last)` interval the run needs. Every prepare
-step that has a time axis — forcing, rivers, boundaries, atmosphere — and `validate_simulation` take
-it as their `coverage`.
 
 ## 2. Utils (`src/Utils.jl`)
 
@@ -78,13 +51,39 @@ that includes it. Oceananigans writes `zero(eltype)` into every immersed tracer 
 `update_state!`, and most of a fjord grid is land — so the array form reported the land mask as the
 minimum temperature for the whole run. It also keeps the reduction on the GPU.
 
-## 3. Plotting (`src/Plotting.jl`)
+`coverage_window(simulation_config)` is the `(first, last)` interval the run needs. Every prepare
+step that has a time axis — forcing, rivers, boundaries, atmosphere — and `validate_simulation` take
+it as their `coverage`.
+
+## 3. Grids (`src/Grids.jl`)
+
+Two hooks because they are needed at different moments: `domain_grid` (bare geometry, for the prepare
+steps, which have no bathymetry file yet) and `simulation_grid` (with the bathymetry immersed). They
+are FjordSim generics rather than methods on `LatitudeLongitudeGrid`/`ImmersedBoundaryGrid`, whose
+names state a result type a rectilinear or curvilinear config could not honour. Not named
+`target_grid`, which is a parameter name throughout the pipelines and would be shadowed. The loader
+still accepts legacy bathymetry files with positive depths or swapped axes.
+
+Included right after `Utils`, before every pipeline: `Bathymetry`, `Atmospheres`, `Forcing`, `Rivers`
+and `BoundaryData` all build their target grid with `domain_grid`.
+
+**The edge vocabulary** (`LATERAL_EDGES`, `validate_open_edge`, `lateral_edges`, `open_edges`) lives
+here for the same reason: `Bathymetry` clears land along open edges, `Regridding` restores their
+velocity face rows, `BoundaryData` regrids along them, `OpenLateralBoundaryFromData` and
+`BoundarySponge` act on them.
+
+## 4. Plotting (`src/Plotting.jl`)
 
 Included before the pipelines because each setup-level driver plots as its last step; `Plotting`
-needs only `Configs`, so there is no cycle. Every `plot_*` dispatches on a config supertype so a new
-source inherits it. Not tested, by rule.
+needs only `Configs` and `Grids`, so there is no cycle. Every `plot_*` dispatches on a config
+supertype so a new source inherits it. Not tested, by rule.
 
-## 4. Bathymetry (`src/Bathymetry/`)
+Since the pipelines are included after it, `Plotting` cannot call their path helpers: each driver
+passes its prepared file in (`plot_forcing(grid, config, forcing_path(config))`). The plot's own
+path is `plot_path`, declared here with no method; each pipeline module adds the method for its
+supertype.
+
+## 5. Bathymetry (`src/Bathymetry/`)
 
 `prepare_bathymetry` is regrid (NumericalEarth) → `smooth_bathymetry_gaps!` → write. The one
 source-specific step is `bathymetry_dataset`; `geonorge.jl` implements it for Geonorge Sjøkart
@@ -210,10 +209,10 @@ whose deepest source water reaches the sill — and deepens it. No land changes 
 deeper than the source. On `oslofjorden_validation`: 1467 cells, Svelvik 10.8 m, mean depth changed
 by under 0.1 m. It only deepens, so a connection the regrid made too *deep* is out of reach.
 
-## 5. Regridding (`src/Regridding.jl`)
+## 6. Regridding (`src/Regridding.jl`)
 
-The core `Forcing`, `InitialState` and `Boundaries` share; `Rivers` uses only the masks and the file
-layout, and `Atmospheres` only the source-grid rotation.
+The core `Forcing`, `InitialState` and `BoundaryData` share; `Rivers` uses only the masks and the
+file layout, and `Atmospheres` only the source-grid rotation.
 
 - **The kernel runs where the config's `architecture` says** (`:auto`/`:cpu`/`:gpu`); `:auto` picks
   the GPU, ~12x faster than one CPU thread, and `:gpu` errors rather than falling back. A `Symbol`
@@ -241,7 +240,7 @@ first half-day, and every reader uses `Cyclical()` indexing, which wraps instead
 - Padding changes `Cyclical`'s inferred period. That is harmless only because the loop resets the
   clock and never leaves `[t¹, tᴺ]`, so the cycling branch is dead — **do not "fix" the period.**
 
-## 6. Atmosphere (`src/Atmospheres/`)
+## 7. Atmosphere (`src/Atmospheres/`)
 
 The prepared file is a **contract fixed by the read side** (`MultiYearNORA3`): `Float32`
 `(lon, lat, time)`, uniform 1D axes (`compute_faces` infers spacing from the first difference),
@@ -278,7 +277,7 @@ carrying the prepared names, so `prepare_atmosphere` is a pure regrid and re-run
 - met.no's `nora3_subset_atmos` collections are unusable: no `specific_humidity_2m`, and only *net*
   radiation, which cannot be inverted to downwelling.
 
-## 7. NorKyst (`src/DataSources/NorKyst.jl`)
+## 8. NorKyst (`src/DataSources/NorKyst.jl`)
 
 **One module for the dataset, one adapter per pipeline.** The forcing, the initial state and the
 open boundaries all read NorKyst-800m, from four collections — the operational daily means and
@@ -291,7 +290,7 @@ type and its hooks belong to the adapter in the directory of the pipeline that c
 `src/DataSources/` holds only datasets more than one pipeline reads. NORA3 (atmosphere), NVE
 (rivers) and Geonorge (bathymetry) each feed one pipeline and stay in its directory.
 
-## 8. Forcing (`src/Forcing/`)
+## 9. Forcing (`src/Forcing/`)
 
 **There is no interior relaxation.** `prepare_forcing` writes `λ = 0` everywhere: the open boundary
 nudges towards hourly exterior data *at* the boundary, and a band relaxing the same variables a few
@@ -308,7 +307,7 @@ every variable, which with `λ = 0` costs a read of two series per variable each
 Norkyst-v3 hindcast (from 2012), keeping hour 12 of its 24 hourly records to match the operational
 12:00 stamp. Both share everything through `AbstractNorKystConfig`.
 
-## 9. Initial state (`src/InitialState/`)
+## 10. Initial state (`src/InitialState/`)
 
 **Why it is not the forcing.** The forcing file has to span the whole run window, because the run
 reads it as forcing terms at every step and `build_simulation` checks its coverage, and the NorKyst
@@ -328,7 +327,7 @@ config, two steps and a one-record file, and a setup starting from it needs no f
 - The NorKyst adapter downloads with the `NorKyst` module's subsetting, as the forcing's does. Only
   the operational collection (from 2017-02-20) has an adapter.
 
-## 10. Rivers (`src/Rivers/`)
+## 11. Rivers (`src/Rivers/`)
 
 ### Rivers as a volume source
 
@@ -402,7 +401,12 @@ western arm missing.
   river on its catchment normal.
 - The caches record the domain they were fetched for, so a grid change re-downloads.
 
-## 11. Boundary conditions (`src/BoundaryConditions.jl`)
+## 12. Boundary conditions (`src/Boundaries/BoundaryConditions/`)
+
+A separate module from the open-boundary data pipeline beside it in `src/Boundaries/`, and
+independent of it: this one says what a condition *is*, `BoundaryData` prepares and reads the
+exterior state, and the only link is `build_simulation` handing `boundary_series`'s result to
+`field_boundary_conditions`.
 
 A piece (`AbstractBoundaryConditionConfig`, hook `boundary_condition_sides`) says what one part of
 the boundary is; a set (`AbstractBoundaryConditionSetConfig`, hook `field_boundary_conditions`) says
@@ -431,7 +435,33 @@ biogeochemical tracer's surface flux belongs in its own config. The two go throu
 the condition — a bare flux condition is a `MethodError`. Its volume flux stays zero on a static-z
 grid.
 
-## 12. Boundaries (`src/Boundaries/`)
+### `OpenLateralBoundaryFromData`
+
+Per open edge, four groups, each a generic function with one method per `Val{edge}`:
+
+| field (south edge) | condition | scheme |
+|---|---|---|
+| `v` | the `v` series | `NormalFlowBoundaryCondition`, `NormalRadiation` |
+| `V` | `south_boundary_transport` | `GravityWaveRadiationBoundaryCondition` (Flather) |
+| every model tracer | its series | `ValueBoundaryCondition`, `NormalRadiation` |
+| `u` | the `u` series | `ValueBoundaryCondition`, `NormalRadiation` |
+
+`NormalRadiation` is Orlanski with Marchesiello nudging; `GravityWaveRadiation` is what actually
+opens the boundary. NorKyst's own attributes name the same set (`Che`, `Shc`, `RadNud`).
+
+- **Do not resolve Oceananigans below 0.110.15** (PR #5351): before it, data-driven open velocity
+  boundaries were broken under `SplitExplicitFreeSurface`. There is no `[compat]` entry for it.
+- **`η` is not stated here**: Oceananigans pairs a Chapman condition onto every side with a
+  gravity-wave `U`/`V` condition, and naming `U`/`V` switches substepping to `LocalHaloFilling`,
+  which is what makes Flather act at all.
+- **Edges merge as different leaves of one nested tuple.** A corner cell is written by two edges'
+  conditions in Oceananigans' halo-fill order — the part of a multi-edge run to watch.
+- **The transport uses the model's own column depth** (`column_depthᶜᶠᵃ`, the scheme's operator), so
+  it is in the model's bathymetry, not NorKyst's. No land guard: `fill_boundary_gaps!` made the series
+  finite.
+- `inflow_timescale` and `outflow_timescale` are separate fields with no defaults.
+
+## 13. Boundary data (`src/Boundaries/BoundaryData/`)
 
 **A separate file because it is hourly.** A Flather boundary compares the model's `η` with an
 exterior one, and the daily-mean collection has no tide. Only the boundary rows need that cadence:
@@ -462,45 +492,17 @@ a few hundred MB where an hourly interior file would be hundreds of GB.
   `norkyst_hindcast_boundaries.jl` needs no such method; it reads the barotropic pair from the
   `sdepth` files and everything else from `zdepth`.
 
-### `OpenLateralBoundaryFromData`
-
-Per open edge, four groups, each a generic function with one method per `Val{edge}`:
-
-| field (south edge) | condition | scheme |
-|---|---|---|
-| `v` | the `v` series | `NormalFlowBoundaryCondition`, `NormalRadiation` |
-| `V` | `south_boundary_transport` | `GravityWaveRadiationBoundaryCondition` (Flather) |
-| every model tracer | its series | `ValueBoundaryCondition`, `NormalRadiation` |
-| `u` | the `u` series | `ValueBoundaryCondition`, `NormalRadiation` |
-
-`NormalRadiation` is Orlanski with Marchesiello nudging; `GravityWaveRadiation` is what actually
-opens the boundary. NorKyst's own attributes name the same set (`Che`, `Shc`, `RadNud`).
-
-- **Do not resolve Oceananigans below 0.110.15** (PR #5351): before it, data-driven open velocity
-  boundaries were broken under `SplitExplicitFreeSurface`. There is no `[compat]` entry for it.
-- **`η` is not stated here**: Oceananigans pairs a Chapman condition onto every side with a
-  gravity-wave `U`/`V` condition, and naming `U`/`V` switches substepping to `LocalHaloFilling`,
-  which is what makes Flather act at all.
-- **Edges merge as different leaves of one nested tuple.** A corner cell is written by two edges'
-  conditions in Oceananigans' halo-fill order — the part of a multi-edge run to watch.
-- **The transport uses the model's own column depth** (`column_depthᶜᶠᵃ`, the scheme's operator), so
-  it is in the model's bathymetry, not NorKyst's. No land guard: `fill_boundary_gaps!` made the series
-  finite.
-- `inflow_timescale` and `outflow_timescale` are separate fields with no defaults.
-
-## 13. Grids (`src/Grids.jl`)
-
-Two hooks because they are needed at different moments: `domain_grid` (bare geometry, for the prepare
-steps, which have no bathymetry file yet) and `simulation_grid` (with the bathymetry immersed). They
-are FjordSim generics rather than methods on `LatitudeLongitudeGrid`/`ImmersedBoundaryGrid`, whose
-names state a result type a rectilinear or curvilinear config could not honour. Not named
-`target_grid`, which is a parameter name throughout the pipelines and would be shadowed. The loader
-still accepts legacy bathymetry files with positive depths or swapped axes.
-
 ## 14. Simulations (`src/Simulations.jl`)
 
 `coupled_simulation` lives here, not in `src/FjordSim.jl`, because a function defined after the
 `include` block cannot be imported by a module inside it.
+
+**The run tag is the wall-clock launch instant** (`yyyymmddTHHMMSS`, `Simulations.LAUNCH_TAG`,
+filled by `__init__` — a `const` initialized with `now()` would freeze the precompilation instant).
+So it distinguishes invocations, not configurations: re-running a config never overwrites an earlier
+run's snapshots or log. Seconds are in it because a crash and an immediate relaunch otherwise collide.
+Consequences: which window a file covers is not in its name but in the snapshot's `start_date`
+attribute, and checkpoints carry no tag at all (see Checkpointing).
 
 **No field anywhere in this stack has a default**: a defaulted closure would be one fjord's physics
 quietly applied to another's.
@@ -635,6 +637,13 @@ station-variable combinations in a sweep are empty, and each is a blank row, not
 output", not an error.
 
 ## 16. CLI (`src/CLI.jl`)
+
+**No setup is part of the package.** A setup is a script ending in its `FjordConfig`, and
+`fjord_config(path)` `Base.include`s it into `Main` on every call. So each step gets a fresh config —
+the structs are mutable and `native_region!` edits the bathymetry config, so a shared instance would
+leak state between steps — built after `__init__` has filled `DybdedataConfig`'s scratch
+`raw_directory`, which is still `""` during precompilation. How to write one is `docs/setups.md`;
+the measurements behind a setup's values are in its own comments.
 
 `parse_arguments` never `exit`s, so the help path is testable; exit codes are 0 success, 1 step
 failed, 2 bad arguments.

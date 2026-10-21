@@ -1,16 +1,44 @@
 module CLI
 
-export parse_arguments
+export parse_arguments, fjord_config
 
-using ..Configs: AbstractSimulationConfig, fjord_config, run_tag
+using ..Configs: AbstractSimulationConfig, FjordConfig
 using ..Bathymetry: prepare_bathymetry
 using ..Atmospheres: prepare_atmosphere, download_atmosphere
 using ..Forcing: prepare_forcing, download_forcing
 using ..InitialState: download_initial_state, prepare_initial_state
 using ..Rivers: add_rivers
-using ..Boundaries: download_boundaries, prepare_boundaries
-using ..Simulations: run_simulation
+using ..BoundaryData: download_boundaries, prepare_boundaries
+using ..Simulations: run_simulation, run_tag
 using ..Validation: validate_simulation
+
+"""
+    fjord_config(path)
+
+Load a config file and return the `FjordConfig` it evaluates to: a Julia script whose last
+expression is a `FjordConfig`, such as `examples/oslofjorden.jl`. A setup is never part of the
+package, so this is how every one of them is read, by `--config` and from the REPL alike.
+
+Evaluated in `Main` rather than in this module: the file's own `using FjordSim` and any helper
+bindings belong in the caller's namespace, and a bare `include` here would resolve `path`
+relative to `src/`. Each call evaluates the file afresh, so it returns a new config every time —
+the structs are mutable and `native_region!` edits the bathymetry config, so a shared instance
+would leak one step's state into the next.
+"""
+function fjord_config(path)
+    filepath = abspath(expanduser(path))
+    isfile(filepath) || throw(ArgumentError("Config file $filepath does not exist"))
+
+    config = Base.include(Main, filepath)
+    config isa FjordConfig || throw(
+        ArgumentError(
+            "$filepath evaluated to a $(typeof(config)), not a FjordConfig. " *
+            "A config file's last expression must be the FjordConfig it describes.",
+        ),
+    )
+
+    return config
+end
 
 """
 Every subcommand, named exactly like the function it calls, so `-m FjordSim prepare_forcing` and

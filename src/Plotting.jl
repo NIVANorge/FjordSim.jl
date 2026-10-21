@@ -1,6 +1,6 @@
 module Plotting
 
-export plot_bathymetry, plot_forcing, plot_rivers, plot_boundaries, plot_atmosphere
+export plot_bathymetry, plot_forcing, plot_rivers, plot_boundaries, plot_atmosphere, plot_path
 
 using CairoMakie
 using NCDatasets
@@ -14,13 +14,8 @@ using ..Configs:
     AbstractForcingConfig,
     AbstractRiverConfig,
     AbstractBoundaryDataConfig,
-    AbstractAtmosphereConfig,
-    forcing_path,
-    river_forcing_path,
-    boundary_data_path,
-    atmosphere_path,
-    open_edges,
-    plot_path
+    AbstractAtmosphereConfig
+using ..Grids: open_edges
 
 # Logical figure pixels per grid cell, and fixed margin for title/labels/colorbar. Sized from
 # the grid so every cell is rendered as a distinct, unambiguous block rather than being blurred
@@ -109,6 +104,15 @@ function plot_axes(grid, Nx, Ny)
     return longitude, latitude
 end
 
+"""
+    plot_path(config)
+
+Where a pipeline writes its diagnostic plot. Declared here with no method: each pipeline module adds
+one for its config supertype, resolving `config.plot_file` against `config.data_root`, so a new
+source inherits it. A `plot_file` holding an absolute path is returned unchanged.
+"""
+function plot_path end
+
 prepare_plot_file(config) = let file = plot_path(config)
     isdir(dirname(file)) || mkpath(dirname(file))
     file
@@ -193,14 +197,13 @@ function surface_slice(ds, name)
 end
 
 """
-    plot_forcing(grid, config::AbstractForcingConfig)
+    plot_forcing(grid, config::AbstractForcingConfig, forcing_file)
 
-Write a diagnostic plot of the prepared forcing file at `forcing_path(config)` to
+Write a diagnostic plot of the prepared forcing file at `forcing_file` to
 `plot_path(config)`: one panel per `FORCING_PLOT_PANELS` entry present in the file, at the
 surface level of the first time step. Returns the plot path.
 """
-function plot_forcing(grid, config::AbstractForcingConfig)
-    forcing_file = forcing_path(config)
+function plot_forcing(grid, config::AbstractForcingConfig, forcing_file)
     plot_file = prepare_plot_file(config)
 
     NCDataset(forcing_file) do ds
@@ -248,9 +251,9 @@ function plot_forcing(grid, config::AbstractForcingConfig)
 end
 
 """
-    plot_rivers(grid, config::AbstractRiverConfig, mouths)
+    plot_rivers(grid, config::AbstractRiverConfig, river_file, mouths)
 
-Write a diagnostic plot of the river file at `river_forcing_path(config)` to `plot_path(config)`.
+Write a diagnostic plot of the river file at `river_file` to `plot_path(config)`.
 Returns the plot path.
 
 Three panels, one per question a river file has to answer:
@@ -267,8 +270,7 @@ Three panels, one per question a river file has to answer:
 
 `mouths` comes from `add_rivers`' own result, in the order the file numbers its rivers.
 """
-function plot_rivers(grid, config::AbstractRiverConfig, mouths)
-    river_file = river_forcing_path(config)
+function plot_rivers(grid, config::AbstractRiverConfig, river_file, mouths)
     plot_file = prepare_plot_file(config)
 
     Nx, Ny, Nz = size(grid)
@@ -363,9 +365,9 @@ function plot_rivers(grid, config::AbstractRiverConfig, mouths)
 end
 
 """
-    plot_boundaries(config::AbstractBoundaryDataConfig)
+    plot_boundaries(config::AbstractBoundaryDataConfig, boundary_file)
 
-Write a diagnostic plot of the prepared boundary file at `boundary_data_path(config)` to
+Write a diagnostic plot of the prepared boundary file at `boundary_file` to
 `plot_path(config)`: one panel per `BOUNDARY_PLOT_PANELS` entry present in the file, for each edge in
 the config's own `open_edges`, stacked one block of rows per edge. Returns the plot path.
 
@@ -377,9 +379,8 @@ runs, and the index is what a `NaN` in a section can be traced back to.
 The variables are named for their side, so the plot has to know which boundaries it is looking at; it
 reads them from the config, which is where the edges are stated.
 """
-function plot_boundaries(config::AbstractBoundaryDataConfig)
+function plot_boundaries(config::AbstractBoundaryDataConfig, boundary_file)
     edges = open_edges(config)
-    boundary_file = boundary_data_path(config)
     plot_file = prepare_plot_file(config)
 
     NCDataset(boundary_file) do ds
@@ -471,17 +472,16 @@ function boundary_slice(ds, name)
 end
 
 """
-    plot_atmosphere(config::AbstractAtmosphereConfig)
+    plot_atmosphere(config::AbstractAtmosphereConfig, atmosphere_file)
 
-Write a diagnostic plot of the prepared atmosphere file at `atmosphere_path(config)` to
+Write a diagnostic plot of the prepared atmosphere file at `atmosphere_file` to
 `plot_path(config)`: one panel per `ATMOSPHERE_PLOT_PANELS` entry present in the file, at the first
 time step. Returns the plot path.
 
 Unlike `plot_forcing` this takes no grid, because the prepared file carries its own `lon` and `lat`
 axes — the atmosphere grid is independent of the ocean grid.
 """
-function plot_atmosphere(config::AbstractAtmosphereConfig)
-    atmosphere_file = atmosphere_path(config)
+function plot_atmosphere(config::AbstractAtmosphereConfig, atmosphere_file)
     plot_file = prepare_plot_file(config)
 
     NCDataset(atmosphere_file) do ds

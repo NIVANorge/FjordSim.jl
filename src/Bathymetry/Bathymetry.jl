@@ -1,6 +1,7 @@
 module Bathymetry
 
 export DybdedataConfig,
+    bathymetry_path,
     prepare_bathymetry,
     bathymetry_dataset,
     regrid_options,
@@ -25,13 +26,20 @@ using NumericalEarth.DataWrangling:
 
 using ..Configs:
     AbstractBathymetryConfig,
-    FjordConfig,
-    bathymetry_path,
-    domain_grid,
-    open_edges,
-    lateral_edges,
-    LATERAL_EDGES
-using ..Plotting: plot_bathymetry
+    FjordConfig
+using ..Grids: domain_grid, open_edges, lateral_edges, LATERAL_EDGES
+using ..Plotting: Plotting, plot_bathymetry
+
+"""
+    bathymetry_path(config)
+
+Resolve `config.output_file` against `config.data_root`: the processed bathymetry
+`prepare_bathymetry` writes. Defined for every `AbstractBathymetryConfig`, so a new source inherits
+path resolution; one without those fields overloads it. An absolute `output_file` is returned
+unchanged.
+"""
+bathymetry_path(config::AbstractBathymetryConfig) = joinpath(config.data_root, config.output_file)
+Plotting.plot_path(config::AbstractBathymetryConfig) = joinpath(config.data_root, config.plot_file)
 
 # Matches the fixed loop count and neighbor threshold used in the Oslofjord notebook's
 # post-regrid gap-filling pass.
@@ -408,7 +416,7 @@ open edge a clean, uninterrupted channel, which is the geometry every open-bound
 for.
 
 The cost is that the newly wet cells have no exterior profile of their own — the prepared boundary
-file marks them dry, and `FjordSim.Boundaries.fill_boundary_gaps!` fills them from the nearest wet cell
+file marks them dry, and `FjordSim.BoundaryData.fill_boundary_gaps!` fills them from the nearest wet cell
 along the boundary. That is the same treatment a boundary column already gets wherever the model and
 the source disagree about the coastline, so the trade is a few laterally interpolated columns against
 a headland in the boundary row. Keep `cells` small enough that it stays a few.

@@ -5,6 +5,8 @@ module InitialState
 # same as the forcing's and the open boundaries'; the dataset enters only through the hooks below.
 
 export download_initial_state,
+    initial_state_path,
+    initial_state_directory,
     prepare_initial_state,
     initial_state_record,
     initial_state_source_grid,
@@ -18,13 +20,9 @@ using NCDatasets
 using ..Configs:
     AbstractInitialStateConfig,
     AbstractSimulationConfig,
-    FjordConfig,
-    bathymetry_path,
-    domain_grid,
-    initial_state_path,
-    initial_state_directory,
-    open_edges,
-    simulation_grid
+    FjordConfig
+using ..Grids: domain_grid, open_edges, simulation_grid
+using ..Bathymetry: bathymetry_path
 using ..Regridding:
     FORCING_DEFLATE_LEVEL,
     SourceRecord,
@@ -41,6 +39,19 @@ using ..Regridding:
     define_forcing_dimensions!,
     data_location,
     forcing_dimension_names
+
+"""
+    initial_state_path(config)
+    initial_state_directory(config)
+
+Resolve `config.output_file` and `config.output_directory` against `config.data_root`: the file
+`prepare_initial_state` writes, and the directory `download_initial_state` writes into. Defined for
+every `AbstractInitialStateConfig`; a dataset without those fields overloads them. An absolute field
+is returned unchanged.
+"""
+initial_state_path(config::AbstractInitialStateConfig) = joinpath(config.data_root, config.output_file)
+initial_state_directory(config::AbstractInitialStateConfig) =
+    joinpath(config.data_root, config.output_directory)
 
 """
 The global attribute holding the `start_date` a prepared initial-state file was prepared for, which

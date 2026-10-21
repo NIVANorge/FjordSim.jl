@@ -10,6 +10,7 @@ module Rivers
 # cell of the same columns. `RiverTracerSource` says why that pair is what makes the budgets close.
 
 export add_rivers,
+    river_forcing_path,
     download_rivers,
     river_locations,
     river_series,
@@ -41,19 +42,27 @@ import Oceananigans.OutputReaders: new_backend
 using ..Configs:
     AbstractForcingConfig,
     AbstractRiverConfig,
-    FjordConfig,
-    bathymetry_path,
-    forcing_path,
-    river_forcing_path,
-    coverage_window,
-    domain_grid,
-    simulation_grid
-using ..Plotting: plot_rivers
+    FjordConfig
+using ..Utils: coverage_window
+using ..Grids: domain_grid, simulation_grid
+using ..Plotting: Plotting, plot_rivers
+using ..Bathymetry: bathymetry_path
+using ..Forcing: forcing_path
 using ..Regridding:
     native_times_to_seconds,
     FORCING_DEFLATE_LEVEL,
     column_wet_levels,
     define_forcing_dimensions!
+
+"""
+    river_forcing_path(config)
+
+Resolve `config.output_file` against `config.data_root`: the river file written by `add_rivers`.
+Defined for every `AbstractRiverConfig`, so a new river dataset inherits path resolution; one without
+those fields overloads it. An absolute `output_file` is returned unchanged.
+"""
+river_forcing_path(config::AbstractRiverConfig) = joinpath(config.data_root, config.output_file)
+Plotting.plot_path(config::AbstractRiverConfig) = joinpath(config.data_root, config.plot_file)
 
 const RIVER_NEIGHBOUR_OFFSETS = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
 
@@ -490,7 +499,7 @@ function add_rivers(config::FjordConfig)
     grid = simulation_grid(config.grid_config, bathymetry_file, CPU())
     result = add_rivers(grid, rivers; coverage = coverage_window(config.simulation_config))
 
-    plot_file = plot_rivers(grid, rivers, result.mouths)
+    plot_file = plot_rivers(grid, rivers, river_forcing_path(rivers), result.mouths)
 
     @info "Placed $(length(result.mouths)) of $(length(river_locations(rivers))) rivers"
     @info "River variables: $(join(result.variables, ", "))"

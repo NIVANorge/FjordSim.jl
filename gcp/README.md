@@ -67,7 +67,7 @@ your machine                    gs://BUCKET                     the VM (one, sha
 ```
 
 The package never learns about Cloud Storage. `FJORDSIM_DATA_ROOT` and `FJORDSIM_RESULTS_ROOT` name
-the parent of the per-fjord directories (see `fjord_data_root` in `src/Configs.jl`), the VM
+the parent of the per-fjord directories (see `fjord_data_root` in `src/Utils.jl`), the VM
 bind-mounts staged directories onto them, and every path in every setup follows. Staging runs on the
 *host*, which has `gcloud` installed and the VM's own service account — so the image carries no
 cloud SDK and no credentials.

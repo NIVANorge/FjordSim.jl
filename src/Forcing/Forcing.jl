@@ -16,15 +16,11 @@ import Oceananigans.OutputReaders: new_backend
 
 using ..Configs:
     AbstractForcingConfig,
-    FjordConfig,
-    bathymetry_path,
-    forcing_path,
-    forcing_directory,
-    coverage_window,
-    domain_grid,
-    open_edges,
-    simulation_grid
-using ..Plotting: plot_forcing
+    FjordConfig
+using ..Utils: coverage_window
+using ..Grids: domain_grid, open_edges, simulation_grid
+using ..Plotting: Plotting, plot_forcing
+using ..Bathymetry: bathymetry_path
 using ..Regridding:
     Regridding,
     native_times_to_seconds,
@@ -49,6 +45,8 @@ using ..Regridding:
     forcing_dimension_names
 
 export forcing_from_file,
+    forcing_path,
+    forcing_directory,
     simulation_forcing,
     forcing_date_range,
     prepare_forcing,
@@ -59,6 +57,19 @@ export forcing_from_file,
     forcing_monthly_filename,
     NorKystConfig,
     NorKystHindcastConfig
+
+"""
+    forcing_path(config)
+    forcing_directory(config)
+
+Resolve `config.output_file` and `config.output_directory` against `config.data_root`: the file
+`prepare_forcing` writes, and the directory a forcing dataset downloads its source files into.
+Defined for every `AbstractForcingConfig`, so a new dataset inherits path resolution; one without
+those fields overloads them. An absolute field is returned unchanged.
+"""
+forcing_path(config::AbstractForcingConfig) = joinpath(config.data_root, config.output_file)
+forcing_directory(config::AbstractForcingConfig) = joinpath(config.data_root, config.output_directory)
+Plotting.plot_path(config::AbstractForcingConfig) = joinpath(config.data_root, config.plot_file)
 
 """ Custom backend for FieldTimeSeries """
 struct NetCDFBackend <: AbstractInMemoryBackend{Int}
@@ -541,7 +552,7 @@ function prepare_forcing(config::FjordConfig)
         coverage = coverage_window(config.simulation_config),
         edges = open_edges(config.boundary_config),
     )
-    plot_file = plot_forcing(grid, config.forcing_config)
+    plot_file = plot_forcing(grid, config.forcing_config, forcing_path(config.forcing_config))
 
     @info "Prepared variables: $(join(result.variables, ", "))"
     @info "Time range: $(first(result.times)) to $(last(result.times)) ($(length(result.times)) steps)"

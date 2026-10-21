@@ -1,4 +1,4 @@
-module Boundaries
+module BoundaryData
 
 # Open-boundary data: the generic half of the boundary pipeline. A dataset adapter subtypes
 # `AbstractBoundaryDataConfig` and implements `boundary_time_steps`, `boundary_source_grid` and
@@ -16,6 +16,8 @@ module Boundaries
 # edge is a `Val` everywhere it decides anything.
 
 export download_boundaries,
+    boundary_data_path,
+    boundary_data_directory,
     prepare_boundaries,
     boundary_series,
     boundary_time_steps,
@@ -24,7 +26,6 @@ export download_boundaries,
     boundary_date_range,
     boundary_variable_name,
     boundary_source_slab,
-    OpenLateralBoundaryFromData,
     NorKystHindcastBoundariesConfig,
     NorKystBoundariesConfig
 
@@ -43,18 +44,17 @@ import Oceananigans.OutputReaders: new_backend
 
 using ..Configs:
     AbstractBoundaryDataConfig,
-    FjordConfig,
-    bathymetry_path,
-    boundary_data_path,
-    boundary_data_directory,
-    coverage_window,
+    FjordConfig
+using ..Utils: coverage_window
+using ..Grids:
     domain_grid,
     open_edges,
     simulation_grid,
     LATERAL_EDGES,
     validate_open_edge,
     lateral_edges
-using ..Plotting: plot_boundaries
+using ..Plotting: Plotting, plot_boundaries
+using ..Bathymetry: bathymetry_path
 using ..Regridding:
     Regridding,
     native_times_to_seconds,
@@ -76,6 +76,24 @@ using ..Regridding:
     SourceReader,
     blended_slab,
     define_forcing_dimensions!
+
+"""
+    boundary_data_path(config)
+    boundary_data_directory(config)
+
+Resolve `config.output_file` and `config.output_directory` against `config.data_root`: the prepared
+open-boundary NetCDF written by `prepare_boundaries`, and the directory `download_boundaries` writes
+its intermediate files into. Defined for every `AbstractBoundaryDataConfig`, so a new dataset
+inherits path resolution; one without those fields overloads them. An absolute field is returned
+unchanged.
+
+The edge is *not* in the filename: every variable in the file is prefixed with its side, so one file
+holds however many boundaries a setup opens.
+"""
+boundary_data_path(config::AbstractBoundaryDataConfig) = joinpath(config.data_root, config.output_file)
+boundary_data_directory(config::AbstractBoundaryDataConfig) =
+    joinpath(config.data_root, config.output_directory)
+Plotting.plot_path(config::AbstractBoundaryDataConfig) = joinpath(config.data_root, config.plot_file)
 
 const BOUNDARY_DEFLATE_LEVEL = 5
 # Longest run of missing hours interpolated without a separate warning.
@@ -556,7 +574,7 @@ function prepare_boundaries(config::FjordConfig)
 
     grid = simulation_grid(config.grid_config, bathymetry_file, CPU())
     result = prepare_boundaries(grid, boundaries; coverage = coverage_window(config.simulation_config))
-    plot_file = plot_boundaries(boundaries)
+    plot_file = plot_boundaries(boundaries, boundary_data_path(boundaries))
 
     @info "Prepared boundary variables: $(join(result.variables, ", "))"
     @info "Time range: $(first(result.times)) to $(last(result.times)) ($(length(result.times)) steps)"
@@ -995,7 +1013,6 @@ function reduced_series_size(grid, locations)
     end
 end
 
-include("open_boundary_conditions.jl")
 include("norkyst_boundaries.jl")
 include("norkyst_hindcast_boundaries.jl")
 

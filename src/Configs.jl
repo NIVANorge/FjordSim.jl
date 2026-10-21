@@ -16,43 +16,7 @@ export AbstractGridConfig,
     AbstractWriterConfig,
     AbstractCallbackConfig,
     AbstractTimeSteppingConfig,
-    FjordConfig,
-    fjord_config,
-    domain_grid,
-    simulation_grid,
-    model_closure,
-    fjord_data_root,
-    fjord_results_root,
-    bathymetry_path,
-    forcing_path,
-    forcing_directory,
-    initial_state_path,
-    initial_state_directory,
-    river_forcing_path,
-    boundary_data_path,
-    boundary_data_directory,
-    atmosphere_path,
-    atmosphere_directory,
-    results_path,
-    plot_path,
-    open_edges,
-    LATERAL_EDGES,
-    validate_open_edge,
-    lateral_edges,
-    run_tag,
-    coverage_window
-
-using Dates: DateTime, Second, format, now
-
-"""
-The wall-clock instant this process started, as the fragment `run_tag` names a run's files with.
-
-Filled in by `__init__` rather than by a `const` initialized with `now()`, which would freeze the
-moment the package was precompiled into every later run.
-"""
-const LAUNCH_TAG = Ref("")
-
-__init__() = LAUNCH_TAG[] = format(now(), "yyyymmddTHHMMSS")
+    FjordConfig
 
 """
     AbstractGridConfig
@@ -77,37 +41,6 @@ returns. These two name the *role* instead, leaving the return type to the subty
 and an `ImmersedBoundaryGrid` wrapping one.
 """
 abstract type AbstractGridConfig end
-
-"""
-    domain_grid(config::AbstractGridConfig, architecture)
-
-The bare grid a config describes, with no bathymetry immersed into it.
-
-The geometry every `prepare_*` pipeline regrids onto, and the underlying grid `simulation_grid`
-wraps. Declared with no method, so a subtype that does not implement it fails as a `MethodError`
-naming the hook rather than silently inheriting some other config's idea of a grid.
-
-Named for the role rather than for a result type — it replaced a method on
-`Oceananigans.LatitudeLongitudeGrid`, under which a config describing a rectilinear, single-column
-or curvilinear grid could not have implemented the hook without lying about what it returns.
-
-Declared here rather than in `Grids`, which is where its `EvenGrid` method lives: `Bathymetry`,
-`Atmospheres`, `Forcing`, `Rivers` and `Boundaries` all call it and are all included *before*
-`Grids`, so the generic has to exist in a module they can already see.
-"""
-function domain_grid end
-
-"""
-    simulation_grid(config::AbstractGridConfig, bathymetry_file, architecture)
-
-The grid the simulation runs on: `domain_grid`'s geometry with the processed bathymetry immersed
-into it.
-
-Separate from `domain_grid` because the two are needed at different moments and from different
-inputs — the prepare steps have no bathymetry file yet, while `build_simulation` must read back the
-very grid the bathymetry was written on. Declared here for the same include-order reason.
-"""
-function simulation_grid end
 
 """
     AbstractBathymetryConfig
@@ -307,9 +240,9 @@ edge is a set of new variables in the same file rather than a new file or a form
   variable that must be *derived* from more than one of the source's own — which a velocity component
   is, when the source states it along its own grid axes rather than eastward/northward.
 
-`FjordSim.Boundaries.NorKystBoundariesConfig` is the built-in implementation, for MET Norway's hourly
-NorKyst-800m collection; `src/Boundaries/norkyst_boundaries.jl` is the template to copy for a new
-dataset.
+`FjordSim.BoundaryData.NorKystBoundariesConfig` is the built-in implementation, for MET Norway's hourly
+NorKyst-800m collection; `src/Boundaries/BoundaryData/norkyst_boundaries.jl` is the template to copy
+for a new dataset.
 """
 abstract type AbstractBoundaryDataConfig end
 
@@ -465,18 +398,6 @@ river file `add_rivers` wrote knows.
 abstract type AbstractClosureConfig end
 
 """
-    model_closure(closure, grid, boundary_config, river_columns)
-
-The closure `coupled_simulation` gives `HydrostaticFreeSurfaceModel`.
-
-The fallback is the identity, so anything a setup already writes — a single Oceananigans closure, or
-a tuple of them — passes through unchanged. An `AbstractClosureConfig` overloads it to build one
-from the grid, the setup's open-boundary data config, and `river_columns` — every column a river
-enters through, as `(; target_i, target_j)`, or `nothing` for a setup with no rivers.
-"""
-model_closure(closure, grid, boundary_config, river_columns) = closure
-
-"""
     AbstractBoundaryConditionConfig
 
 Supertype for boundary-condition configurations. A concrete subtype describes one *contribution* to
@@ -493,8 +414,8 @@ returns the *nested named tuple* shape (`(u = (top = …, bottom = …), T = (to
 - `boundary_condition_sides(config, grid, forcing, boundary_config, tracers[, boundaries])`: the
   nested named tuple this piece contributes, keyed by field and then by side. Required. Implement the
   six-argument form only if the piece reads the prepared open-boundary state (`boundaries`, from
-  `FjordSim.Boundaries.boundary_series`, or `nothing`); the five-argument form is reached through a
-  forwarding fallback, which is what lets a piece that carries its own exterior state ignore it.
+  `FjordSim.BoundaryData.boundary_series`, or `nothing`); the five-argument form is reached through
+  a forwarding fallback, which is what lets a piece that carries its own exterior state ignore it.
 
 `FjordSim.BoundaryConditions.AirSeaFluxes`, `FjordSim.BoundaryConditions.QuadraticBottomDrag` and
 `FjordSim.BoundaryConditions.OpenLateralBoundaryFromData` are the built-in implementations. Not to
@@ -601,251 +522,6 @@ is chosen, and its `attach_time_stepping!` method installs that choice on the si
 abstract type AbstractTimeSteppingConfig end
 
 """
-    fjord_data_root(fjord)
-    fjord_results_root(fjord)
-
-The directory a setup keeps `fjord`'s input data in, and the one it writes that fjord's results to.
-
-The environment names the *parent* — `FJORDSIM_DATA_ROOT` and `FJORDSIM_RESULTS_ROOT` — and the
-argument names the fjord under it, so one variable relocates every setup at once and a setup still
-states which fjord it is. Unset, they reproduce `~/FjordSim_data/<fjord>/` and
-`~/FjordSim_results/<fjord>/` exactly, which is what every setup spelled with `homedir()` before.
-
-This is what lets the same setup run against a laptop's home directory and a cloud VM's staging
-disk without editing the setup: the roots are the only thing that differs between the two, since
-every other path resolves against them through the helpers below.
-
-A fjord that reads another's downloads passes that other name — `examples/drammensfjorden.jl` shares
-Oslofjord's bathymetry source as `fjord_data_root("oslofjorden")` — so a relocation moves both.
-"""
-fjord_data_root(fjord) =
-    joinpath(get(ENV, "FJORDSIM_DATA_ROOT", joinpath(homedir(), "FjordSim_data")), fjord)
-
-fjord_results_root(fjord) =
-    joinpath(get(ENV, "FJORDSIM_RESULTS_ROOT", joinpath(homedir(), "FjordSim_results")), fjord)
-
-"""
-    bathymetry_path(config)
-    forcing_path(config)
-    atmosphere_path(config)
-    plot_path(config)
-
-Resolve `config.output_file` and `config.plot_file` against `config.data_root`. Defined for
-every `AbstractBathymetryConfig`, `AbstractForcingConfig` and `AbstractAtmosphereConfig`, so a
-new bathymetry source, forcing dataset or atmosphere dataset inherits path resolution. A field
-holding an absolute path is returned unchanged, relocating that file outside `data_root`.
-"""
-bathymetry_path(config::AbstractBathymetryConfig) = joinpath(config.data_root, config.output_file)
-forcing_path(config::AbstractForcingConfig) = joinpath(config.data_root, config.output_file)
-atmosphere_path(config::AbstractAtmosphereConfig) = joinpath(config.data_root, config.output_file)
-plot_path(config::AbstractBathymetryConfig) = joinpath(config.data_root, config.plot_file)
-plot_path(config::AbstractForcingConfig) = joinpath(config.data_root, config.plot_file)
-plot_path(config::AbstractRiverConfig) = joinpath(config.data_root, config.plot_file)
-plot_path(config::AbstractBoundaryDataConfig) = joinpath(config.data_root, config.plot_file)
-plot_path(config::AbstractAtmosphereConfig) = joinpath(config.data_root, config.plot_file)
-
-"""
-    forcing_directory(config)
-
-Resolve `config.output_directory` against `config.data_root`: the directory a forcing
-dataset downloads its source files into. An absolute `output_directory` is returned
-unchanged.
-"""
-forcing_directory(config::AbstractForcingConfig) = joinpath(config.data_root, config.output_directory)
-
-"""
-    initial_state_path(config)
-    initial_state_directory(config)
-
-Resolve `config.output_file` and `config.output_directory` against `config.data_root`: the file
-`prepare_initial_state` writes, and the directory `download_initial_state` writes into. An absolute
-field is returned unchanged.
-"""
-initial_state_path(config::AbstractInitialStateConfig) = joinpath(config.data_root, config.output_file)
-initial_state_directory(config::AbstractInitialStateConfig) =
-    joinpath(config.data_root, config.output_directory)
-
-"""
-    river_forcing_path(config)
-
-Resolve `config.output_file` against `config.data_root`: the river file written by `add_rivers`.
-Defined for every `AbstractRiverConfig`, so a new river dataset inherits path resolution. An absolute
-`output_file` is returned unchanged.
-"""
-river_forcing_path(config::AbstractRiverConfig) = joinpath(config.data_root, config.output_file)
-
-"""
-    boundary_data_path(config)
-    boundary_data_directory(config)
-
-Resolve `config.output_file` and `config.output_directory` against `config.data_root`: the prepared
-open-boundary NetCDF written by `prepare_boundaries`, and the directory `download_boundaries` writes
-its intermediate files into. Defined for every `AbstractBoundaryDataConfig`, so a new dataset
-inherits path resolution. An absolute field is returned unchanged.
-
-The edge is *not* in the filename: every variable in the file is prefixed with its side, so one file
-holds however many boundaries a setup opens.
-"""
-boundary_data_path(config::AbstractBoundaryDataConfig) = joinpath(config.data_root, config.output_file)
-
-"""
-The four lateral boundaries a regional domain can be open on, in the order every error message
-lists them.
-
-Stated here, beside `open_edges`, because every module that reasons about an edge is included after
-this one and none of them can see each other: `Bathymetry` clears land along the open ones, `Regridding`
-restores their velocity face rows, `Boundaries` regrids along them, and every `Val{edge}` dispatch of
-its open boundary condition falls back to an `ArgumentError` naming this tuple. It has already been a
-per-module copy twice — with identical contents, an identical membership test and an identical error
-string each time — which is what settled the question of where it belongs.
-"""
-const LATERAL_EDGES = (:south, :north, :west, :east)
-
-"""
-    validate_open_edge(edge)
-
-Return `edge` if it names a lateral boundary, else throw. Checked up front so a typo fails
-before any regridding rather than deep inside the variable loop.
-
-Checked here rather than in each pipeline so one typo produces one error message wherever it is
-written — in a boundary data config's `open_edges`, or in the `edges` a prepare step is handed.
-"""
-function validate_open_edge(edge)
-    edge in LATERAL_EDGES ||
-        throw(ArgumentError("open_edge must be one of $LATERAL_EDGES, got :$edge"))
-    return edge
-end
-
-"""
-    lateral_edges(edges)
-
-Normalize whatever a caller names its open edges as into a validated `Vector{Symbol}`: one `Symbol`,
-an iterable of them, or `nothing` for none.
-
-Every consumer iterates, so a domain open on one edge, on all four, or on none is the same code path
-rather than a scalar case and a plural one. Duplicates are rejected — a repeated edge would prepare
-and write the same variables twice, and mean nothing the second time.
-"""
-lateral_edges(::Nothing) = Symbol[]
-lateral_edges(edge::Symbol) = [validate_open_edge(edge)]
-
-function lateral_edges(edges)
-    normalized = Symbol[validate_open_edge(edge) for edge in edges]
-    allunique(normalized) ||
-        throw(ArgumentError("open_edges names an edge more than once: $normalized"))
-    return normalized
-end
-
-"""
-    open_edges(config)
-
-Which lateral boundaries the domain is open on, as named by an `AbstractBoundaryDataConfig` — a
-`Vector{Symbol}`, empty for a setup naming no open-boundary data, whose lateral boundaries are
-therefore all closed walls.
-
-Always a collection, never a bare `Symbol`, so a domain open on one edge, on all four, or on none is
-one code path in every consumer rather than a scalar case and a plural one. A built-in config's
-keyword constructor accepts either shape and normalizes with `lateral_edges`.
-
-Declared here rather than beside the pipelines that read it because all of them do: `Regridding` needs
-it for `water_mask` and is included first, both boundary steps regrid and subset along the edges, and
-the open lateral boundary condition puts its schemes on each. Each of them reads it through this
-accessor, so the edges are stated in exactly one place — the config that describes the boundary.
-"""
-open_edges(::Nothing) = Symbol[]
-open_edges(config::AbstractBoundaryDataConfig) = config.open_edges
-boundary_data_directory(config::AbstractBoundaryDataConfig) =
-    joinpath(config.data_root, config.output_directory)
-
-"""
-    atmosphere_directory(config)
-
-Resolve `config.output_directory` against `config.data_root`: the directory an atmosphere
-dataset downloads its intermediate files into. An absolute `output_directory` is returned
-unchanged.
-"""
-atmosphere_directory(config::AbstractAtmosphereConfig) = joinpath(config.data_root, config.output_directory)
-
-"""
-    run_tag(config)
-
-The run's identity as a filename fragment: the wall-clock instant this process started, as
-`yyyymmddTHHMMSS`.
-
-The launch instant rather than the simulated `start_date`, so it distinguishes *invocations* and a
-re-run cannot overwrite an earlier one's output. Which simulated window a file covers is recorded in
-the snapshot's `start_date` global attribute rather than in its name. Seconds are in the format so a
-crash and an immediate relaunch do not collide.
-
-Constant for the life of the process, so `results_path`, `FjordSim.CLI.log_path` and the checkpointer
-all agree however often they ask. `config` is taken only so a simulation-config subtype can name its
-runs differently.
-"""
-run_tag(::AbstractSimulationConfig) = LAUNCH_TAG[]
-
-"""
-    results_path(writer, config)
-    results_path(writer, config, loop)
-
-Resolve `writer.output_file` against `config.results_root`: the file that writer writes to. Results
-are rooted separately from the input data, which is why this reads `results_root` rather than
-`data_root`. An absolute `output_file` keeps its own directory.
-
-`run_tag(config)` is inserted before the extension so separate runs do not overwrite each other, and
-the three-argument form appends the loop index on top of it, which is how a looped run gives each
-repetition its own file.
-
-The filename is the *writer's* rather than the simulation config's, so a setup can name several
-outputs at different intervals. A writer that names no product file has no `output_file` and gets an
-error saying so, rather than a `getproperty` failure — see `AbstractWriterConfig`.
-"""
-results_path(writer::AbstractWriterConfig, config::AbstractSimulationConfig) =
-    tagged_path(writer, config, run_tag(config))
-
-results_path(writer::AbstractWriterConfig, config::AbstractSimulationConfig, loop::Int) =
-    tagged_path(writer, config, string(run_tag(config), "_loop", lpad(loop, 2, '0')))
-
-"""
-    tagged_path(writer, config, tag)
-
-`writer.output_file` with `_tag` inserted before its extension, resolved against `results_root`
-unless it is absolute — so an absolute `output_file` still relocates just that file, and the tag
-lands on the basename either way.
-"""
-function tagged_path(writer::AbstractWriterConfig, config::AbstractSimulationConfig, tag)
-    hasproperty(writer, :output_file) || throw(
-        ArgumentError(
-            "$(typeof(writer)) names no `output_file`, so it has no `results_path`. Only a writer " *
-            "whose `output_path_trait` is `NamesOutputFile` resolves to one.",
-        ),
-    )
-
-    directory, file = splitdir(writer.output_file)
-    stem, extension = splitext(file)
-    tagged = string(stem, "_", tag, extension)
-    isabspath(writer.output_file) && return joinpath(directory, tagged)
-    return joinpath(config.results_root, directory, tagged)
-end
-
-"""
-    coverage_window(config)
-
-The calendar interval a run needs its prepared inputs to span, as `(first, last)` — or `nothing`
-for a setup naming no simulation config.
-
-Passed to `prepare_forcing` and `prepare_atmosphere` as their `coverage`, so each pads its own time
-axis to reach both ends. A plain tuple of dates rather than the config itself, so neither pipeline
-ever sees a simulation config.
-
-A looped run reuses one window rather than extending it, so this is `stop_time` from `start_date`
-and not `loops * stop_time`.
-"""
-coverage_window(::Nothing) = nothing
-
-coverage_window(config::AbstractSimulationConfig) =
-    (config.start_date, config.start_date + Second(round(Int, config.stop_time)))
-
-"""
     FjordConfig
 
 Complete setup configuration for one fjord, as returned by a config file loaded with
@@ -905,34 +581,6 @@ Base.@kwdef mutable struct FjordConfig{
     boundary_config::O = nothing
     atmosphere_config::A = nothing
     simulation_config::S = nothing
-end
-
-"""
-    fjord_config(path)
-
-Load a config file and return the `FjordConfig` it evaluates to: a Julia script whose last
-expression is a `FjordConfig`, such as `examples/oslofjorden.jl`. A setup is never part of the
-package, so this is how every one of them is read, by `--config` and from the REPL alike.
-
-Evaluated in `Main` rather than in this module: the file's own `using FjordSim` and any helper
-bindings belong in the caller's namespace, and a bare `include` here would resolve `path`
-relative to `src/`. Each call evaluates the file afresh, so it returns a new config every time —
-the structs are mutable and `native_region!` edits the bathymetry config, so a shared instance
-would leak one step's state into the next.
-"""
-function fjord_config(path)
-    filepath = abspath(expanduser(path))
-    isfile(filepath) || throw(ArgumentError("Config file $filepath does not exist"))
-
-    config = Base.include(Main, filepath)
-    config isa FjordConfig || throw(
-        ArgumentError(
-            "$filepath evaluated to a $(typeof(config)), not a FjordConfig. " *
-            "A config file's last expression must be the FjordConfig it describes.",
-        ),
-    )
-
-    return config
 end
 
 end  # module Configs

@@ -7,7 +7,10 @@ export compute_faces,
     netcdf_to_jld2,
     save_fts,
     recursive_merge,
-    cell_advection_timescale_coupled_model
+    cell_advection_timescale_coupled_model,
+    coverage_window,
+    fjord_data_root,
+    fjord_results_root
 
 using Oceananigans
 using Oceananigans.Fields: interior, location
@@ -16,6 +19,9 @@ using Oceananigans.Utils: prettytime
 using Oceananigans.Advection: cell_advection_timescale
 using JLD2: @save
 using Printf: @sprintf
+using Dates: Second
+
+using ..Configs: AbstractSimulationConfig
 
 cell_advection_timescale_coupled_model(coupled_model) = cell_advection_timescale(coupled_model.ocean.model)
 
@@ -163,5 +169,48 @@ edge contributes one per part of the state — merges them in one call rather th
 """
 recursive_merge(a::NamedTuple, b::NamedTuple, rest::NamedTuple...) =
     foldl(recursive_merge, rest; init = recursive_merge(a, b))
+
+
+"""
+    coverage_window(config)
+
+The calendar interval a run needs its prepared inputs to span, as `(first, last)` — or `nothing`
+for a setup naming no simulation config.
+
+Passed to `prepare_forcing` and `prepare_atmosphere` as their `coverage`, so each pads its own time
+axis to reach both ends. A plain tuple of dates rather than the config itself, so neither pipeline
+ever sees a simulation config.
+
+A looped run reuses one window rather than extending it, so this is `stop_time` from `start_date`
+and not `loops * stop_time`.
+"""
+coverage_window(::Nothing) = nothing
+
+coverage_window(config::AbstractSimulationConfig) =
+    (config.start_date, config.start_date + Second(round(Int, config.stop_time)))
+
+"""
+    fjord_data_root(fjord)
+    fjord_results_root(fjord)
+
+The directory a setup keeps `fjord`'s input data in, and the one it writes that fjord's results to.
+
+The environment names the *parent* — `FJORDSIM_DATA_ROOT` and `FJORDSIM_RESULTS_ROOT` — and the
+argument names the fjord under it, so one variable relocates every setup at once and a setup still
+states which fjord it is. Unset, they reproduce `~/FjordSim_data/<fjord>/` and
+`~/FjordSim_results/<fjord>/` exactly, which is what every setup spelled with `homedir()` before.
+
+This is what lets the same setup run against a laptop's home directory and a cloud VM's staging
+disk without editing the setup: the roots are the only thing that differs between the two, since
+every other path resolves against them.
+
+A fjord that reads another's downloads passes that other name — `examples/drammensfjorden.jl` shares
+Oslofjord's bathymetry source as `fjord_data_root("oslofjorden")` — so a relocation moves both.
+"""
+fjord_data_root(fjord) =
+    joinpath(get(ENV, "FJORDSIM_DATA_ROOT", joinpath(homedir(), "FjordSim_data")), fjord)
+
+fjord_results_root(fjord) =
+    joinpath(get(ENV, "FJORDSIM_RESULTS_ROOT", joinpath(homedir(), "FjordSim_results")), fjord)
 
 end # module

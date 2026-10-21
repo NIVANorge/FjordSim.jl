@@ -61,38 +61,39 @@ methods on it — never by editing the generic pipeline.** Read `docs/adding-a-s
 
 The modules, in `include` order from `src/FjordSim.jl`:
 
-1. **Configs** (`src/Configs.jl`) — the abstract supertypes, `FjordConfig`, `fjord_config` (loads
-   a config file), the edge vocabulary (`LATERAL_EDGES`, `open_edges`), and the path helpers every
-   source inherits.
-2. **Utils** (`src/Utils.jl`) — `progress` callback, `recursive_merge`, time-step helpers.
-3. **Plotting** (`src/Plotting.jl`) — one `plot_*` function per pipeline, dispatching on config
-   supertypes.
-4. **Bathymetry** (`src/Bathymetry/`) — `prepare_bathymetry` and the eight-stage
+1. **Configs** (`src/Configs.jl`) — the abstract supertypes and `FjordConfig`.
+2. **Utils** (`src/Utils.jl`) — `progress` callback, `recursive_merge`, time-step helpers,
+   `coverage_window`, `fjord_data_root`/`fjord_results_root`.
+3. **Grids** (`src/Grids.jl`) — `EvenGrid`, the `domain_grid`/`simulation_grid` hooks, and the edge
+   vocabulary (`LATERAL_EDGES`, `open_edges`).
+4. **Plotting** (`src/Plotting.jl`) — one `plot_*` function per pipeline, dispatching on config
+   supertypes, and the `plot_path` generic each pipeline adds a method to.
+5. **Bathymetry** (`src/Bathymetry/`) — `prepare_bathymetry` and the eight-stage
    `smooth_bathymetry_gaps!` pipeline (order is forced; see the doc before reordering).
-5. **Regridding** (`src/Regridding.jl`) — the core `Forcing`, `InitialState` and `Boundaries`
+6. **Regridding** (`src/Regridding.jl`) — the core `Forcing`, `InitialState` and `BoundaryData`
    share: source records and time axes, water masks, the projected source grid and its rotation,
    the interpolation kernel, and the prepared files' layout.
-6. **Atmosphere** (`src/Atmospheres/`) — `prepare_atmosphere`, NORA3 read/download.
-7. **NorKyst** (`src/DataSources/NorKyst.jl`) — the NorKyst-800m dataset the forcing, initial-state
+7. **Atmosphere** (`src/Atmospheres/`) — `prepare_atmosphere`, NORA3 read/download.
+8. **NorKyst** (`src/DataSources/NorKyst.jl`) — the NorKyst-800m dataset the forcing, initial-state
    and boundary adapters share: endpoints, variable names, source grid, subset download.
-8. **Forcing** (`src/Forcing/`) — the interior forcing pipeline (`prepare_forcing`,
+9. **Forcing** (`src/Forcing/`) — the interior forcing pipeline (`prepare_forcing`,
    `download_forcing`) and its NorKyst adapters.
-9. **Initial state** (`src/InitialState/`) — `download_initial_state`, `prepare_initial_state`:
-   one source record at `start_date` for `FromInitialState`, and its NorKyst adapter.
-10. **Rivers** (`src/Rivers/`) — the river pipeline (`add_rivers`) and its NVE adapter.
-11. **Boundary conditions** (`src/BoundaryConditions.jl`) — the `boundary_condition_sides` and
-    `field_boundary_conditions` hooks, `MergedBoundaryConditions`, `AirSeaFluxes`,
-    `QuadraticBottomDrag`.
-12. **Boundaries** (`src/Boundaries/`) — the open-boundary data pipeline (`download_boundaries`,
-    `prepare_boundaries`, `boundary_series`), its NorKyst adapters, and
-    `OpenLateralBoundaryFromData`, the boundary condition that reads it.
-13. **Grids** (`src/Grids.jl`) — `EvenGrid`, the `domain_grid`/`simulation_grid` hooks.
+10. **Initial state** (`src/InitialState/`) — `download_initial_state`, `prepare_initial_state`:
+    one source record at `start_date` for `FromInitialState`, and its NorKyst adapter.
+11. **Rivers** (`src/Rivers/`) — the river pipeline (`add_rivers`) and its NVE adapter.
+12. **Boundary conditions** (`src/Boundaries/BoundaryConditions/`) — the `boundary_condition_sides`
+    and `field_boundary_conditions` hooks, `MergedBoundaryConditions`, `AirSeaFluxes`,
+    `QuadraticBottomDrag`, and `OpenLateralBoundaryFromData`, the condition that reads the prepared
+    open-boundary data.
+13. **Boundary data** (`src/Boundaries/BoundaryData/`) — the open-boundary data pipeline
+    (`download_boundaries`, `prepare_boundaries`, `boundary_series`) and its NorKyst adapters.
+    Independent of `BoundaryConditions`; `build_simulation` hands one's output to the other.
 14. **Simulations** (`src/Simulations.jl`) — `SimulationConfig`, `build_simulation`/`run_simulation`,
-    writers, callbacks, looping, checkpointing, initial conditions.
+    writers, callbacks, looping, checkpointing, initial conditions, the run tag.
 15. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
     observation sources, skill and tidal statistics, and the comparison figures. `StationWriter`
     (in `Simulations`) is what a run writes for it.
-16. **CLI** (`src/CLI.jl`) — subcommand dispatch, logging.
+16. **CLI** (`src/CLI.jl`) — `fjord_config` (loads a config file), subcommand dispatch, logging.
 17. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
 
 ## Setups
@@ -211,7 +212,7 @@ forcings.
 - Bathymetry convention: `h < 0` = below sea level (bottom height), `h >= 0` = land.
 - Data files default to `~/FjordSim_data/<fjord>/` and results to `~/FjordSim_results/<fjord>/`,
   the latter from the simulation config's `results_root`. A setup must build both with
-  `fjord_data_root("<fjord>")` / `fjord_results_root("<fjord>")` (`src/Configs.jl`) rather than
+  `fjord_data_root("<fjord>")` / `fjord_results_root("<fjord>")` (`src/Utils.jl`) rather than
   `joinpath(homedir(), ...)`: those read `FJORDSIM_DATA_ROOT` / `FJORDSIM_RESULTS_ROOT`, which is
   what lets one setup run unchanged on a laptop and on a cloud VM's staging disk. A setup sharing
   another fjord's downloads passes that other name, so a relocation moves both.

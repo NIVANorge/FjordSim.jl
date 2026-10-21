@@ -2,8 +2,9 @@ module NORA3
 
 export NORA3PrescribedAtmosphere, NORA3PrescribedRadiation, MultiYearNORA3
 
-using ...Utils: compute_faces
-using ...Configs: AbstractAtmosphereConfig, atmosphere_path, fjord_data_root
+using ...Utils: compute_faces, fjord_data_root
+using ...Configs: AbstractAtmosphereConfig
+using ..Atmospheres: atmosphere_path
 
 using Oceananigans
 using Oceananigans.BoundaryConditions: fill_halo_regions!

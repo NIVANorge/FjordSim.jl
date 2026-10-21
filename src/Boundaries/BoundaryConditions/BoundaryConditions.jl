@@ -7,6 +7,7 @@ export air_sea_flux_boundary_conditions,
     field_boundary_conditions,
     AirSeaFluxes,
     QuadraticBottomDrag,
+    OpenLateralBoundaryFromData,
     MergedBoundaryConditions
 
 using Oceananigans
@@ -134,7 +135,7 @@ off that one; the arity is unchanged, so an out-of-tree piece that ignores this 
 built-in pieces below do, is unaffected. One that reads it now receives the boundary config.
 
 `boundaries` is the prepared open-boundary state — the `NamedTuple` of reduced `FieldTimeSeries`
-`FjordSim.Boundaries.boundary_series` returns, or `nothing` for a setup with no boundary data. Passed
+`FjordSim.BoundaryData.boundary_series` returns, or `nothing` for a setup with no boundary data. Passed
 in rather than read here for the same reason `forcing` is: `build_simulation` is where the
 `start_date` every time axis is zeroed at is known, and a config that read the file itself would
 have to be told that instant a second time.
@@ -248,5 +249,7 @@ function field_boundary_conditions(
 
     return map(sides -> FieldBoundaryConditions(; sides...), merged)
 end
+
+include("open_boundary_conditions.jl")
 
 end  # module BoundaryConditions

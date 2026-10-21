@@ -147,12 +147,12 @@ nested_failure(::Nested) = error("nested boom")
 const PINNED_RUN_TAG = "20260803T141530"
 
 function with_run_tag(f, tag = PINNED_RUN_TAG)
-    saved = FjordSim.Configs.LAUNCH_TAG[]
-    FjordSim.Configs.LAUNCH_TAG[] = tag
+    saved = FjordSim.Simulations.LAUNCH_TAG[]
+    FjordSim.Simulations.LAUNCH_TAG[] = tag
     try
         return f()
     finally
-        FjordSim.Configs.LAUNCH_TAG[] = saved
+        FjordSim.Simulations.LAUNCH_TAG[] = saved
     end
 end
 
@@ -508,7 +508,7 @@ forcing file defines, one `Float32` variable per name *prefixed with its edge* f
 open all round is `edges = (:south, :north, :west, :east)` — one file with four sides in it, which is
 what the real writer produces.
 
-The staggering and rank come from `Boundaries.boundary_dimension_names`, the same function
+The staggering and rank come from `BoundaryData.boundary_dimension_names`, the same function
 `prepare_boundaries` writes with, so a change to the layout earns a failing read rather than a
 passing test against a file the model cannot use.
 
@@ -526,7 +526,7 @@ function write_prepared_boundaries(
     land = nothing,
 )
     Nx, Ny, Nz = size
-    open_edges = FjordSim.Configs.lateral_edges(edges)
+    open_edges = FjordSim.Grids.lateral_edges(edges)
 
     NCDataset(filepath, "c") do ds
         for (name, length) in (
@@ -540,9 +540,9 @@ function write_prepared_boundaries(
         ds.attrib["open_edge"] = join(open_edges, ",")
 
         for edge in open_edges, name in names
-            dimensions = FjordSim.Boundaries.boundary_dimension_names(Val(edge), name)
+            dimensions = FjordSim.BoundaryData.boundary_dimension_names(Val(edge), name)
             shape = ntuple(index -> ds.dim[dimensions[index]], Base.length(dimensions) - 1)
-            variable = defVar(ds, FjordSim.Boundaries.boundary_variable_name(edge, name), Float32,
+            variable = defVar(ds, FjordSim.BoundaryData.boundary_variable_name(edge, name), Float32,
                               dimensions; attrib = ["_FillValue" => NaN32])
 
             for index in eachindex(dates)

@@ -19,6 +19,7 @@ using ..NorKyst:
     NORKYST_HOURLY_OPENDAP_URL,
     norkyst_source_grid,
     list_opendap_files,
+    open_remote,
     subset_ranges,
     time_length,
     define_output_file,
@@ -315,7 +316,7 @@ function process_boundary_month(year, month, longitude, latitude, config::NorKys
     datasets = NCDataset[]
     try
         for url in urls
-            push!(datasets, NCDataset(url))
+            push!(datasets, open_remote(url))
         end
 
         subset = subset_ranges(first(datasets), longitude, latitude, config.parameters)

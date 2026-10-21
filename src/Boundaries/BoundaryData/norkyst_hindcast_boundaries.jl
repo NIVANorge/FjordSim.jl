@@ -25,6 +25,7 @@ using ..NorKyst:
     NORKYST_HINDCAST_BAROTROPIC_OPENDAP_URL,
     NorKystSubset,
     list_hindcast_files,
+    open_remote,
     subset_ranges,
     time_length,
     define_output_file,
@@ -254,7 +255,7 @@ function process_hindcast_boundary_month(
     datasets = NCDataset[]
     try
         for file in files
-            push!(datasets, NCDataset(join((config.opendap_url, month_directory, file), "/")))
+            push!(datasets, open_remote(join((config.opendap_url, month_directory, file), "/")))
         end
 
         full_subset = subset_ranges(first(datasets), longitude, latitude, full_names)
@@ -281,7 +282,7 @@ function process_hindcast_boundary_month(
             # opens anyway.
             if !isempty(barotropic_names)
                 url = join((config.barotropic_opendap_url, month_directory, first(files)), "/")
-                NCDataset(url) do barotropic
+                open_remote(url) do barotropic
                     define_extra_parameters!(output, barotropic, barotropic_subset)
                 end
             end
@@ -295,7 +296,7 @@ function process_hindcast_boundary_month(
 
                 if !isempty(barotropic_names)
                     url = join((config.barotropic_opendap_url, month_directory, file), "/")
-                    NCDataset(url) do barotropic
+                    open_remote(url) do barotropic
                         time_length(barotropic) == time_length(ds) || error(
                             "Norkyst-v3 sdepth file $url has $(time_length(barotropic)) records " *
                             "against the matching zdepth file's $(time_length(ds)). The two " *

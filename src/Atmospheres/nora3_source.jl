@@ -29,9 +29,6 @@ const NORA3_SECONDS_PER_LEAD = 3600
 # the outermost prepared cell still has a full stencil.
 const NORA3_SUBSET_MARGIN_CELLS = 2
 
-const NORA3_OPEN_RETRIES = 4
-const NORA3_RETRY_BACKOFF_SECONDS = 5
-
 # thredds.met.no answers `429 Too Many Requests` to more than about six rapid requests on one
 # connection. Each lead is one request, spaced by this.
 const NORA3_REQUEST_INTERVAL_SECONDS = 0.25
@@ -396,28 +393,6 @@ grown_range(range, limit) =
 Open an OPeNDAP dataset, run `body` on it and close it, retrying as `with_retries` does.
 """
 retry_open(body, url) = with_retries(() -> NCDataset(body, url), url)
-
-"""
-    with_retries(body, url)
-
-Run `body()`, retrying `NORA3_OPEN_RETRIES` times with exponential backoff. The THREDDS server
-intermittently refuses connections under load, and a year's download is thousands of requests, so
-a single transient failure must not lose a month.
-"""
-function with_retries(body, url)
-    for attempt = 1:NORA3_OPEN_RETRIES
-        try
-            return body()
-        catch exception
-            attempt == NORA3_OPEN_RETRIES && rethrow()
-            wait_seconds = NORA3_RETRY_BACKOFF_SECONDS * 2^(attempt - 1)
-            @warn "Reading $url failed, retrying in $(wait_seconds)s" exception
-            sleep(wait_seconds)
-        end
-    end
-
-    error("Unreachable: with_retries exhausted its attempts without returning or rethrowing")
-end
 
 """
     nora3_runs(year, month)

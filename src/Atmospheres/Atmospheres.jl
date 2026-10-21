@@ -15,7 +15,7 @@ using NumericalEarth.DataWrangling: first_date, last_date
 using ..Configs:
     AbstractAtmosphereConfig,
     FjordConfig
-using ..Utils: coverage_window
+using ..Utils: coverage_window, with_retries
 using ..Grids: domain_grid
 using ..Plotting: Plotting, plot_atmosphere
 

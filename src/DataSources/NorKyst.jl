@@ -8,6 +8,7 @@ module NorKyst
 using Downloads
 using NCDatasets
 
+using ..Utils: with_retries
 using ..Regridding: ProjectedSourceGrid
 
 # The operational daily means (`..._avg.an.*`, one record a file, from 2017-02-20).
@@ -71,8 +72,7 @@ function norkyst_source_grid(filepath)
 end
 
 function list_opendap_files(; catalog_url)
-    catalog_path = Downloads.download(catalog_url)
-    catalog = read(catalog_path, String)
+    catalog = with_retries(() -> read(Downloads.download(catalog_url), String), catalog_url)
 
     files = String[]
     for match in eachmatch(r"<dataset\b[^>]*\bname=\"([^\"]+\.nc)\""i, catalog)
@@ -94,7 +94,7 @@ function list_hindcast_files(catalog_url, year, month)
     url = join((catalog_url, string(year), lpad(month, 2, '0'), "catalog.xml"), "/")
 
     catalog = try
-        read(Downloads.download(url), String)
+        with_retries(() -> read(Downloads.download(url), String), url)
     catch exception
         exception isa InterruptException && rethrow()
         @warn "Could not read the Norkyst-v3 catalog for $year-$(lpad(month, 2, '0'))" url exception
@@ -108,6 +108,16 @@ function list_hindcast_files(catalog_url, year, month)
 
     return sort!(unique!(files))
 end
+
+"""
+    open_remote(url)
+    open_remote(body, url)
+
+Open the OPeNDAP dataset at `url`, retrying as `with_retries` does. With `body`, run it on the
+dataset and close it; a failure inside `body` retries it too, from a fresh open.
+"""
+open_remote(url) = with_retries(() -> NCDataset(url), url)
+open_remote(body, url) = with_retries(() -> NCDataset(body, url), url)
 
 function bounding_range(mask, dimension)
     reduced_dims = Tuple(i for i in 1:ndims(mask) if i != dimension)
@@ -316,7 +326,7 @@ end
 function write_parameter_chunk!(output, source, name, subset::NorKystSubset, time_start)
     variable = source[name]
     input_indices = variable_indices(variable, subset.ranges)
-    data = concrete_float_data(variable[input_indices...])
+    data = concrete_float_data(with_retries(() -> variable[input_indices...], "$name in $(path(source))"))
     data = apply_spatial_mask(data, variable, subset)
 
     output_variable = output[name]
@@ -344,7 +354,7 @@ function write_time_dependent_coordinates!(output, source, subset::NorKystSubset
         haskey(output, name) || continue
 
         input_indices = variable_indices(variable, subset.ranges)
-        data = variable[input_indices...]
+        data = with_retries(() -> variable[input_indices...], "$name in $(path(source))")
         output_variable = NCDatasets.variable(output, name)
         output_indices = ntuple(ndims(output_variable)) do i
             if i == time_index

@@ -13,6 +13,7 @@ using ..NorKyst:
     NORKYST_VARIABLE_NAMES,
     norkyst_source_grid,
     list_opendap_files,
+    open_remote,
     subset_ranges,
     time_length,
     define_output_file,
@@ -98,7 +99,7 @@ function download_initial_state(target_grid, config::NorKystInitialStateConfig, 
     url = joinpath(config.opendap_url, only(files))
     @info "Downloading the NorKyst-800m daily mean for $(Date(date)) from $url"
 
-    NCDataset(url) do ds
+    open_remote(url) do ds
         subset = subset_ranges(ds, x_domain(target_grid), y_domain(target_grid), config.parameters)
         # Written under a temporary name and renamed once complete, so an interrupted download is
         # redone on the next run rather than skipped as already present.

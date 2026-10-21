@@ -11,6 +11,7 @@ using ..NorKyst:
     NORKYST_HINDCAST_OPENDAP_URL,
     NorKystSubset,
     list_hindcast_files,
+    open_remote,
     subset_ranges,
     time_dimension,
     define_output_file,
@@ -158,7 +159,7 @@ function process_hindcast_month(year, month, target_grid, config::NorKystHindcas
     indices = Int[]
     try
         for url in urls
-            ds = NCDataset(url)
+            ds = open_remote(url)
             index = hindcast_time_index(ds)
 
             if isnothing(index)

@@ -13,6 +13,7 @@ using ..NorKyst:
     NORKYST_VARIABLE_NAMES,
     norkyst_source_grid,
     list_opendap_files,
+    open_remote,
     subset_ranges,
     time_length,
     define_output_file,
@@ -172,7 +173,7 @@ function process_month(year, month, target_grid, config::NorKystConfig; files = 
     datasets = NCDataset[]
     try
         for url in urls
-            push!(datasets, NCDataset(url))
+            push!(datasets, open_remote(url))
             @info "    Opened: $url"
         end
 

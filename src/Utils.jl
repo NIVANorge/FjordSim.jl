@@ -205,4 +205,30 @@ fjord_data_root(fjord) =
 fjord_results_root(fjord) =
     joinpath(get(ENV, "FJORDSIM_RESULTS_ROOT", joinpath(homedir(), "FjordSim_results")), fjord)
 
+const REMOTE_RETRIES = 4
+const REMOTE_RETRY_BACKOFF_SECONDS = 5
+
+"""
+    with_retries(body, url)
+
+Run `body()`, retrying `REMOTE_RETRIES` times with exponential backoff. The THREDDS server
+intermittently stalls, refuses connections or answers `429 Too Many Requests` under load, and a
+month's download is hundreds of requests, so a single transient failure must not lose it.
+"""
+function with_retries(body, url)
+    for attempt = 1:REMOTE_RETRIES
+        try
+            return body()
+        catch exception
+            exception isa InterruptException && rethrow()
+            attempt == REMOTE_RETRIES && rethrow()
+            wait_seconds = REMOTE_RETRY_BACKOFF_SECONDS * 2^(attempt - 1)
+            @warn "Reading $url failed, retrying in $(wait_seconds)s" exception
+            sleep(wait_seconds)
+        end
+    end
+
+    error("Unreachable: with_retries exhausted its attempts without returning or rethrowing")
+end
+
 end # module

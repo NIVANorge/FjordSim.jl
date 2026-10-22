@@ -382,6 +382,24 @@ river file `add_rivers` wrote knows.
 abstract type AbstractClosureConfig end
 
 """
+    AbstractBiogeochemistryConfig
+
+Supertype for *biogeochemistry* configurations. A concrete subtype names a biogeochemical model's
+knobs, and its `model_biogeochemistry(config, grid)` method builds the object `coupled_simulation`
+passes to `HydrostaticFreeSurfaceModel`.
+
+The `biogeochemistry` field of a coupled-simulation config holds `nothing`, a pre-built
+biogeochemistry, or one of these, resolved by dispatch on `model_biogeochemistry` with an identity
+fallback — the same pattern as `AbstractClosureConfig`. It exists because biogeochemical models
+such as OceanBioME's `NPZD(grid; ...)` need the grid, which does not exist when a setup file is
+evaluated.
+
+# Methods a subtype provides
+- `model_biogeochemistry(config, grid)`: build the biogeochemistry. Required.
+"""
+abstract type AbstractBiogeochemistryConfig end
+
+"""
     AbstractBoundaryConditionConfig
 
 Supertype for boundary-condition configurations. A concrete subtype describes one *contribution* to

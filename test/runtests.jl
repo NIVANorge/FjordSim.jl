@@ -25,8 +25,8 @@ using FjordSim.BoundaryConditions: boundary_condition_sides, field_boundary_cond
 using FjordSim.BoundaryData: boundary_data_directory, boundary_data_path, boundary_variable_name,
     boundary_variable_names
 using FjordSim.Simulations: attach_callback!, attach_time_stepping!, attach_writer!,
-    coupled_simulation, free_surface, initial_time_step, model_closure, model_tracers, results_path,
-    run_tag, simulation_architecture
+    coupled_simulation, free_surface, initial_time_step, model_biogeochemistry, model_closure,
+    model_tracers, results_path, run_tag, simulation_architecture
 using FjordSim.Validation: baroclinic_deviation, CsvObservations, depth_average,
     direction_statistics, harmonic_fit, KartverketSeaLevel, monthly_statistics, observation_series,
     observation_stations, observations_directory, ObservationSeries, quantiles, reconstruct,
@@ -4341,6 +4341,10 @@ end
         free_surface_grid = LatitudeLongitudeGrid(CPU(), test_grid_config())
         @test free_surface(SplitExplicitFreeSurfaceConfig(cfl = 0.7), free_surface_grid) isa
               SplitExplicitFreeSurface
+
+        # `model_biogeochemistry`'s fallback is the identity, so a setup naming `nothing` or a
+        # pre-built biogeochemistry never sees the hook.
+        @test isnothing(model_biogeochemistry(nothing, free_surface_grid))
 
         # The device is a Symbol, not a live CPU()/GPU(), so a setup file loads without a GPU.
         @test fieldtype(typeof(config), :architecture) === Symbol

@@ -536,6 +536,8 @@ construction, where the error still points at the setup file.
 
 `closure` holds a built Oceananigans closure or an `AbstractClosureConfig`, resolved by
 `model_closure(closure, grid, boundary_config, …)` whose fallback is the identity.
+`biogeochemistry` is resolved the same way, by `model_biogeochemistry(biogeochemistry, grid)`,
+for biogeochemical models that need the grid.
 
 `BoundarySponge` appends a `HorizontalScalarDiffusivity` ramping to zero over `width_cells` from every
 open edge. It exists because an open boundary radiates and nothing absorbed it: on the 2020

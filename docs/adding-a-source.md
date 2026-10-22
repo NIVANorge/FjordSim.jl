@@ -196,20 +196,22 @@ the one hardcoded `Callback(progress, TimeInterval(...))` fired.
 A writer needs an `output_file` field only when its `output_path_trait` is `NamesOutputFile`; on any
 other, `results_path` raises a stated `ArgumentError` rather than failing on a missing field.
 
-`CoupledHydrostaticSimulation`, the built-in `AbstractCoupledSimulationConfig`, can nest two further
-supertypes of its own. Neither is one of the rows above — those are what `SimulationConfig` itself
-nests — but the same reasoning applies one level down: a different free surface or closure is a new
-subtype and a new method, not an edit to `coupled_simulation`.
+`CoupledHydrostaticSimulation`, the built-in `AbstractCoupledSimulationConfig`, can nest three further
+supertypes of its own. None is one of the rows above — those are what `SimulationConfig` itself
+nests — but the same reasoning applies one level down: a different free surface, closure or
+biogeochemistry is a new subtype and a new method, not an edit to `coupled_simulation`.
 
 | Supertype | Field | Required hook | Built-in |
 |---|---|---|---|
 | `AbstractFreeSurfaceConfig` | `free_surface` | `free_surface(config, grid)` → the free-surface object `coupled_simulation` passes to `HydrostaticFreeSurfaceModel` | `SplitExplicitFreeSurfaceConfig` |
 | `AbstractClosureConfig` | `closure` | `model_closure(config, grid, boundary_config, river_columns)` → the closure, or tuple of closures, it passes | `BoundarySponge`, `RiverMouthMixing` |
+| `AbstractBiogeochemistryConfig` | `biogeochemistry` | `model_biogeochemistry(config, grid)` → the biogeochemistry it passes | none; `examples/oslofjorden_npzd.jl` has one |
 
-The two differ in one way that matters. `free_surface` is *always* a config — there is nothing else
+They differ in one way that matters. `free_surface` is *always* a config — there is nothing else
 it could hold. `closure` holds a config **or** a pre-built Oceananigans closure, and usually the
 latter; `model_closure`'s fallback is the identity, so the two shapes are resolved by dispatch and a
-setup naming a plain closure needs no change and never sees the hook. Same pattern as
+setup naming a plain closure needs no change and never sees the hook. `biogeochemistry` works the
+same way through `model_biogeochemistry`, so `nothing` passes through. Same pattern as
 `initial_conditions` and `resolve_initial_conditions`.
 
 `model_closure` takes `boundary_config` as well as the grid because a closure may act on the open

@@ -7,10 +7,11 @@
 #
 #   1. **Reuse.** `oslofjorden.jl` is included, and the pieces that need no change — the grid, the
 #      bathymetry, the atmosphere — are passed straight through.
-#   2. **A new config subtype with a new hook method.** `NPZDModel`, `NPZDRivers` and
-#      `NPZDBoundaries` subtype an `Abstract*Config`, hold the built-in config they extend, and
-#      delegate every hook but the one or two they mean to change. That is the documented way to add
-#      a source (`docs/adding-a-source.md`) and it is all rivers and the model need.
+#   2. **A new config subtype with a new hook method.** `NPZDRivers` and `NPZDBoundaries` subtype an
+#      `Abstract*Config`, hold the built-in config they extend, and delegate every hook but the one
+#      or two they mean to change; `NPZDBiogeochemistry` implements `AbstractBiogeochemistryConfig`'s
+#      one hook. That is the documented way to add a source (`docs/adding-a-source.md`) and it is all
+#      rivers and the model need.
 #   3. **A new method on a *pipeline* generic.** `prepare_boundaries` is a generic function
 #      dispatching on the config type, so `NPZDBoundaries` adds a method that runs the built-in
 #      pipeline and then *appends* the biogeochemical variables to the file it wrote.
@@ -45,7 +46,7 @@
 using FjordSim
 using FjordSim: BoundaryData, Rivers, Simulations
 using FjordSim.Configs:
-    AbstractBoundaryDataConfig, AbstractCoupledSimulationConfig, AbstractRiverConfig
+    AbstractBiogeochemistryConfig, AbstractBoundaryDataConfig, AbstractRiverConfig
 using Oceananigans
 using Oceananigans.Units
 using OceanBioME
@@ -339,46 +340,33 @@ function append_boundary_variables!(filepath, edges, profiles)
     return filepath
 end
 
-# --- NPZDModel: a new AbstractCoupledSimulationConfig -------------------------------------------
+# --- NPZDBiogeochemistry: a new AbstractBiogeochemistryConfig -----------------------------------
 
 """
-    NPZDModel(base; tracers, surface_PAR, scale_negatives)
+    NPZDBiogeochemistry(; surface_PAR, scale_negatives)
 
-`base`'s model with OceanBioME's NPZD attached.
+OceanBioME's NPZD, as the knobs `model_biogeochemistry` builds it from.
 
-A config of its own rather than a `biogeochemistry` field on `base`, because `NPZD` needs the grid
-and `CoupledHydrostaticSimulation` is built long before there is one — `build_simulation` reads the
-grid out of the processed bathymetry. `free_surface` and `model_closure` already solve that by
-taking a config and being called with the grid once it exists; `biogeochemistry` has no such hook,
-so this type supplies one at the level above, by rebuilding `base` inside `coupled_simulation`.
-
-`tracers` has to be spelled out in full. Oceananigans merges a biogeochemical model's required
-tracers into the model's own only when *none* of them is named already
-(`has_biogeochemical_tracers`), and NPZD requires `:T` — its growth rate carries a Q₁₀ — which every
-FjordSim setup names. All-but-one present is an `ArgumentError`, so the list must be complete.
-Naming it here is what `model_tracers` reports, and that is what decides the forcing terms, the open
-boundary conditions and the initial conditions, all of which are resolved before the model exists.
+A config rather than `NPZD(grid; ...)` itself, because `NPZD` needs the grid and this file is
+evaluated before there is one — `build_simulation` reads the grid out of the processed bathymetry
+and only then calls `coupled_simulation`, which hands it to `model_biogeochemistry`.
 """
-struct NPZDModel{M,T<:Tuple,P} <: AbstractCoupledSimulationConfig
-    base::M
-    tracers::T
+struct NPZDBiogeochemistry{P} <: AbstractBiogeochemistryConfig
     surface_PAR::P
     scale_negatives::Bool
 end
 
-NPZDModel(base; tracers, surface_PAR, scale_negatives) =
-    NPZDModel(base, Tuple(Symbol.(tracers)), surface_PAR, Bool(scale_negatives))
-
-Simulations.model_tracers(model::NPZDModel) = model.tracers
+NPZDBiogeochemistry(; surface_PAR, scale_negatives) =
+    NPZDBiogeochemistry(surface_PAR, Bool(scale_negatives))
 
 """
     negative_tracer_scaler(scale_negatives)
 
-The `modifiers` an `NPZDModel` asks for: negative scaling over the four biogeochemical tracers, or
-`nothing`.
+The `modifiers` an `NPZDBiogeochemistry` asks for: negative scaling over the four biogeochemical
+tracers, or `nothing`.
 
 Spelled out rather than left to `NPZD`'s `scale_negatives` keyword, which would include temperature
-in the group — see `npzd_model`.
+in the group — see `model_biogeochemistry` below.
 
 `invalid_fill_value = 0` rather than `ScaleNegativeTracers`' own `NaN` default: a cell whose N+P+Z+D
 total goes negative is rare but not impossible even away from `T`, and the thinnest partial-bottom
@@ -391,14 +379,10 @@ negative_tracer_scaler(scale_negatives::Bool) =
     scale_negatives ? ScaleNegativeTracers(Tuple(keys(NPZD_PROFILES)); invalid_fill_value = 0) : nothing
 
 """
-    npzd_model(model, grid)
+    model_biogeochemistry(config::NPZDBiogeochemistry, grid)
 
-`model.base` with the biogeochemistry and the tracer list filled in, as a plain
-`CoupledHydrostaticSimulation` — so `coupled_simulation` below is a one-line delegation and every
-other knob stays stated exactly once, in `base`.
-
-`NPZD` returns an already-wrapped `Biogeochemistry`; passing it to `HydrostaticFreeSurfaceModel` as
-it comes is correct, and wrapping it again is not.
+OceanBioME's `NPZD` on `grid`. It returns an already-wrapped `Biogeochemistry`; passing it to
+`HydrostaticFreeSurfaceModel` as it comes is correct, and wrapping it again is not.
 
 `scale_negatives` is worth having on for a run like this one: WENO on a sharp detritus or
 phytoplankton front will undershoot, and a negative nutrient is how these models blow up rather than
@@ -411,29 +395,15 @@ tracer, and set it to `NaN` wherever `N + P + Z + T + D` went negative. A `NaN` 
 `NaN` buoyancy, hence a `NaN` velocity, hence a `NaN` `Δt` — which is exactly how this run used to
 die, in `calculate_substeps`, before the first hour was out.
 
-So the modifier is built here instead, over the four tracers that really do carry the nitrogen, and
-`scale_negatives` stays at its `false` default. `NPZD_PROFILES` names them, so the set cannot drift
-apart from the one the initial conditions and the boundary append use.
+So the modifier is built by `negative_tracer_scaler` instead, over the four tracers that really do
+carry the nitrogen, and `scale_negatives` stays at its `false` default. `NPZD_PROFILES` names them, so
+the set cannot drift apart from the one the initial conditions and the boundary append use.
 """
-npzd_model(model::NPZDModel, grid) = CoupledHydrostaticSimulation(
-    buoyancy = model.base.buoyancy,
-    closure = model.base.closure,
-    tracer_advection = model.base.tracer_advection,
-    momentum_advection = model.base.momentum_advection,
-    tracers = model.tracers,
-    coriolis = model.base.coriolis,
-    sea_ice = model.base.sea_ice,
-    biogeochemistry = NPZD(
-        grid;
-        surface_PAR = model.surface_PAR,
-        modifiers = negative_tracer_scaler(model.scale_negatives),
-    ),
-    free_surface = model.base.free_surface,
-    extra_kwargs = model.base.extra_kwargs,
+Simulations.model_biogeochemistry(config::NPZDBiogeochemistry, grid) = NPZD(
+    grid;
+    surface_PAR = config.surface_PAR,
+    modifiers = negative_tracer_scaler(config.scale_negatives),
 )
-
-Simulations.coupled_simulation(model::NPZDModel, grid; kwargs...) =
-    Simulations.coupled_simulation(npzd_model(model, grid), grid; kwargs...)
 
 # --- NPZDRivers: a new AbstractRiverConfig ------------------------------------------------------
 
@@ -600,6 +570,7 @@ boundaries = NPZDBoundaries(
 )
 
 simulation = base.simulation_config
+base_model = simulation.model
 
 FjordConfig(
     grid_config = base.grid_config,
@@ -612,15 +583,27 @@ FjordConfig(
         # `oslofjorden.jl`'s would have the two runs pick each other's up.
         results_root = fjord_results_root("oslofjorden_npzd"),
         architecture = simulation.architecture,
-        model = NPZDModel(
-            simulation.model,
-            # `:T` is in the list because NPZD's growth rate carries a Q₁₀ and therefore requires it;
-            # see `NPZDModel`. `tracer_advection` is `oslofjorden.jl`'s scalar `WENO()`, which was
-            # already chosen so that a tracer the setup does not enumerate — CATKE's `e` then, these
-            # four now — does not silently fall back to an unbounded centered scheme.
+        # `oslofjorden.jl`'s model with the four tracers added and the biogeochemistry filled in.
+        model = CoupledHydrostaticSimulation(
+            buoyancy = base_model.buoyancy,
+            closure = base_model.closure,
+            # `oslofjorden.jl`'s scalar `WENO()`, which was already chosen so that a tracer the setup
+            # does not enumerate — CATKE's `e` then, these four now — does not silently fall back to
+            # an unbounded centered scheme.
+            tracer_advection = base_model.tracer_advection,
+            momentum_advection = base_model.momentum_advection,
+            # Spelled out in full. Oceananigans merges a biogeochemical model's required tracers into
+            # the model's own only when *none* of them is named already (`has_biogeochemical_tracers`),
+            # and NPZD requires `:T` — its growth rate carries a Q₁₀ — which every FjordSim setup
+            # names. All-but-one present is an `ArgumentError`, so the list must be complete. It is
+            # also what `model_tracers` reports, which decides the forcing terms, the open boundary
+            # conditions and the initial conditions, all resolved before the model exists.
             tracers = (:T, :S, :N, :P, :Z, :D),
-            surface_PAR = surface_par,
-            scale_negatives = true,
+            coriolis = base_model.coriolis,
+            sea_ice = base_model.sea_ice,
+            biogeochemistry = NPZDBiogeochemistry(surface_PAR = surface_par, scale_negatives = true),
+            free_surface = base_model.free_surface,
+            extra_kwargs = base_model.extra_kwargs,
         ),
         # Unchanged. The air-sea flux piece gives a top boundary condition to u, v, T and S only, so
         # the four biogeochemical tracers get Oceananigans' default no-flux surface — right for a

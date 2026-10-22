@@ -94,6 +94,16 @@ enters through, as `(; target_i, target_j)`, or `nothing` for a setup with no ri
 model_closure(closure, grid, boundary_config, river_columns) = closure
 
 """
+    model_biogeochemistry(biogeochemistry, grid)
+
+The biogeochemistry `coupled_simulation` gives `HydrostaticFreeSurfaceModel`.
+
+The fallback is the identity, so `nothing` or a pre-built biogeochemistry passes through unchanged.
+An `AbstractBiogeochemistryConfig` overloads it to build one from the grid.
+"""
+model_biogeochemistry(biogeochemistry, grid) = biogeochemistry
+
+"""
     BoundarySponge(; base, width_cells, viscosity, diffusivity)
 
 The one built-in `AbstractClosureConfig`: `base`, plus a harmonic horizontal viscosity and
@@ -356,7 +366,9 @@ objects `coupled_simulation` consumes rather than as knobs it has to interpret. 
 the one exception: it is itself an `AbstractFreeSurfaceConfig`, built by its own `free_surface(config,
 grid)` hook rather than stored ready-made, for exactly the reason `coupled_simulation` — and not this
 struct — is what assembles the model: `SplitExplicitFreeSurface` needs the grid, which only exists
-once `coupled_simulation` is called.
+once `coupled_simulation` is called. `closure` and `biogeochemistry` may each be a config of that
+kind too (`AbstractClosureConfig`, `AbstractBiogeochemistryConfig`), resolved by `model_closure` and
+`model_biogeochemistry`.
 
 **No field has a default**, deliberately. Every one is a scientific choice about a particular fjord,
 and a default would let the next setup silently inherit it, so a setup that forgets one gets an
@@ -2620,11 +2632,13 @@ different kind of model is a new `AbstractCoupledSimulationConfig` subtype and a
 neither `build_simulation` nor anything above it changes.
 
 The method below builds a `HydrostaticFreeSurfaceModel` inside a NumericalEarth `OceanSeaIceModel`.
-Two of its components are resolved here rather than arriving prebuilt, and for the same reason:
+Three of its components are resolved here rather than arriving prebuilt, and for the same reason:
 `model.free_surface`'s `free_surface(config, grid)` hook, because `SplitExplicitFreeSurface` needs
-the grid, and `model.closure` through `model_closure`, because a closure may need the grid, the
-open edges *and* the river columns. `model_closure`'s fallback is the identity, so a plain
-Oceananigans closure — which is what most setups write — passes through untouched.
+the grid, `model.closure` through `model_closure`, because a closure may need the grid, the
+open edges *and* the river columns, and `model.biogeochemistry` through `model_biogeochemistry`,
+because a biogeochemical model may need the grid. Both fallbacks are the identity, so a plain
+Oceananigans closure or a `nothing` biogeochemistry — which is what most setups write — passes
+through untouched.
 
 `boundary_config` is the setup's `AbstractBoundaryDataConfig`, or `nothing`. It is passed rather than
 read, for the same reason `boundary_condition_sides` takes it: the edges are stated once, on that
@@ -2660,7 +2674,7 @@ function coupled_simulation(
         coriolis = model.coriolis,
         forcing = forcing,
         boundary_conditions = boundary_conditions,
-        biogeochemistry = model.biogeochemistry,
+        biogeochemistry = model_biogeochemistry(model.biogeochemistry, grid),
         # Kernels otherwise get the time in the grid's float type (Float32 here) while the host pages
         # each `FieldTimeSeries` window from the Float64 clock. Near an exact hour the two round to
         # different slices, so the kernel indexes outside the window and faults on the GPU.

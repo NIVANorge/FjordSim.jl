@@ -165,11 +165,13 @@ if [[ "$STEPS" == *add_rivers* ]]; then
     docker_args+=(-e "NVE_API_KEY=$(cat "$NVE_KEY_FILE")")
 fi
 
+# The preflight runs in FjordSim's own environment, the only one sure to have CUDA as a direct
+# dependency: an image built with `--environment` works in the setup's.
 if [[ "$USE_GPU" == "true" ]]; then
     echo "=== gpu preflight ==="
     nvidia-smi
     docker run "${docker_args[@]}" --entrypoint julia "$IMAGE_URI" \
-        --project /workspace/gcp/preflight.jl
+        --project=/workspace /workspace/gcp/preflight.jl
 fi
 
 ( while true; do sleep 600; sync_results || true; sync_downloads || true; done ) &

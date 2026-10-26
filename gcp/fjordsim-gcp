@@ -79,7 +79,10 @@ Running:
 Inspecting:
   status [RUN_ID]    Show run markers in the bucket.
   logs RUN_ID        Tail a run's log on the VM, falling back to the copy in the bucket.
-  build              Build and push the image (gcp/build_image.sh).
+  build [--environment DIR]
+                     Build and push the image (gcp/build_image.sh). With --environment, an image
+                     whose Julia environment is the setup environment in DIR, for a setup that
+                     loads packages FjordSim does not have; give it its own IMAGE_URI.
 EOF
 }
 
@@ -319,7 +322,7 @@ case "$cmd" in
     down)         cmd_down ;;
     bootstrap)    cmd_bootstrap ;;
     run)          cmd_run "$@" ;;
-    build)        exec "$here/build_image.sh" ;;
+    build)        exec "$here/build_image.sh" "$@" ;;
     status)
         need BUCKET
         if [[ -n "${1:-}" ]]; then

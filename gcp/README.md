@@ -220,6 +220,34 @@ fjord — the basename is what roots the staged directories.
 gcp/fjordsim-gcp run --config examples/oslofjorden_npzd.jl --steps run_simulation --gpu
 ```
 
+### A setup with its own environment
+
+A setup that loads packages FjordSim's environment does not have — a biogeochemistry package, YAML
+— cannot run in the plain image. `build --environment DIR` builds a second image on top of it
+(`gcp/Dockerfile.environment`) whose Julia environment is the one in `DIR`, and pushes that instead:
+
+```bash
+export IMAGE_URI=REGION-docker.pkg.dev/PROJECT/REPO/fjordsim-mysetup:latest
+gcp/fjordsim-gcp build --environment path/to/mysetup_env
+gcp/fjordsim-gcp run --config path/to/mysetup_env/mysetup.jl --steps prepare_bathymetry,add_rivers
+```
+
+- **Its own `IMAGE_URI`**, for the build and for every `run` against it: `run` pulls `IMAGE_URI` at
+  the start of each job, so the two images live side by side and a plain setup keeps using the
+  plain one.
+- **`DIR` needs a `Project.toml` and a `Manifest.toml`**, instantiated. The build copies the git
+  repository holding `DIR`, so a package the environment names by a relative `path` source inside
+  that repository (`NivaEcosmo = {path = ".."}`) comes along, data files and all; a `path` source
+  outside it does not.
+- **FjordSim is this checkout's**, developed into the environment from the image's `/workspace`
+  whatever source the environment names for it, so every step runs against the FjordSim the image
+  was built from.
+- **Rebuild after changing** FjordSim, a package the environment loads or a file such a package
+  reads. The config file itself is uploaded with each run, as for any setup.
+
+Every step and `--resume` run in the setup's environment. The GPU preflight runs in FjordSim's own,
+which is what has CUDA as a direct dependency.
+
 ### Resuming after a preemption
 
 A Spot VM (the default) will interrupt a long run. Recovery is `up`, `bootstrap`, then the same run
@@ -307,5 +335,6 @@ it — nothing else has to change.
 - `--dry-run` prints the launch command and the fully rendered remote script without touching the
   VM. It is the fastest way to see what a launch will actually do.
 - The files here: `fjordsim-gcp` (the driver), `bootstrap.sh` and `remote-run.sh` (both rendered
-  with `envsubst` and run on the VM), `Dockerfile` / `build_image.sh` (the image), `preflight.jl`
-  (fails a GPU run that silently fell back to CPU) and `resume.jl` (sets `pickup = true`).
+  with `envsubst` and run on the VM), `Dockerfile` / `build_image.sh` (the image),
+  `Dockerfile.environment` (a setup's environment on top of it), `preflight.jl` (fails a GPU run
+  that silently fell back to CPU) and `resume.jl` (sets `pickup = true`).

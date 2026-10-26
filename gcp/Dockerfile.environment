@@ -1,0 +1,38 @@
+# A setup's own Julia environment on top of the FjordSim image, for a setup that loads packages
+# FjordSim's environment does not have — a biogeochemistry package, YAML. Built by
+# `gcp/build_image.sh --environment DIR`; see "A setup with its own environment" in gcp/README.md.
+#
+# The `environment` build context is the git repository holding DIR, so a package the environment
+# names by a relative `path` source inside that repository comes along. FjordSim is developed from
+# the image's /workspace whatever source the environment names for it, so a setup runs against the
+# FjordSim this image was built from.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# DIR relative to the repository root.
+ARG ENVIRONMENT
+
+COPY --from=environment . /environment
+
+# The entrypoint's bare `--project` is the working directory's environment, so this is what makes
+# every step, and gcp/resume.jl, run in the setup's environment.
+WORKDIR /environment/${ENVIRONMENT}
+
+# The CUDA runtime version is a preference of the active project, so the one gcp/Dockerfile sets on
+# /workspace does not reach this environment; it is set again, in the same order and for the same
+# reason (see there). CUDA is not a direct dependency of a setup's environment, so it is loaded by
+# its UUID rather than by `using`. A `[sources]` entry naming FjordSim by URL is dropped first, as
+# `Pkg.develop` refuses a path over it.
+RUN julia --project -e 'using Pkg, TOML; \
+        project = TOML.parsefile("Project.toml"); \
+        delete!(get(project, "sources", Dict()), "FjordSim"); \
+        open(io -> TOML.print(io, project), "Project.toml", "w"); \
+        Pkg.develop(path = "/workspace"); Pkg.instantiate()' \
+ && julia --project -e 'CUDA = Base.require(Base.PkgId(Base.UUID("052768ef-5323-5732-b1bb-66c8b64840ba"), "CUDA")); \
+        Base.invokelatest(CUDA.set_runtime_version!, v"12.4")' \
+ && julia --project -e 'using Pkg; Pkg.instantiate()' \
+ && julia --project -e 'runtime = Base.UUID("76a88914-d11a-5bdc-97e0-2f5a05c973a2"); \
+        get(Base.get_preferences(runtime), "version", nothing) == "12.4" || \
+        error("the CUDA runtime version preference did not take in this environment")'
+
+RUN julia --project -e 'using Pkg; Pkg.precompile()'

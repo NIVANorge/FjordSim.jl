@@ -80,8 +80,8 @@ copy out.
 `--instance-termination-action=DELETE` and a `--max-run-duration` (24h Spot, 168h standard), so a
 preemption or reaching that cap deletes the instance *and its boot disk*. A guest `poweroff` is
 different — that only stops it, and the disk survives. This is why the remote run script syncs
-results to the bucket every ten minutes, and why `bootstrap` has to run again after a preemption
-but not after a `down`/`up`.
+results and raw downloads to the bucket every ten minutes, and why `bootstrap` has to run again
+after a preemption but not after a `down`/`up`.
 
 ## One-time setup
 
@@ -187,9 +187,15 @@ gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --g
 Omitting `--gpu` hides the GPU from the container, and `architecture = :auto` resolves to `CPU()` —
 the same config runs either way without an edit. (The VM itself always has an L4; that is the
 launcher's choice, not ours.) Anything a prep job writes under the fjord's data directory is synced
-back to the bucket when it finishes, so the next job finds it. Its results directory is not: only a
-fresh `run_simulation` or a `--resume` owns what is there, and a prep job would otherwise upload
-whatever an earlier run left on the VM's disk, back under a name that run was archived from.
+back to the bucket when it finishes, so the next job finds it. Raw downloads in subdirectories are
+also synced every ten minutes, once a file is complete, so a preempted download resumes from the
+bucket; prepared top-level files wait for the final sync. Every job other than a plain
+`run_simulation` stages the whole data directory, and a job that succeeds deletes it from the VM's
+disk once it is in the bucket, so the disk needs room for one job, not every job so far. Extra
+fjords from `--stage` are neither synced back nor deleted. A prep job's results directory is not
+synced: only a fresh `run_simulation` or a `--resume` owns what is there, and a prep job would
+otherwise upload whatever an earlier run left on the VM's disk, back under a name that run was
+archived from.
 
 `add_rivers` needs `NVE_API_KEY` in your own environment — the same variable a local run uses. `run`
 writes it to a mode-600 file on the VM rather than passing it as an argument, which would be

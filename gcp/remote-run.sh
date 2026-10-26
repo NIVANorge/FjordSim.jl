@@ -45,6 +45,17 @@ sync_results() {
     gcloud storage rsync -r "$RESULTS/$FJORD" "$BUCKET/results/$FJORD" --quiet
 }
 
+# Raw downloads, mid-job, so a preemption loses minutes of them rather than the whole job. Files in
+# subdirectories are complete once they have their final name: every downloader writes `<name>.tmp`
+# and renames it, and the Geonorge archive is unpacked in a `*_staging` directory. Top-level
+# prepared files are written in place and would replace a good copy with a partial one, so only the
+# final sync uploads them.
+sync_downloads() {
+    [[ -d "$DATA/$FJORD" ]] || return 0
+    gcloud storage rsync -r "$DATA/$FJORD" "$BUCKET/data/$FJORD" --quiet \
+        -x '[^/]*$|.*\.tmp$|[^/]*_staging/'
+}
+
 finish() {
     local code=$?
     [[ -n "${SYNC_PID:-}" ]] && kill "$SYNC_PID" 2>/dev/null || true
@@ -52,11 +63,19 @@ finish() {
     echo "=== final stage-out ==="
     sync_results || true
     # Newly prepared inputs are a product too: a prep job exists to put them in the bucket.
-    gcloud storage rsync -r "$DATA/$FJORD" "$BUCKET/data/$FJORD" --quiet || true
+    local data_synced=false
+    gcloud storage rsync -r "$DATA/$FJORD" "$BUCKET/data/$FJORD" --quiet && data_synced=true
     # The VM's disk does not survive a preemption, so this copy is what `logs` falls back to.
     gcloud storage cp "$RUN_LOG" "$RUN_PREFIX/run.log" --quiet || true
 
     if [[ $code -eq 0 ]]; then mark succeeded; else mark "failed(exit=$code)"; fi
+
+    # The bucket now holds all of it, and left here every job and fjord adds to the disk until it
+    # fills. A failed job keeps its data for inspection. Root owns it: the container wrote it.
+    if [[ $code -eq 0 && "$data_synced" == "true" ]]; then
+        echo "=== clearing $DATA/$FJORD ==="
+        sudo rm -rf "$DATA/$FJORD"
+    fi
 
     echo "=== $RUN_ID finished (exit=$code) on $(hostname) ==="
     echo "the VM is left running; stop it with: gcp/fjordsim-gcp down"
@@ -92,7 +111,9 @@ gcloud auth configure-docker "$REGISTRY_HOST" --quiet
 docker pull "$IMAGE_URI"
 
 echo "=== stage in ==="
-if [[ "$STAGE_ALL" == "true" ]]; then
+# A simulation opens only the top-level prepared files. Every other step may need the raw downloads
+# in subdirectories, and a download step that does not find a month on disk fetches it again.
+if [[ "$STAGE_ALL" == "true" || "$STEPS" != "run_simulation" ]]; then
     stage_in "$BUCKET/data/$FJORD" "$DATA/$FJORD"
 else
     stage_in "$BUCKET/data/$FJORD" "$DATA/$FJORD" -x '.*/.*'
@@ -151,7 +172,7 @@ if [[ "$USE_GPU" == "true" ]]; then
         --project /workspace/gcp/preflight.jl
 fi
 
-( while true; do sleep 600; sync_results || true; done ) &
+( while true; do sleep 600; sync_results || true; sync_downloads || true; done ) &
 SYNC_PID=$!
 
 for step in ${STEPS//,/ }; do

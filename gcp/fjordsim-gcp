@@ -71,7 +71,8 @@ Running:
                        unknown:0"; the CPU always gives a complete one for the same bug.
       --stage FJORD    Also stage this fjord's data. Repeatable. Needed when a setup reads
                        another fjord's raw downloads by absolute path.
-      --stage-all      Stage every object under data/FJORD, not just the top-level *.nc.
+      --stage-all      Stage every object under data/FJORD, not just the top-level *.nc. Only
+                       a run_simulation-only job needs it; every other job stages it all.
       --run-id ID      Name the run (default: FJORD-<steps>-<timestamp>). Reuse it to resume.
       --dry-run        Print the rendered remote script and the launch command; touch nothing.
 

@@ -10,6 +10,7 @@
 | [`docs/running.md`](docs/running.md) | running any pipeline step; changing `start_date`, `stop_time`, `z_faces`, the grid `size` or a bathymetry knob; a fresh rerun into a used results directory; resuming |
 | [`gcp/README.md`](gcp/README.md) | anything with `gcp/fjordsim-gcp` or the cloud VM |
 | [`docs/architecture.md`](docs/architecture.md) | changing a module in `src/` — its section only (design rationale, ordering constraints, measured numbers) |
+| [`docs/dispatch-map.md`](docs/dispatch-map.md) | looking up which hooks a supertype has and who implements them; it is generated — after changing a hook, a supertype docstring or a step, rerun `julia --project docs/make_dispatch_map.jl` |
 | [`docs/adding-a-source.md`](docs/adding-a-source.md) | adding a grid, bathymetry, forcing, river, boundary, atmosphere or observation source |
 | [`docs/setups.md`](docs/setups.md) | writing a new setup or changing a setup's parameters |
 | [`README.md`](README.md) | user-facing overview, quick start, `run_simulation` fields |

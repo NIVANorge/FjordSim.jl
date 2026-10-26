@@ -48,6 +48,11 @@ using NumericalEarth
 # @testset body is a `let` scope, where neither `struct` nor `const` may appear.
 include("utilities.jl")
 
+# The dispatch map's generator, in a module of its own so its helpers cannot clash with the suite's.
+module DispatchMap
+include(joinpath(@__DIR__, "..", "docs", "make_dispatch_map.jl"))
+end
+
 @testset "Public interface" begin
     @testset "exports" begin
         # What a setup names, and nothing else: the abstract supertypes, the hooks and the internals
@@ -1077,6 +1082,14 @@ end
         @test first(longitude) <= 10.0 && last(longitude) >= 11.0   # covers the stub grid's domain
         @test first(latitude) <= 59.0 && last(latitude) >= 60.0
     end
+end
+
+@testset "Dispatch map" begin
+    # `docs/dispatch-map.md` is generated from the hooks each supertype's docstring lists and the
+    # methods the package defines, so a changed hook, implementation or step leaves it stale.
+    fresh = DispatchMap.dispatch_map() == read(DispatchMap.DISPATCH_MAP_PATH, String)
+    fresh || @error "docs/dispatch-map.md is stale: regenerate it with `julia --project docs/make_dispatch_map.jl`"
+    @test fresh
 end
 
 @testset "Config files" begin

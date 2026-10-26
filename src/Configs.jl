@@ -288,17 +288,20 @@ ensemble, a nested run — is a setup type of its own overloading `run_simulatio
 # Methods a subtype provides
 - `results_root(config)`: the directory the run writes into, and what a writer's `output_file` and
   `FjordSim.CLI.log_path` resolve against. The one config rooted at a results directory rather
-  than a `data_root`, being the only one that writes rather than reads.
+  than a `data_root`, being the only one that writes rather than reads. Required.
 - `FjordSim.Simulations.run_architecture(config)`: the live `CPU()` or `GPU()` the run uses.
-- `writers(config)`: a tuple of `AbstractWriterConfig`s, attached by `attach_writer!`.
+  Required.
+- `writers(config)`: a tuple of `AbstractWriterConfig`s, attached by `attach_writer!`. Required.
 - `callbacks(config)`: a tuple of `AbstractCallbackConfig`s, attached by `attach_callback!`.
+  Required.
 - `time_stepping(config)`: an `AbstractTimeSteppingConfig`, attached by `attach_time_stepping!`.
+  Required.
 - `initial_conditions(config)`: an `AbstractInitialConditionsConfig`, or a `NamedTuple` `set!`
-  accepts, resolved by `FjordSim.Simulations.resolve_initial_conditions`.
+  accepts, resolved by `FjordSim.Simulations.resolve_initial_conditions`. Required.
 - `start_date(config)`: the calendar instant model time zero stands for. With `stop_time` it is the
-  run window `coverage_window` reports, which every prepare step spans.
+  run window `coverage_window` reports, which every prepare step spans. Required.
 - `stop_time(config)`, `loops(config)`, `pickup(config)`: run control, read by `build_simulation`
-  and `run_simulation`.
+  and `run_simulation`. Required.
 
 `FjordSim.Simulations.RunConfig` is the built-in implementation, returning its fields of the same
 names.

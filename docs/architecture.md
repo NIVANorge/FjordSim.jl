@@ -28,7 +28,8 @@ is the `FromForcing` state. A setup that needs neither names no forcing config: 
 on it — the initial state, rivers, open boundaries and atmosphere each have their own config and file.
 
 Every input is dispatched through a hook on an abstract supertype, so a new source is a subtype plus
-methods (`docs/adding-a-source.md`).
+methods (`docs/adding-a-source.md`). `docs/dispatch-map.md` tabulates every supertype's hooks, which
+built-in types implement them, and what each step reads; it is generated from the code.
 
 ## 1. Configs (`src/Configs.jl`)
 

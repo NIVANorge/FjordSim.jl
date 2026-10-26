@@ -10,17 +10,18 @@
 
 Supertype of the observation sources a validation scores against.
 
-# Required of a subtype
+# Fields a subtype provides
 - `data_root`: directory the cached downloads live under.
 - `output_directory`: name of this source's directory inside it.
 
-# Hooks
-| Hook | Required | Default |
-|---|---|---|
-| `observation_stations(config)` | yes | — |
-| `observation_series(config, station, variable; window)` | yes | — |
-| `download_observations(config, window)` | no | no-op, for a source read from local files |
-| `observations_directory(config)` | no | `joinpath(data_root, output_directory)` |
+# Methods a subtype provides
+- `observation_stations(config)`: the `Station`s this source can supply. Required.
+- `observation_series(config, station, variable; window)`: one station's record of one variable.
+  Required.
+- `download_observations(config, window)`: fetch and cache the source data. Optional; defaults to a
+  no-op, for a source read from local files.
+- `observations_directory(config)`: where the cache lives. Optional; defaults to
+  `joinpath(data_root, output_directory)`.
 """
 abstract type AbstractObservationConfig end
 

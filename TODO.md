@@ -1,11 +1,13 @@
 # TODO
 
+## Validation of `examples/oslofjorden_validation.jl`
+
 Code changes found while validating `examples/oslofjorden_validation.jl` against the NIVA CTD casts,
 NorKyst v3 and FjordOs. Unless a section says otherwise, numbers quote the full 640-day run (stamp
 20261014T142318, 2014-04-01 to 2015-12-31), archived as `oslofjorden_validation_2026-10-16`; its
 report and scripts are in that results directory under `validation/report_full/`.
 
-## Vertical mixing is too strong
+### Vertical mixing is too strong
 
 This probably applies to every setup and example: `oslofjorden` and `drammensfjorden` use
 `CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6)`. `examples/lista.jl` has moved to 7e-7. The
@@ -30,7 +32,7 @@ Tasks:
       temperature, but 0.4–1.4 g/kg too fresh below 5 m and overheats the 2–3 m deep cells (see
       "Hot shallow cells").
 
-## Bathymetry
+### Bathymetry
 
 The gridding and sill fixes are in (linear gridding of the soundings, `preserve_sills`,
 `raw_resolution_factor = 4`, `max_slope_factor = 0.5`, faces to −467 m); the measurements are in the
@@ -57,7 +59,7 @@ against the real ~20 m.
         (277, 1, 16), (94, 1, 11) and (255, 1, 17). So i = 92, 94, 144 and 163 are pits too, and the
         stage has to find them by the rule rather than from a list.
 
-## Open-boundary tide
+### Open-boundary tide
 
 NorKyst v3's boundary `zeta` gives M2 17.7 cm and S2 1.4 cm, against 12.4 cm and 3.1 cm observed at
 Viker. FjordSim inherits this error. The M2 current at Km1 is 5.6 cm/s, against 1.8 cm/s observed.
@@ -93,7 +95,7 @@ regrid (`correct_boundary_tide!`), velocities by the same complex gain as the se
       gauges, and the Km1 current (expected about 2.3 cm/s from the M2 factor alone). The interior
       M2 phase error (11° ahead at Oscarsborg and Oslo, 3° at Viker) will remain.
 
-## Sill basins are not renewed
+### Sill basins are not renewed
 
 The main error left after the fixes above. Inside the sills, the deep water is freshened from above
 and never renewed, steadily over both years. Outside the sills (OF-1 at 200 m, OF-5 and Im2 at
@@ -124,7 +126,7 @@ and never renewed, steadily over both years. Outside the sills (OF-1 at 200 m, O
       cold. If the adjustment from it drives the drift, a few months' spin-up from a cast-based
       initial state in the basins would show it.
 
-## Intermediate water too warm in the middle fjord
+### Intermediate water too warm in the middle fjord
 
 In summer and autumn, FjordSim carries the surface heat to 100–150 m at OF-5 (Breiangen) and Im2
 (Drøbak Sound). It reaches about 10 °C at 100 m, against 7–9.5 °C in the casts, in both years.
@@ -134,7 +136,7 @@ keeps that water 1.5–2.5 °C too cold.
 - [ ] Find out whether it is local vertical mixing or warm water advected in at mid-depth: compare
       κ from CATKE with the heat budget at OF-5 between June and October.
 
-## Surface salinity near the large rivers
+### Surface salinity near the large rivers
 
 The top 5 m is too salty off Glomma, at I-1 (+5.1 g/kg) and S-9 (+3.4). It is too fresh at LA-1
 beside Numedalslågen (−3.5, and too fresh at every depth there, −1.5 to −2.2) and in the Oslo
@@ -145,7 +147,7 @@ harbour (−2 to −3.1).
       put its fresh water east of where I-1 and S-9 see it. Check the gauge substitutions
       (Akerselva, Lysakerelva) and the catchment-normal fallbacks.
 
-## Negative salinity in a Glomma delta column
+### Negative salinity in a Glomma delta column
 
 On 152 of 640 days some cell is below −0.1 g/kg, and on 35 days below −0.5; the minimum is −1.35
 (31 October 2014). In every snapshot checked it is the same column, (260, 132) at 10.89 °E,
@@ -158,7 +160,7 @@ reconstruction, so another term drives this cell below zero.
       vertical diffusion of fresh water, or the free-surface inflow interacting with advection in a
       nearly enclosed cell.
 
-## Hot shallow cells
+### Hot shallow cells
 
 With the TKE floor at 7e-7, the warmest cell reaches 33.8 °C (27 July 2014) and 29.4 °C in 2015.
 More than 10 000 cells exceed 25 °C on 10 days, all in the July 2014 heat wave, in 2–3 m deep
@@ -167,7 +169,7 @@ columns. No observations cover those bays.
 - [ ] Add mixing in very shallow columns (like `RiverMouthMixing`), or set a minimum depth for wet
       cells, rather than raising the TKE floor everywhere.
 
-## Validation
+### Validation tooling
 
 - [ ] `validate_simulation` reads only the newest run stamp (`station_files` takes
       `first(candidates)`). A resumed run splits its output across stamps, so it should concatenate
@@ -201,7 +203,7 @@ columns. No observations cover those bays.
       inner basins' 2015 drift is unscored. Ask NIVA whether the 2015 Indre Oslofjord casts exist
       elsewhere.
 
-## Run infrastructure
+### Run infrastructure
 
 - [ ] The run kept all 91 checkpoints, about 62 GB, even though `cleanup = true` is set. Find out
       why, and make `gcp/fjordsim-gcp`'s results sync, which uses `rsync` without delete, stop
@@ -217,3 +219,25 @@ columns. No observations cover those bays.
       station files from the periodic sync and upload them at exit.
 - [ ] `fjordsim-gcp logs` runs `tail -f` and never returns. Add a `--lines N` mode that prints and
       exits.
+
+## Design
+
+`docs/dispatch-map.md` lists every supertype's hooks and which built-in types implement them. These
+are the places where a new component still cannot plug in through dispatch alone.
+
+- [ ] State the longitude–latitude grid assumption in a type. A grid config only promises
+      `domain_grid` and `simulation_grid`, but `regrid_forcing`, `regrid_initial_state`,
+      `regrid_boundary_data`, `place_rivers` and the prepared files' layout (`src/Regridding.jl`)
+      read the target grid's coordinates with `λnodes`/`φnodes`. A rectilinear or single-column grid
+      config therefore loads and then fails inside the regridding. Either give those work functions
+      a method per grid kind, or add a grid-config hook returning each point's longitude and
+      latitude.
+- [ ] Turn validation's station-writer contract into hooks. `station_output` opts a writer in, but
+      `score_run` (`model_series` in `src/Validation/Validation.jl`) then reads the writer's
+      `variables`, `stations` and `output_file` fields and expects one file per station, named by
+      `station_tag`. A writer that stores its stations another way, such as `SectionWriter` with many
+      profiles in one file, is not scored.
+
+Not a gap: the built-in model's keywords are fixed. An input of a new kind needs a model config whose
+`coupled_model` accepts it and a setup type whose `model_inputs` supplies it
+(`docs/adding-a-source.md`, "A new kind of input, or a setup type of its own").

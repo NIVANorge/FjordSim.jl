@@ -100,13 +100,13 @@ run does without that component. So a setup names what it wants and skips the re
 | Open boundaries | `boundary_data_config` | `download_boundary_data`, `prepare_boundary_data` | every lateral edge is a closed wall |
 | Atmosphere | `atmosphere_config` | `download_atmosphere`, `prepare_atmosphere` | no prescribed atmosphere or radiation |
 | Forcing | `forcing_config` | `download_forcing`, `prepare_forcing` | no interior forcing terms, no `FromForcing` initial conditions |
-| Model | `model_config` | `run_simulation` | data preparation only; required with a simulation config |
+| Model | `model_config` | `run_simulation` | data preparation only; required with a run config |
 | Biogeochemistry | `biogeochemistry_config` | `run_simulation` | no biogeochemical model |
-| Boundary conditions | `boundary_condition_configs` | `run_simulation` | data preparation only; required with a simulation config, `()` for the model's defaults |
-| Simulation | `simulation_config` | `run_simulation`, `validate_simulation` | data preparation only |
+| Boundary conditions | `boundary_condition_configs` | `run_simulation` | data preparation only; required with a run config, `()` for the model's defaults |
+| Run | `run_config` | `run_simulation`, `validate_simulation` | data preparation only |
 
 The model, its biogeochemistry, its boundary conditions and the run are separate components, side
-by side with the data: `model_config` says what is built, `simulation_config` how it is run.
+by side with the data: `model_config` says what is built, `run_config` how it is run.
 
 1. **Bathymetry** — the domain's depth and land/sea mask. `prepare_bathymetry` regrids a bathymetry
    source onto the simulation grid (built from the grid config's bounds and resolution) and writes the
@@ -123,7 +123,7 @@ by side with the data: `model_config` says what is built, `simulation_config` ho
 3. **Rivers** — `add_rivers` writes each river's daily discharge and temperature on the surface
    columns it enters through (built in: NVE's HydAPI), which the run adds as a volume source. It is its
    own config and file, independent of the forcing: it needs only the processed bathymetry and the
-   simulation config's run window, `start_date` to `start_date + stop_time`, which its daily time
+   run config's run window, `start_date` to `start_date + stop_time`, which its daily time
    axis spans.
 
 4. **Open-boundary data** — the exterior state along the open lateral edges, which is what makes them
@@ -167,7 +167,7 @@ julia --project -m FjordSim run_simulation --config examples/oslofjorden_npzd.jl
 ## Some `run_simulation` details
 
 `run_simulation` has no command-line options: everything is stated in the setup's
-`SimulationConfig`. These fields control the run itself.
+`RunConfig`. These fields control the run itself.
 
 | Field | Meaning |
 |---|---|

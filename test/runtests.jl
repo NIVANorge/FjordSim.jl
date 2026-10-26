@@ -3,30 +3,31 @@ using FjordSim.Configs: AbstractAtmosphereConfig, AbstractBathymetryConfig,
     AbstractBoundaryConditionConfig, AbstractBoundaryDataConfig, AbstractFjordConfig,
     AbstractCallbackConfig, AbstractClosureConfig, AbstractModelConfig,
     AbstractForcingConfig, AbstractFreeSurfaceConfig, AbstractGridConfig, AbstractRiverConfig,
-    AbstractSimulationConfig, AbstractTimeSteppingConfig, AbstractWriterConfig
+    AbstractRunConfig, AbstractTimeSteppingConfig, AbstractWriterConfig
 using FjordSim.Utils: coverage_window
 using FjordSim.Grids: domain_grid, open_edges, simulation_grid
 using FjordSim.Plotting: plot_boundary_data, plot_path
-using FjordSim.Bathymetry: bathymetry_dataset, bathymetry_path, geodatabase_path, regrid_options,
-    write_bathymetry_file
+using FjordSim.Bathymetry: bathymetry_dataset, bathymetry_path, geodatabase_path, process_bathymetry,
+    regrid_options, write_bathymetry_file
 using FjordSim.Regridding: interpolation_architecture, ProjectedSourceGrid
 using FjordSim.Atmospheres: atmosphere_date_range, atmosphere_directory, atmosphere_path,
     atmosphere_source_grid, atmosphere_target_axes, atmosphere_time_steps,
-    atmosphere_variable_names, AtmosphereRecord, MultiYearNORA3, NORA3PrescribedAtmosphere,
-    NORA3PrescribedRadiation, prescribed_atmosphere, prescribed_radiation, ProjectedAtmosphereGrid
+    atmosphere_variable_names, AtmosphereRecord, fetch_atmosphere, MultiYearNORA3,
+    NORA3PrescribedAtmosphere, NORA3PrescribedRadiation, prescribed_atmosphere, prescribed_radiation,
+    ProjectedAtmosphereGrid, regrid_atmosphere
 using FjordSim.Forcing: forcing_date_range, forcing_directory, forcing_from_file,
     forcing_monthly_filename, forcing_path, forcing_source_grid, forcing_time_steps,
-    forcing_variable_names, simulation_forcing
-using FjordSim.InitialState: initial_state_directory, initial_state_path
-using FjordSim.Rivers: river_discharge, river_forcing_path, river_locations,
+    forcing_variable_names, regrid_forcing, simulation_forcing
+using FjordSim.InitialState: initial_state_directory, initial_state_path, regrid_initial_state
+using FjordSim.Rivers: place_rivers, river_discharge, river_forcing_path, river_locations,
     river_maximum_inflow_velocity, river_search_radius, river_series
 using FjordSim.BoundaryConditions: boundary_condition_sides, model_boundary_conditions,
     top_bottom_boundary_conditions
 using FjordSim.BoundaryData: boundary_data_directory, boundary_data_path, boundary_variable_name,
-    boundary_variable_names
+    boundary_variable_names, regrid_boundary_data
 using FjordSim.Simulations: attach_callback!, attach_time_stepping!, attach_writer!,
     coupled_model, free_surface, initial_time_step, model_biogeochemistry, model_closure,
-    model_tracers, results_path, run_tag, simulation_architecture
+    model_tracers, results_path, run_tag, run_architecture
 using FjordSim.Validation: baroclinic_deviation, CsvObservations, depth_average,
     direction_statistics, harmonic_fit, KartverketSeaLevel, monthly_statistics, observation_series,
     observation_stations, observations_directory, ObservationSeries, quantiles, reconstruct,
@@ -79,7 +80,7 @@ include("utilities.jl")
             :NorKystBoundaryDataConfig,
             :NorKystHindcastBoundaryDataConfig,
             :NORA3Config,
-            :SimulationConfig,
+            :RunConfig,
             :CoupledHydrostaticModel,
             :SplitExplicitFreeSurfaceConfig,
             :BoundarySponge,
@@ -869,7 +870,7 @@ end
                 0.05,
                 0.1,
             ),
-            simulation_config = MinimalSimulation(data_root, DateTime(2021, 3, 4, 5), 7200.0),
+            run_config = MinimalRun(data_root, DateTime(2021, 3, 4, 5), 7200.0),
         )
         rivers = config.river_config
 
@@ -877,7 +878,7 @@ end
         @test config.bathymetry_config isa AbstractBathymetryConfig
         @test config.forcing_config isa AbstractForcingConfig
         @test config.atmosphere_config isa AbstractAtmosphereConfig
-        @test config.simulation_config isa AbstractSimulationConfig
+        @test config.run_config isa AbstractRunConfig
         @test rivers isa AbstractRiverConfig
 
         # Field types are still concrete, so the struct stays type-stable per instantiation.
@@ -885,7 +886,7 @@ end
         @test fieldtype(typeof(config), :grid_config) === SingleColumnGrid
         @test fieldtype(typeof(config), :river_config) === MinimalRivers
         @test fieldtype(typeof(config), :atmosphere_config) === MinimalAtmosphere
-        @test fieldtype(typeof(config), :simulation_config) === MinimalSimulation
+        @test fieldtype(typeof(config), :run_config) === MinimalRun
         # Unnamed, so its own type parameter resolves to `Nothing` — concrete, like the rest.
         @test fieldtype(typeof(config), :boundary_data_config) === Nothing
 
@@ -915,22 +916,22 @@ end
         @test atmosphere_path(config.atmosphere_config) == joinpath(data_root, "column_atmosphere.nc")
         @test atmosphere_directory(config.atmosphere_config) == joinpath(data_root, "column_source")
         @test plot_path(config.atmosphere_config) == joinpath(data_root, "column_atmosphere.png")
-        # The simulation config resolves against `results_root`, being the one config that writes, and
+        # The run config resolves against `results_root`, being the one config that writes, and
         # inherits the run tag, the loop-indexed variant and the coverage window for free. The
         # *filename* is the writer's, so this also proves a built-in writer type composes with a
-        # foreign simulation config.
-        @test run_tag(config.simulation_config) == FjordSim.Simulations.LAUNCH_TAG[]
+        # foreign run config.
+        @test run_tag(config.run_config) == FjordSim.Simulations.LAUNCH_TAG[]
         column_writer = test_snapshot_writer(output_file = "column_snapshots.nc")
         with_run_tag() do
-            @test results_path(column_writer, config.simulation_config) ==
+            @test results_path(column_writer, config.run_config) ==
                   joinpath(data_root, "column_snapshots_$PINNED_RUN_TAG.nc")
-            @test results_path(column_writer, config.simulation_config, 12) ==
+            @test results_path(column_writer, config.run_config, 12) ==
                   joinpath(data_root, "column_snapshots_$(PINNED_RUN_TAG)_loop12.nc")
         end
         # A writer that names no output file says so, rather than failing with `has no field
         # output_file` from inside `tagged_path`.
-        @test_throws ArgumentError results_path(test_checkpoint_writer(), config.simulation_config)
-        @test coverage_window(config.simulation_config) ==
+        @test_throws ArgumentError results_path(test_checkpoint_writer(), config.run_config)
+        @test coverage_window(config.run_config) ==
               (DateTime(2021, 3, 4, 5), DateTime(2021, 3, 4, 7))
 
         # `river_search_radius` and `river_maximum_inflow_velocity` are the river pipeline's optional
@@ -958,7 +959,7 @@ end
         # ...while a required hook that is not implemented fails as a missing method, naming what
         # the new subtype still owes, rather than silently doing nothing.
         @test_throws MethodError bathymetry_dataset(grid, config.bathymetry_config)
-        @test_throws MethodError prepare_bathymetry(grid, config.bathymetry_config)
+        @test_throws MethodError process_bathymetry(grid, config.bathymetry_config)
         @test_throws MethodError forcing_time_steps(config.forcing_config)
         @test_throws MethodError forcing_source_grid(config.forcing_config, "unused.nc")
         @test_throws MethodError river_locations(rivers)
@@ -967,13 +968,13 @@ end
         @test_throws MethodError atmosphere_time_steps(config.atmosphere_config)
         @test_throws MethodError atmosphere_source_grid(config.atmosphere_config, "unused.nc")
         @test_throws MethodError atmosphere_variable_names(config.atmosphere_config)
-        @test_throws MethodError prepare_atmosphere(grid, config.atmosphere_config)
+        @test_throws MethodError regrid_atmosphere(grid, config.atmosphere_config)
         # The two read-side atmosphere hooks are missing the same way, so a source that prepares a
         # file but cannot be simulated says which methods it still owes.
         @test_throws MethodError prescribed_atmosphere(config.atmosphere_config, CPU())
         @test_throws MethodError prescribed_radiation(config.atmosphere_config, CPU())
 
-        # The supertypes `SimulationConfig` nests own one hook contract each, and each is
+        # The supertypes `RunConfig` nests own one hook contract each, and each is
         # missing the same discoverable way.
         @test MinimalModel() isa AbstractModelConfig
         @test MinimalFreeSurface() isa AbstractFreeSurfaceConfig
@@ -994,24 +995,25 @@ end
             MinimalModel(), (MinimalBoundary(),), grid, (;), config.boundary_data_config, (:T,), nothing,
         )
         @test_throws MethodError attach_writer!(
-            nothing, MinimalWriter(), config.simulation_config, 1,
+            nothing, MinimalWriter(), config.run_config, 1,
         )
         @test_throws MethodError attach_callback!(
-            nothing, MinimalCallback(), config.simulation_config,
+            nothing, MinimalCallback(), config.run_config,
         )
         @test_throws MethodError attach_time_stepping!(nothing, MinimalTimeStepping())
         @test_throws MethodError initial_time_step(MinimalTimeStepping())
 
-        # Both writer traits default, so a new writer type only overloads the one that is not true
-        # of it — a plain writer neither checkpoints nor names a reported file.
+        # Every writer trait defaults, so a new writer type only overloads the ones that are not true
+        # of it — a plain writer neither checkpoints, names a reported file, nor records stations.
         @test !FjordSim.Simulations.checkpoints(MinimalWriter())
+        @test !FjordSim.Simulations.station_output(MinimalWriter())
         @test FjordSim.Simulations.output_path_trait(MinimalWriter()) isa
               FjordSim.Simulations.NamesNoOutputFile
 
         # ...and a setup naming no atmosphere skips both atmosphere steps the same way, which is why
         # `atmosphere_config` defaults to `nothing`.
-        @test isnothing(prepare_atmosphere(grid, nothing))
-        @test isnothing(download_atmosphere(grid, nothing))
+        @test isnothing(regrid_atmosphere(grid, nothing))
+        @test isnothing(fetch_atmosphere(grid, nothing))
         @test isnothing(prescribed_atmosphere(nothing, CPU()))
         @test isnothing(prescribed_radiation(nothing, CPU()))
         bare = FjordConfig(
@@ -1025,7 +1027,7 @@ end
         @test isnothing(bare.river_config)
         @test isnothing(add_rivers(bare))
         # ...and the same for a setup that is only prepared and never run.
-        @test isnothing(bare.simulation_config)
+        @test isnothing(bare.run_config)
         @test isnothing(build_simulation(bare))
         @test isnothing(run_simulation(bare))
 
@@ -1044,15 +1046,27 @@ end
         @test isnothing(run_simulation(delegating))
         @test isnothing(validate_simulation(delegating))
 
-        # Each step dispatches on the components it reads, so a missing one is a no-op at that
-        # level too, with no setup in sight.
-        @test isnothing(prepare_atmosphere(bare.grid_config, nothing, nothing))
-        @test isnothing(prepare_forcing(bare.grid_config, bare.bathymetry_config, nothing, nothing, nothing))
-        @test isnothing(add_rivers(bare.grid_config, bare.bathymetry_config, nothing, nothing, nothing))
-        @test isnothing(prepare_boundary_data(bare.grid_config, bare.bathymetry_config, nothing, nothing))
+        # Each step hands the components it reads to a function dispatching on them alone, so a
+        # missing one is a no-op at that level too, with no setup in sight.
+        @test isnothing(regrid_atmosphere(bare.grid_config, nothing, nothing))
+        @test isnothing(regrid_forcing(bare.grid_config, bare.bathymetry_config, nothing, nothing, nothing))
+        @test isnothing(place_rivers(bare.grid_config, bare.bathymetry_config, nothing, nothing, nothing))
+        @test isnothing(regrid_boundary_data(bare.grid_config, bare.bathymetry_config, nothing, nothing))
 
-        # `download_rivers` is optional: a river dataset that states its outlets downloads nothing.
-        @test isnothing(FjordSim.Rivers.download_rivers(grid, rivers))
+        # Every step and `build_simulation` has exactly one method, on the setup supertype, so a
+        # setup type replaces a step by overloading it on itself and nothing else answers to the
+        # step's name.
+        for step in (
+            prepare_bathymetry, download_forcing, prepare_forcing, download_initial_state,
+            prepare_initial_state, add_rivers, download_boundary_data, prepare_boundary_data,
+            download_atmosphere, prepare_atmosphere, build_simulation, run_simulation,
+            validate_simulation,
+        )
+            @test only(methods(step)).sig <: Tuple{typeof(step),AbstractFjordConfig}
+        end
+
+        # `fetch_rivers` is optional: a river dataset that states its outlets downloads nothing.
+        @test isnothing(FjordSim.Rivers.fetch_rivers(grid, rivers))
 
         # `atmosphere_target_axes` is generic over the grid config: it reads the domain through
         # `x_domain`/`y_domain`, so the stub grid works, and both axes must come out uniformly spaced
@@ -1181,7 +1195,7 @@ end
             forcing_config = test_forcing_config(),
             boundary_data_config = test_boundaries_config(),
             atmosphere_config = test_atmosphere_config(),
-            simulation_config = test_simulation_config(),
+            run_config = test_run_config(),
         )
         for name in subcommands
             @test hasmethod(FjordSim.CLI.subcommand_driver(name), Tuple{typeof(config)})
@@ -1226,7 +1240,7 @@ end
             @test isnothing(prepare_boundary_data(config))
             @test isnothing(prepare_atmosphere(config))
             @test isnothing(download_atmosphere(config))
-            # Both return on the `nothing` simulation config, before any prerequisite is checked, so
+            # Both return on the `nothing` run config, before any prerequisite is checked, so
             # neither touches the empty temporary root.
             @test isnothing(build_simulation(config))
             @test isnothing(run_simulation(config))
@@ -1276,10 +1290,10 @@ end
         end
 
         # The log goes beside the output it describes, tagged with the launch instant so runs stay
-        # distinguishable, and takes the simulation config because that is where both come from.
-        simulation_config = test_simulation_config()
-        @test with_run_tag(() -> FjordSim.CLI.log_path(simulation_config)) ==
-              joinpath(simulation_config.results_root, "fjordsim_$PINNED_RUN_TAG.log")
+        # distinguishable, and takes the run config because that is where both come from.
+        run_config = test_run_config()
+        @test with_run_tag(() -> FjordSim.CLI.log_path(run_config)) ==
+              joinpath(run_config.results_root, "fjordsim_$PINNED_RUN_TAG.log")
 
         # End to end: a failing `run_simulation` writes its log into the setup's results root and not
         # into the working directory, creating the directory if it does not exist yet. `build_simulation`
@@ -1294,7 +1308,7 @@ end
                     grid_config = test_grid_config(),
                     bathymetry_config = test_bathymetry_config(data_root = raw"$tmp"),
                     forcing_config = test_forcing_config(data_root = raw"$tmp"),
-                    simulation_config = test_simulation_config(results_root = raw"$results"),
+                    run_config = test_run_config(results_root = raw"$results"),
                 )
                 """,
             )
@@ -1311,7 +1325,7 @@ end
             end
         end
 
-        # A setup naming no simulation config has nothing to log and no results root to log into, so
+        # A setup naming no run config has nothing to log and no results root to log into, so
         # `run_simulation` stays a no-op that writes nothing.
         mktempdir() do tmp
             config_file = joinpath(tmp, "config.jl")
@@ -2545,7 +2559,7 @@ end
                 @test_throws ErrorException Rivers.nve_api_key(unkeyed)
             end
 
-            # A real response, cached the way `download_rivers` caches it. Note the 11:00 UTC stamp
+            # A real response, cached the way `fetch_rivers` caches it. Note the 11:00 UTC stamp
             # on a daily mean — HydAPI's convention, and why matching is by calendar date — and the
             # `null` value on an otherwise gap-free axis.
             response = """
@@ -2587,7 +2601,7 @@ end
 
             # A series that exists but holds nothing in the requested window comes back as a
             # perfectly successful HTTP 200 carrying zero observations — Sarpsfoss answers exactly
-            # that for 2020 — so a status code cannot detect it and `download_rivers` counts instead.
+            # that for 2020 — so a status code cannot detect it and `fetch_rivers` counts instead.
             empty_response = """
             {"apiVersion":"1.0","itemCount":1,
              "data":[{"stationId":"2.31.0","parameter":1003,"unit":"°C",
@@ -3211,7 +3225,7 @@ end
 
             # No prepared forcing exists, and none is needed: the river file stands alone.
             @test !isfile(forcing_path(forcing_config))
-            result = add_rivers(grid, rivers; coverage)
+            result = place_rivers(grid, rivers; coverage)
             @test !isfile(forcing_path(forcing_config))
             @test result.output_file == joinpath(tmp, "rivers.nc")
             @test result.variables == ["N", "S", "T"]
@@ -3261,19 +3275,19 @@ end
             @test isnothing(FjordSim.Rivers.validate_river_output(clash, nothing))
             @test isnothing(FjordSim.Rivers.validate_river_output(rivers, forcing_config))
 
-            # The axis comes from the run window, so a setup with no simulation config has none.
-            @test_throws ErrorException add_rivers(grid, rivers)
+            # The axis comes from the run window, so a setup with no run config has none.
+            @test_throws ErrorException place_rivers(grid, rivers)
 
             # A discharge of the wrong shape, or one that would take water out, is refused rather
             # than written; so is an inflow speed that could never be met.
             short = StubRivers(tmp, "short.nc", rivers.locations, [10.0 20.0], rivers.series)
-            @test_throws ErrorException add_rivers(grid, short; coverage)
+            @test_throws ErrorException place_rivers(grid, short; coverage)
             negative = StubRivers(tmp, "negative.nc", rivers.locations, [10.0 -1.0 0.0], rivers.series)
-            @test_throws ErrorException add_rivers(grid, negative; coverage)
+            @test_throws ErrorException place_rivers(grid, negative; coverage)
             still = StubRivers(
                 tmp, "still.nc", rivers.locations, discharge, rivers.series; maximum_inflow_velocity = 0.0,
             )
-            @test_throws ArgumentError add_rivers(grid, still; coverage)
+            @test_throws ArgumentError place_rivers(grid, still; coverage)
         end
     end
 
@@ -3304,7 +3318,7 @@ end
                 tmp, "rivers.nc", [location], [10.0 10.0],
                 Dict("T" => Float32[3 5], "S" => Float32[0 0]); maximum_inflow_velocity = Inf,
             )
-            mouth = only(add_rivers(grid, rivers; coverage).mouths)
+            mouth = only(place_rivers(grid, rivers; coverage).mouths)
             @test FjordSim.Rivers.river_date_range(rivers) == (start, start + Day(1))
             @test read_river_columns(rivers) == (; target_i = [1], target_j = [2])
 
@@ -3356,7 +3370,7 @@ end
                 tmp, "ambient.nc", [location], [10.0 10.0],
                 Dict("T" => Float32[NaN NaN], "S" => Float32[0 0]); maximum_inflow_velocity = Inf,
             )
-            @test_throws "non-finite T" add_rivers(grid, ambient; coverage)
+            @test_throws "non-finite T" place_rivers(grid, ambient; coverage)
 
             # A river file written before rivers were a volume source carries no inflow, and is
             # refused with the step that rewrites it rather than read as no rivers at all.
@@ -3404,7 +3418,7 @@ end
                     fill(discharge, 1, 2),
                     Dict(key => fill(Float32(value), 1, 2) for (key, value) in river_values),
                 )
-                add_rivers(
+                place_rivers(
                     grid, rivers;
                     coverage = (start, start + Day(1)),
                 )
@@ -3639,7 +3653,7 @@ end
                 latitude = (latitude[1] - 0.2, latitude[2] + 0.2),
             )
 
-            result = prepare_boundary_data(grid, boundaries_config)
+            result = regrid_boundary_data(grid, boundaries_config)
             @test result.output_file == boundary_data_path(boundaries_config)
             @test result.times == dates
             @test Set(result.variables) == Set(
@@ -3734,7 +3748,7 @@ end
                 longitude = (longitude[1] - 0.2, longitude[2] + 0.2),
                 latitude = (latitude[1] - 0.2, latitude[2] + 0.2),
             )
-            prepare_boundary_data(grid, boundaries_config)
+            regrid_boundary_data(grid, boundaries_config)
 
             eta = FjordSim.BoundaryData.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1)).south.eta
             stored = NCDataset(ds -> Float64.(ds["south_eta"][1, :]), boundary_data_path(boundaries_config))
@@ -3791,7 +3805,7 @@ end
             @test box_longitude == (longitude[1] - 0.05, longitude[2] + 0.05)
             @test box_latitude == (latitude[1] - 0.05, latitude[2] + 0.05)
 
-            result = prepare_boundary_data(grid, config)
+            result = regrid_boundary_data(grid, config)
             @test length(result.variables) == 4 * 7
             @test Set(result.variables) ==
                   Set("$(edge)_$name" for edge in edges
@@ -4049,7 +4063,7 @@ end
                 end
             end
 
-            result = prepare_atmosphere(grid, config)
+            result = regrid_atmosphere(grid, config)
             @test result.output_file == atmosphere_path(config)
             @test length(result.times) == length(dates)
             @test result.times == dates
@@ -4098,7 +4112,7 @@ end
                     defVar(ds, variable.name, Float32, ("x", "y", "time"))[:, :, :] .= 1.0f0
                 end
             end
-            @test_throws ErrorException prepare_atmosphere(grid, config)
+            @test_throws ErrorException regrid_atmosphere(grid, config)
             rm(joinpath(atmosphere_directory(config), "NORA3_202002.nc"))
 
             # ...and the produced file satisfies the reader contract end to end.
@@ -4275,13 +4289,13 @@ end
 
         # No field has a default, so omitting any is an UndefKeywordError rather than a
         # plausible-looking run. Every field is swept, not a hand-picked subset, so adding one to
-        # `SimulationConfig` without a default is covered the moment `test_simulation_fields` names it.
-        fields = test_simulation_fields()
-        @test Set(keys(fields)) == Set(fieldnames(SimulationConfig))
-        for name in fieldnames(SimulationConfig)
-            @test_throws UndefKeywordError SimulationConfig(; delete!(copy(fields), name)...)
+        # `RunConfig` without a default is covered the moment `test_run_fields` names it.
+        fields = test_run_fields()
+        @test Set(keys(fields)) == Set(fieldnames(RunConfig))
+        for name in fieldnames(RunConfig)
+            @test_throws UndefKeywordError RunConfig(; delete!(copy(fields), name)...)
         end
-        @test_throws UndefKeywordError SimulationConfig()
+        @test_throws UndefKeywordError RunConfig()
 
         # The same rule holds one level down, and that is where it now matters most: the model config
         # is where the scientific choices live, so a default there would be one fjord's physics
@@ -4296,14 +4310,14 @@ end
 
         # `Base.@kwdef` on a *parametric* struct dispatches on the declared field types instead of
         # converting. So a duration written as an integer is a MethodError, not a silent promotion —
-        # which is why every setup writes `SimulationConfig`'s durations with `Oceananigans.Units`
+        # which is why every setup writes `RunConfig`'s durations with `Oceananigans.Units`
         # constants, all of which are already Float64.
-        @test_throws MethodError test_simulation_config(stop_time = 3600)
-        @test test_simulation_config(stop_time = 1hour).stop_time === 3600.0
+        @test_throws MethodError test_run_config(stop_time = 3600)
+        @test test_run_config(stop_time = 1hour).stop_time === 3600.0
         # `loops` is the one field this does not apply to, being an Int already.
-        @test test_simulation_config(loops = 2).loops === 2
+        @test test_run_config(loops = 2).loops === 2
         # The nested configs are the other exception, and deliberately so: each has a hand-written
-        # keyword constructor that converts, so the rule a reader learns from `SimulationConfig` does
+        # keyword constructor that converts, so the rule a reader learns from `RunConfig` does
         # not silently mislead them about the four types they will write far more often.
         @test test_checkpoint_writer(interval = 3600).interval === 3600.0
         @test test_snapshot_writer(interval = 3600).interval === 3600.0
@@ -4348,16 +4362,16 @@ end
         # Two callbacks under one name replace each other in `simulation.callbacks`, so only the
         # last would ever fire — the same failure `validate_writers` rejects for writers.
         @test_throws ArgumentError FjordSim.Simulations.validate_callbacks(
-            test_simulation_config(
+            test_run_config(
                 callbacks = (test_progress_callback(), test_progress_callback()),
             ),
         )
         @test isnothing(
-            FjordSim.Simulations.validate_callbacks(test_simulation_config(callbacks = ())),
+            FjordSim.Simulations.validate_callbacks(test_run_config(callbacks = ())),
         )
 
-        config = test_simulation_config()
-        @test config isa AbstractSimulationConfig
+        config = test_run_config()
+        @test config isa AbstractRunConfig
         # Every field is concrete or parameterized — `isconcretetype(typeof(config))` would be vacuous,
         # since `typeof` never returns an abstract type.
         @test all(isconcretetype, fieldtypes(typeof(config)))
@@ -4399,12 +4413,12 @@ end
         # process, since `results_path`, `log_path` and the checkpointer all have to agree.
         @test occursin(r"^\d{8}T\d{6}$", run_tag(config))
         @test run_tag(config) == FjordSim.Simulations.LAUNCH_TAG[]
-        @test run_tag(test_simulation_config(start_date = DateTime(1999, 12, 31))) ==
+        @test run_tag(test_run_config(start_date = DateTime(1999, 12, 31))) ==
               FjordSim.Simulations.LAUNCH_TAG[]
 
         # The tag is inserted before the extension either way, and the loop index goes on top of it so a
         # looped run gives each repetition its own file. The filename is the writer's; only the root
-        # is the simulation config's.
+        # is the run config's.
         writer = test_snapshot_writer()
         with_run_tag() do
             @test results_path(writer, config) ==
@@ -4420,7 +4434,7 @@ end
         # A single run keeps the shorter name; only a looped one gains the index.
         @test FjordSim.Simulations.loop_output_path(writer, config, 1) ==
               results_path(writer, config)
-        looped = test_simulation_config(loops = 3)
+        looped = test_run_config(loops = 3)
         @test FjordSim.Simulations.loop_output_path(writer, looped, 1) ==
               results_path(writer, looped, 1)
 
@@ -4430,35 +4444,35 @@ end
         @test !checkpoints(test_snapshot_writer())
         @test checkpoints(test_checkpoint_writer())
         @test checkpoints(config)
-        snapshots_only = test_simulation_config(writers = (test_snapshot_writer(),))
+        snapshots_only = test_run_config(writers = (test_snapshot_writer(),))
         @test !checkpoints(snapshots_only)
-        @test !checkpoints(test_simulation_config(writers = ()))
+        @test !checkpoints(test_run_config(writers = ()))
         with_run_tag() do
             @test loop_output_paths(config, 1) == [results_path(writer, config)]
-            @test loop_output_paths(test_simulation_config(writers = ()), 1) == String[]
+            @test loop_output_paths(test_run_config(writers = ()), 1) == String[]
         end
 
         # Two checkpointing writers, or two writers under one name, are rejected before anything is
         # read: `run!` cannot tell which checkpoint to resume from, and the second writer under a
         # name silently replaces the first so one of the requested files is never written.
         @test isnothing(validate_writers(config))
-        @test_throws ArgumentError validate_writers(test_simulation_config(
+        @test_throws ArgumentError validate_writers(test_run_config(
             writers = (test_checkpoint_writer(), test_checkpoint_writer()),
         ))
-        @test_throws ArgumentError validate_writers(test_simulation_config(
+        @test_throws ArgumentError validate_writers(test_run_config(
             writers = (test_snapshot_writer(), test_snapshot_writer(output_file = "other.nc")),
         ))
 
         # The window every loop replays, which is what the prepare steps pad their axes to. It does not
         # grow with `loops`, since each repetition replays the same interval.
-        window = test_simulation_config(start_date = DateTime(2020, 1, 1), stop_time = 365days)
+        window = test_run_config(start_date = DateTime(2020, 1, 1), stop_time = 365days)
         @test coverage_window(window) == (DateTime(2020, 1, 1), DateTime(2020, 12, 31))
-        @test coverage_window(test_simulation_config(
+        @test coverage_window(test_run_config(
             start_date = DateTime(2020, 1, 1),
             stop_time = 365days,
             loops = 5,
         )) == coverage_window(window)
-        @test isnothing(coverage_window(nothing))     # a setup naming no simulation config
+        @test isnothing(coverage_window(nothing))     # a setup naming no run config
 
         # The checkpoint prefix carries the loop index because the checkpoint itself does not: the state
         # records the clock but not which repetition produced it. It carries no run tag, so a later launch
@@ -4467,9 +4481,9 @@ end
 
         # Architecture resolution shares `interpolation_architecture`'s Val methods, so :cpu pins the
         # CPU and an unknown selector is rejected rather than silently defaulted.
-        @test simulation_architecture(test_simulation_config(architecture = :cpu)) isa CPU
-        @test_throws ArgumentError simulation_architecture(
-            test_simulation_config(architecture = :tpu),
+        @test run_architecture(test_run_config(architecture = :cpu)) isa CPU
+        @test_throws ArgumentError run_architecture(
+            test_run_config(architecture = :tpu),
         )
 
         # Which edge the domain is open on is stated once, on the open-boundary data config, and read
@@ -4488,7 +4502,7 @@ end
                 bathymetry_config,
                 forcing_config,
                 river_config,
-                simulation_config = test_simulation_config(results_root = tmp),
+                run_config = test_run_config(results_root = tmp),
             )
 
             forcing_config = test_forcing_config(data_root = tmp)
@@ -4562,7 +4576,7 @@ end
             ForcingTimeStep(date, SourceRecord(date, "a.nc", index), SourceRecord(date, "a.nc", index), 0.0f0)
         steps = [step(DateTime(2020, 1, 1, 12), 1), step(DateTime(2020, 1, 2, 12), 2)]
 
-        # A setup naming no simulation config prepares exactly the downloaded range.
+        # A setup naming no run config prepares exactly the downloaded range.
         @test pad_time_steps(steps, nothing) === steps
         # So does a window the axis already spans.
         @test length(pad_time_steps(steps, (DateTime(2020, 1, 1, 12), DateTime(2020, 1, 2, 12)))) == 2
@@ -4652,7 +4666,8 @@ end
         # A literal NamedTuple is already what `set!` wants, so it passes through by identity — the
         # behaviour every setup had before the other two shapes existed.
         constants = (T = 5.0, S = 33.0)
-        @test resolve_initial_conditions(constants, nothing, "unused.nc", nothing, nothing, (:T, :S)) === constants
+        @test resolve_initial_conditions(constants, nothing, nothing, (:T, :S)) === constants
+        @test FromForcing() isa FjordSim.Configs.AbstractInitialConditionsConfig
 
         Nx, Ny, Nz = 6, 5, 4
 
@@ -4758,35 +4773,21 @@ end
             end
             @test_throws DimensionMismatch results_state(wrong, grid, nothing, (:T, :S))
 
+            # The hook takes the whole setup, and each source reads the component its data is in.
+            forcing_config = ConstantForcing(tmp, basename(forcing_file), "forcing.png", 8.0)
+            setup = FjordConfig(; grid_config, bathymetry_config, forcing_config,
+                run_config = test_run_config(results_root = tmp))
+
             # `FromResults` resolves a relative path against `results_root`, like `output_file` does.
-            simulation_config = test_simulation_config(results_root = tmp)
-            @test resolve_initial_conditions(
-                FromResults("snapshots_tagged.nc"),
-                grid,
-                forcing_file,
-                nothing,
-                simulation_config,
-                (:T, :S),
-            ).T[1, 1, 1] == 30
-            @test_throws ErrorException resolve_initial_conditions(
-                FromResults("absent.nc"),
-                grid,
-                forcing_file,
-                nothing,
-                simulation_config,
-                (:T, :S),
-            )
+            @test resolve_initial_conditions(FromResults("snapshots_tagged.nc"), grid, setup, (:T, :S)).T[1, 1, 1] == 30
+            @test_throws ErrorException resolve_initial_conditions(FromResults("absent.nc"), grid, setup, (:T, :S))
 
             # And `FromForcing` with no date reads the run's own start_date, which the fixture puts at
             # noon to match the axis `write_prepared_forcing` writes.
-            @test resolve_initial_conditions(
-                FromForcing(),
-                grid,
-                forcing_file,
-                nothing,
-                simulation_config,
-                (:T, :S),
-            ).T[2, 2, 2] == 1
+            @test resolve_initial_conditions(FromForcing(), grid, setup, (:T, :S)).T[2, 2, 2] == 1
+            # With no forcing config there is no file to read a state from.
+            unforced = FjordConfig(; grid_config, bathymetry_config, run_config = setup.run_config)
+            @test_throws "forcing_config" resolve_initial_conditions(FromForcing(), grid, unforced, (:T, :S))
         end
     end
 
@@ -4814,7 +4815,7 @@ end
             )
 
             # Nothing downloaded is an error naming the step that downloads it.
-            @test_throws "download_initial_state" prepare_initial_state(grid, config, start_date)
+            @test_throws "download_initial_state" regrid_initial_state(grid, config, start_date)
 
             # The download for the day `start_date` falls in: one daily mean, stamped at noon.
             mkpath(initial_state_directory(config))
@@ -4828,7 +4829,7 @@ end
                                                 name == "salinity" ? 34.0f0 : 0.1f0,
             )
 
-            result = prepare_initial_state(grid, config, start_date)
+            result = regrid_initial_state(grid, config, start_date)
             @test result.output_file == initial_state_path(config)
             @test result.date == DateTime(2020, 1, 1, 12)    # the source record's own instant
             @test sort(result.variables) == ["S", "T", "u", "v"]
@@ -4838,10 +4839,10 @@ end
                 @test !haskey(ds, "T_lambda")
             end
 
-            simulation_config = test_simulation_config(results_root = tmp, start_date = start_date)
+            run_config = test_run_config(results_root = tmp, start_date = start_date)
+            initialized(; kwargs...) = FjordConfig(; grid_config, bathymetry_config, run_config, kwargs...)
             state = resolve_initial_conditions(
-                FromInitialState(), grid, nothing, result.output_file, simulation_config,
-                (:T, :S),
+                FromInitialState(), grid, initialized(initial_state_config = config), (:T, :S),
             )
             @test keys(state) == (:T, :S, :u, :v)
             @test size(state.u) == (Nx + 1, Ny, Nz)
@@ -4851,26 +4852,30 @@ end
 
             # The record is chosen when the file is prepared, so a file prepared for another
             # start_date is refused rather than read.
-            later = test_simulation_config(results_root = tmp, start_date = DateTime(2020, 1, 2))
+            later = test_run_config(results_root = tmp, start_date = DateTime(2020, 1, 2))
             @test_throws "prepared for start_date" resolve_initial_conditions(
-                FromInitialState(), grid, nothing, result.output_file, later,
+                FromInitialState(), grid, initialized(initial_state_config = config, run_config = later),
                 (:T, :S),
+            )
+            absent = NorKystInitialStateConfig(
+                data_root = tmp,
+                output_directory = "norkyst_initial",
+                output_file = "absent.nc",
+                parameters = config.parameters,
             )
             @test_throws "prepare_initial_state" resolve_initial_conditions(
-                FromInitialState(), grid, nothing, joinpath(tmp, "absent.nc"), simulation_config,
-                (:T, :S),
+                FromInitialState(), grid, initialized(initial_state_config = absent), (:T, :S),
             )
             @test_throws "initial_state_config" resolve_initial_conditions(
-                FromInitialState(), grid, nothing, nothing, simulation_config,
-                (:T, :S),
+                FromInitialState(), grid, initialized(), (:T, :S),
             )
 
-            # The setup-level drivers take the date from the simulation config. A day already
+            # The setup-level drivers take the date from the run config. A day already
             # downloaded is not fetched again, which is what lets this run offline.
-            setup = FjordConfig(; grid_config, bathymetry_config, initial_state_config = config, simulation_config)
+            setup = FjordConfig(; grid_config, bathymetry_config, initial_state_config = config, run_config)
             @test download_initial_state(setup) == downloaded
             @test prepare_initial_state(setup).date == DateTime(2020, 1, 1, 12)
-            @test_throws "simulation_config" prepare_initial_state(
+            @test_throws "run_config" prepare_initial_state(
                 FjordConfig(; grid_config, bathymetry_config, initial_state_config = config),
             )
         end
@@ -4882,7 +4887,7 @@ end
 
         mktempdir() do tmp
             resuming(; kwargs...) =
-                test_simulation_config(; results_root = tmp, loops = 4, pickup = true, kwargs...)
+                test_run_config(; results_root = tmp, loops = 4, pickup = true, kwargs...)
 
             # Without `pickup` the run always starts at the first repetition.
             @test resume_loop(resuming(pickup = false)) == 1
@@ -4920,7 +4925,7 @@ end
     end
 
     @testset "build simulation" begin
-        # The "Simulation config" testset only reaches build_simulation's two prerequisite errors, so
+        # The "Run config" testset only reaches build_simulation's two prerequisite errors, so
         # everything past them — the HydrostaticFreeSurfaceModel, the coupled OceanSeaIceModel and the
         # tracer top boundary conditions NumericalEarth reads its freshwater exchange out of — is
         # otherwise never executed. Synthetic inputs keep it on the CPU with no ~/FjordSim_data.
@@ -4950,7 +4955,7 @@ end
             # coupled model runs ocean-only — which is what keeps this off the network and off a GPU.
             #
             # Every build below varies only String/Float64/Int/Bool fields, so all of them share one
-            # `SimulationConfig` instantiation and one `build_simulation` specialization. Overriding
+            # `RunConfig` instantiation and one `build_simulation` specialization. Overriding
             # any of the nested-config fields here — `writers` above all — or the model config would
             # change a type and recompile the whole coupled model.
             fjord(; model_config = test_model_config(), kwargs...) = FjordConfig(;
@@ -4960,18 +4965,18 @@ end
                 boundary_data_config = boundaries_config,
                 model_config,
                 boundary_condition_configs = test_boundary_conditions(),
-                simulation_config = test_simulation_config(; results_root = tmp, kwargs...),
+                run_config = test_run_config(; results_root = tmp, kwargs...),
             )
 
             config = fjord()
-            simulation_config = config.simulation_config
-            snapshot, checkpointer = simulation_config.writers
+            run_config = config.run_config
+            snapshot, checkpointer = run_config.writers
             @test isnothing(config.atmosphere_config)
             @test isnothing(config.river_config)
 
             simulation = build_simulation(config)
             @test simulation isa Simulation
-            @test simulation.stop_time == simulation_config.stop_time
+            @test simulation.stop_time == run_config.stop_time
 
             ocean_model = simulation.model.ocean.model
             @test Set(keys(ocean_model.tracers)) ⊇ Set((:T, :S))
@@ -5046,9 +5051,9 @@ end
             # As a `Set` of `Symbol`, because `NetCDFWriter` re-keys the `NamedTuple` it is given
             # into a `Dict{String}`: neither the order nor the key type survives.
             ocean_writer = simulation.model.ocean.output_writers[snapshot.name]
-            @test ocean_writer.filepath == results_path(snapshot, simulation_config)
+            @test ocean_writer.filepath == results_path(snapshot, run_config)
             @test Set(Symbol.(keys(ocean_writer.outputs))) == Set(snapshot.variables)
-            @test ocean_writer.global_attributes["start_date"] == string(simulation_config.start_date)
+            @test ocean_writer.global_attributes["start_date"] == string(run_config.start_date)
 
             # A variable the model does not have is an error naming it, not a silently dropped
             # column discovered a run later.
@@ -5069,30 +5074,30 @@ end
             )
 
             # Naming no `CheckpointWriter` attaches none at all. Asserted on the config rather than
-            # by building a second simulation: dropping the writer changes `SimulationConfig`'s type
+            # by building a second simulation: dropping the writer changes `RunConfig`'s type
             # and would recompile the whole coupled model for one boolean.
             @test !FjordSim.Simulations.checkpoints(
-                test_simulation_config(results_root = tmp, writers = (snapshot,)),
+                test_run_config(results_root = tmp, writers = (snapshot,)),
             )
             # ...and `attach_writers!` over that tuple leaves the coupled simulation's writers alone,
             # which is the behavioral half of the same claim, on the simulation already built.
             empty!(simulation.output_writers)
             FjordSim.Simulations.attach_writers!(
                 simulation,
-                test_simulation_config(results_root = tmp, writers = (snapshot,)),
+                test_run_config(results_root = tmp, writers = (snapshot,)),
                 1,
             )
             @test !any(writer -> writer isa Checkpointer, values(simulation.output_writers))
             # Put the checkpointer back, since later assertions in this testset expect it.
-            attach_writer!(simulation, checkpointer, simulation_config, 1)
+            attach_writer!(simulation, checkpointer, run_config, 1)
 
             # Looping does not widen what the prepared files must span, so a two-loop run of the same
             # window still builds; the loop index reaches the output filename.
             looped_config = fjord(loops = 2)
             looped = build_simulation(looped_config)
-            @test looped.stop_time == looped_config.simulation_config.stop_time
+            @test looped.stop_time == looped_config.run_config.stop_time
             @test looped.model.ocean.output_writers[snapshot.name].filepath ==
-                  results_path(snapshot, looped_config.simulation_config, 1)
+                  results_path(snapshot, looped_config.run_config, 1)
 
             # Restarting a loop over the real object graph: every clock goes back to zero, the ocean
             # state does not, the writer is replaced with the next loop's file, and the ocean
@@ -5104,7 +5109,7 @@ end
             looped.model.ocean.model.clock.time = 42.0
             looped.model.ocean.model.clock.iteration = 7
             set!(looped.model.ocean.model, T = 9.0)
-            FjordSim.Simulations.restart_loop!(looped, looped_config.simulation_config, 2)
+            FjordSim.Simulations.restart_loop!(looped, looped_config.run_config, 2)
 
             @test looped.model.clock.time == 0
             @test looped.model.clock.iteration == 0
@@ -5112,11 +5117,11 @@ end
             @test looped.model.ocean.model.clock.iteration == 0
             @test !looped.model.ocean.initialized
             @test looped.model.ocean.output_writers[snapshot.name].filepath ==
-                  results_path(snapshot, looped_config.simulation_config, 2)
+                  results_path(snapshot, looped_config.run_config, 2)
             # The state carried over — that is the whole point of resetting only the clocks.
             @test maximum(interior(looped.model.ocean.model.tracers.T)) ≈ 9.0
             # stop_time is untouched, so the next repetition runs the same window.
-            @test looped.stop_time == looped_config.simulation_config.stop_time
+            @test looped.stop_time == looped_config.run_config.stop_time
 
             # A loop count below one is rejected before anything is read or allocated.
             @test_throws ArgumentError build_simulation(fjord(loops = 0))
@@ -5162,7 +5167,7 @@ end
                 boundary_data_config = boundaries_config,
                 model_config = test_model_config(),
                 boundary_condition_configs = test_boundary_conditions(),
-                simulation_config = test_simulation_config(results_root = tmp),
+                run_config = test_run_config(results_root = tmp),
             )
 
             simulation = build_simulation(config)
@@ -5245,7 +5250,7 @@ end
                 boundary_data_config = boundaries_config,
                 model_config = test_model_config(),
                 boundary_condition_configs = test_boundary_conditions(),
-                simulation_config = test_simulation_config(results_root = tmp),
+                run_config = test_run_config(results_root = tmp),
             )
             @test isnothing(config.forcing_config)
 
@@ -5268,8 +5273,7 @@ end
             # Reading a state from a forcing file that does not exist is a stated error rather than a
             # failure inside `NCDataset(nothing)` after the grid has been built.
             @test_throws ErrorException FjordSim.Simulations.resolve_initial_conditions(
-                FromForcing(), nothing, nothing, nothing, config.simulation_config,
-                (:T, :S),
+                FromForcing(), nothing, config, (:T, :S),
             )
         end
     end
@@ -5305,7 +5309,7 @@ end
                 boundary_data_config = boundaries_config,
                 model_config = test_model_config(),
                 boundary_condition_configs = test_boundary_conditions(),
-                simulation_config = test_simulation_config(results_root = tmp),
+                run_config = test_run_config(results_root = tmp),
             )
 
             simulation = build_simulation(config)
@@ -5346,8 +5350,8 @@ end
             longitudes = Array(Oceananigans.Grids.λnodes(grid, Center()))
             latitudes = Array(Oceananigans.Grids.φnodes(grid, Center()))
 
-            simulation_config = test_simulation_config(results_root = tmp)
-            coverage = coverage_window(simulation_config)
+            run_config = test_run_config(results_root = tmp)
+            coverage = coverage_window(run_config)
             records = length(FjordSim.Rivers.river_forcing_times(coverage))
             rivers = StubRivers(
                 tmp, "rivers.nc",
@@ -5361,7 +5365,7 @@ end
                 size = (Nx, Ny, Nz),
                 dates = [DateTime(2020, 1, 1, 12), DateTime(2020, 1, 2, 12)],
             )
-            add_rivers(grid, rivers; coverage)
+            place_rivers(grid, rivers; coverage)
 
             config = FjordConfig(;
                 grid_config,
@@ -5370,7 +5374,7 @@ end
                 boundary_data_config = boundaries_config,
                 model_config = test_model_config(),
                 boundary_condition_configs = test_boundary_conditions(),
-                simulation_config,
+                run_config,
             )
             @test isnothing(config.forcing_config)
             simulation = build_simulation(config)
@@ -5830,7 +5834,7 @@ end
             interval = 3600.0,
             overwrite_existing = true,
         )
-        simulation = test_simulation_config(results_root = directory, writers = (writer,))
+        simulation = test_run_config(results_root = directory, writers = (writer,))
 
         path = FjordSim.Simulations.station_output_path(
             writer, simulation, 1, first(writer.stations),
@@ -5867,7 +5871,7 @@ end
             interval = 600.0,
             overwrite_existing = true,
         )
-        simulation = test_simulation_config(results_root = directory, writers = (writer,))
+        simulation = test_run_config(results_root = directory, writers = (writer,))
         # Oceananigans' JLD2 layout: one record per iteration under `timeseries/<field>`, beside a
         # `serialized` group that is not one.
         path = joinpath(directory, "stations_tidegauge_20260915T120000_Km1.jld2")
@@ -5943,7 +5947,7 @@ end
         model = HydrostaticFreeSurfaceModel(grid; tracers = (:T, :S), buoyancy = nothing)
         set!(model, T = (λ, φ, z) -> λ + φ + z, u = (λ, φ, z) -> φ)
         ocean = Simulation(model; Δt = 1.0, stop_iteration = 2, verbose = false)
-        config = test_simulation_config(results_root = directory, writers = (writer,))
+        config = test_run_config(results_root = directory, writers = (writer,))
         # `attach_writer!` reaches the ocean through the coupled simulation's `model.ocean`.
         @test_logs (:warn,) match_mode = :any attach_writer!((; model = (; ocean)), writer, config, 1)
         @test FjordSim.Simulations.prognostic_state(ocean.output_writers[:section]) isa

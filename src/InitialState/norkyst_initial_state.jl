@@ -76,12 +76,12 @@ function initial_state_record(config::NorKystInitialStateConfig, date)
 end
 
 """
-    download_initial_state(target_grid, config::NorKystInitialStateConfig, date)
+    fetch_initial_state(target_grid, config::NorKystInitialStateConfig, date)
 
 Download the NorKyst-800m daily file for the day `date` falls in, subset to the lon/lat box of
 `target_grid`, into `initial_state_directory(config)`. A day already downloaded is skipped.
 """
-function download_initial_state(target_grid, config::NorKystInitialStateConfig, date)
+function fetch_initial_state(target_grid, config::NorKystInitialStateConfig, date)
     output_path = joinpath(initial_state_directory(config), initial_state_filename(config, date))
     if isfile(output_path)
         @info "Skipping $(Date(date)) (already exists)"

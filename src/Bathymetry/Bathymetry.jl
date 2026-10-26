@@ -115,7 +115,7 @@ smoothing_options(config::AbstractBathymetryConfig) = (;)
 # --- Preparation pipeline ---
 
 """
-    prepare_bathymetry(target_grid, config::AbstractBathymetryConfig; regrid_kw...)
+    process_bathymetry(target_grid, config::AbstractBathymetryConfig; edges, regrid_kw...)
 
 Regrid the bathymetry source described by `config` onto `target_grid` with
 `NumericalEarth.regrid_bathymetry`, and write a processed NetCDF file at
@@ -126,13 +126,13 @@ come from `regrid_options(config)`, with `regrid_kw...` overriding them per call
 
 `edges` names the domain's open lateral boundaries, and reaches `smooth_bathymetry_gaps!` for the
 one stage that acts on them. It is a keyword rather than a field of the bathymetry config for the
-same reason `prepare_forcing` takes one: which edges are open is a property of the domain and its
+same reason `regrid_forcing` takes one: which edges are open is a property of the domain and its
 exterior data, not of a bathymetry source. `nothing` means none, and that stage is then a no-op.
 
 # Returns
 A named tuple with `dataset`, `raw_file`, `output_file`, and `bottom_height`.
 """
-function prepare_bathymetry(target_grid, config::AbstractBathymetryConfig; edges = nothing, regrid_kw...)
+function process_bathymetry(target_grid, config::AbstractBathymetryConfig; edges = nothing, regrid_kw...)
     dataset = bathymetry_dataset(target_grid, config)
     metadata = Metadatum(:bottom_height; dataset)
 
@@ -172,26 +172,29 @@ end
 
 """
     prepare_bathymetry(config)
-    prepare_bathymetry(grid_config, bathymetry_config, boundary_data_config)
 
 Prepare the bathymetry a setup names: build its grid, regrid the source onto it, write the
-processed NetCDF and the diagnostic plot.
+processed NetCDF and the diagnostic plot. Only picks out the three components this step reads and
+hands them to `process_bathymetry`.
 
-The setup form only picks out the three components this step reads. The grid is built on the CPU
-because that is what the rest of the preparation pipeline reads, and `bathymetry_path`'s directory is
-created here since this is the first step of a setup and nothing has written into `data_root` yet.
+# Returns
+The `process_bathymetry(target_grid, config)` named tuple with `plot_file` added.
+"""
+prepare_bathymetry(config::AbstractFjordConfig) =
+    process_bathymetry(grid_config(config), bathymetry_config(config), boundary_data_config(config))
+
+"""
+    process_bathymetry(grid_config, bathymetry_config, boundary_data_config)
+
+`prepare_bathymetry`'s work, on the components it reads. The grid is built on the CPU because that is
+what the rest of the preparation pipeline reads, and `bathymetry_path`'s directory is created here
+since this is the first step of a setup and nothing has written into `data_root` yet.
 
 The open edges come from `open_edges(boundary_data_config)` — the one place a setup states them — so
 a `nothing` boundary data config prepares the bathymetry with every lateral boundary treated as a
 wall, which is the right reading when there is no exterior state to admit.
-
-# Returns
-The `prepare_bathymetry(target_grid, config)` named tuple with `plot_file` added.
 """
-prepare_bathymetry(config::AbstractFjordConfig) =
-    prepare_bathymetry(grid_config(config), bathymetry_config(config), boundary_data_config(config))
-
-function prepare_bathymetry(
+function process_bathymetry(
     grid_config,
     bathymetry_config::AbstractBathymetryConfig,
     boundary_data_config,
@@ -200,7 +203,7 @@ function prepare_bathymetry(
     mkpath(dirname(bathymetry_path(bathymetry_config)))
     print_grid_extents(grid)
 
-    result = prepare_bathymetry(grid, bathymetry_config; edges = open_edges(boundary_data_config))
+    result = process_bathymetry(grid, bathymetry_config; edges = open_edges(boundary_data_config))
     plot_file = plot_bathymetry(grid, result.bottom_height, bathymetry_config)
 
     @info "Raw bathymetry saved to $(result.raw_file)"

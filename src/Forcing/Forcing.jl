@@ -21,7 +21,7 @@ using ..Configs:
     bathymetry_config,
     forcing_config,
     boundary_data_config,
-    simulation_config
+    run_config
 using ..Utils: coverage_window
 using ..Grids: domain_grid, open_edges, simulation_grid
 using ..Plotting: Plotting, plot_forcing
@@ -266,7 +266,7 @@ end
 Return a named tuple of forcing functions for all available variables in a NetCDF file.
 
 `reference_date` is the instant the time axis is zeroed at, `nothing` meaning the file's own
-first record. A coupled run passes its simulation config's `start_date`, so the forcing and the
+first record. A coupled run passes its run config's `start_date`, so the forcing and the
 atmosphere agree on what model time zero stands for.
 """
 function forcing_from_file(; grid, filepath, tracers, reference_date = nothing)
@@ -410,23 +410,25 @@ function forcing_variable_names end
 
 """
     download_forcing(config)
-    download_forcing(target_grid, forcing_config)
 
-Fetch and subset the source data a later `prepare_forcing` call reads, into
-`forcing_directory(forcing_config)`.
-
-The setup form builds the bare domain grid on the CPU from the setup's grid config and dispatches
-on its forcing config, so a new dataset only implements the second method. The grid is passed
-rather than the grid config because a dataset needs the domain bounds, which `x_domain`/`y_domain`
-provide for any `AbstractGridConfig`.
+Fetch and subset the source data a later `prepare_forcing` reads, into
+`forcing_directory(forcing_config)`: builds the bare domain grid on the CPU from the setup's grid
+config and hands it to the forcing config's `fetch_forcing` hook.
 """
 download_forcing(config::AbstractFjordConfig) =
-    download_forcing(domain_grid(grid_config(config), CPU()), forcing_config(config))
-
-download_forcing(target_grid, ::Nothing) = nothing
+    fetch_forcing(domain_grid(grid_config(config), CPU()), forcing_config(config))
 
 """
-    prepare_forcing(target_grid, config::AbstractForcingConfig)
+    fetch_forcing(target_grid, forcing_config)
+
+The hook a forcing dataset that downloads implements. Takes the grid rather than the grid config
+because a dataset needs the domain bounds, which `x_domain`/`y_domain` provide for any
+`AbstractGridConfig`. A `nothing` forcing config fetches nothing.
+"""
+fetch_forcing(target_grid, ::Nothing) = nothing
+
+"""
+    regrid_forcing(target_grid, config::AbstractForcingConfig; coverage, edges)
 
 Regrid the source files already downloaded into `forcing_directory(config)` onto `target_grid`,
 and write a forcing NetCDF at `forcing_path(config)` that `forcing_from_file` reads directly.
@@ -484,7 +486,7 @@ open is a property of the domain and its boundary data, not of the forcing datas
 # Returns
 A named tuple with `output_file`, `times` and `variables` (the written variable names).
 """
-function prepare_forcing(target_grid, config::AbstractForcingConfig; coverage = nothing, edges = nothing)
+function regrid_forcing(target_grid, config::AbstractForcingConfig; coverage = nothing, edges = nothing)
     architecture = interpolation_architecture(config)
     variable_names = forcing_variable_names(config)
     source_names = [name for name in config.parameters if haskey(variable_names, name)]
@@ -510,51 +512,54 @@ function prepare_forcing(target_grid, config::AbstractForcingConfig; coverage = 
     return (; output_file, times = [step.date for step in steps], variables = [variable.name for variable in variables])
 end
 
-prepare_forcing(target_grid, ::Nothing; coverage = nothing, edges = nothing) = nothing
+regrid_forcing(target_grid, ::Nothing; coverage = nothing, edges = nothing) = nothing
 
 """
     prepare_forcing(config)
-    prepare_forcing(grid_config, bathymetry_config, forcing_config, boundary_data_config, simulation_config)
 
 Regrid the forcing a setup names onto its simulation grid, and write the diagnostic plot. Returns
-`nothing` for a `nothing` forcing config.
+`nothing` for a `nothing` forcing config. Only picks out the five components this step reads and
+hands them to `regrid_forcing`.
 
-The setup form only picks out the five components this step reads. The grid comes from the
+# Returns
+The `regrid_forcing(target_grid, config)` named tuple with `plot_file` added.
+"""
+prepare_forcing(config::AbstractFjordConfig) = regrid_forcing(
+    grid_config(config),
+    bathymetry_config(config),
+    forcing_config(config),
+    boundary_data_config(config),
+    run_config(config),
+)
+
+"""
+    regrid_forcing(grid_config, bathymetry_config, forcing_config, boundary_data_config, run_config)
+
+`prepare_forcing`'s work, on the components it reads. The grid comes from the
 processed bathymetry rather than the grid config alone, so the output's land mask matches the model
 exactly, which means `prepare_bathymetry` must have run first. It stays on the CPU regardless of the
 forcing config's `architecture` — that field selects where the interpolation kernel runs, and
 building the masks needs scalar access to the bathymetry.
 
-The coverage window comes from the simulation config, so the prepared file spans the run the setup
-describes; a `nothing` simulation config gives the downloaded range. The open edges come from the
+The coverage window comes from the run config, so the prepared file spans the run the setup
+describes; a `nothing` run config gives the downloaded range. The open edges come from the
 boundary data config, so the mask leaves those edges' velocity faces where the open boundary needs
 them; a `nothing` boundary data config is closed all round.
-
-# Returns
-The `prepare_forcing(target_grid, config)` named tuple with `plot_file` added.
 """
-prepare_forcing(config::AbstractFjordConfig) = prepare_forcing(
-    grid_config(config),
-    bathymetry_config(config),
-    forcing_config(config),
-    boundary_data_config(config),
-    simulation_config(config),
-)
+regrid_forcing(grid_config, bathymetry_config, ::Nothing, boundary_data_config, run_config) = nothing
 
-prepare_forcing(grid_config, bathymetry_config, ::Nothing, boundary_data_config, simulation_config) = nothing
-
-function prepare_forcing(
+function regrid_forcing(
     grid_config,
     bathymetry_config,
     forcing_config::AbstractForcingConfig,
     boundary_data_config,
-    simulation_config,
+    run_config,
 )
     grid = simulation_grid(grid_config, resolve_bathymetry_file(bathymetry_config), CPU())
-    result = prepare_forcing(
+    result = regrid_forcing(
         grid,
         forcing_config;
-        coverage = coverage_window(simulation_config),
+        coverage = coverage_window(run_config),
         edges = open_edges(boundary_data_config),
     )
     plot_file = plot_forcing(grid, forcing_config, forcing_path(forcing_config))

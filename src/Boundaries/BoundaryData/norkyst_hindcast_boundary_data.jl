@@ -160,14 +160,14 @@ boundary_variable_names(config::NorKystHindcastBoundaryDataConfig) =
 # --- Download ---
 
 """
-    download_boundary_data(target_grid, config::NorKystHindcastBoundaryDataConfig)
+    fetch_boundary_data(target_grid, config::NorKystHindcastBoundaryDataConfig)
 
 Download the Norkyst-v3 hindcast months covering `config.years`, each combined into one NetCDF file
 in `boundary_data_directory(config)` subset to the box `boundary_domain` derives from
 `open_edges(config)` and `target_grid`. A month whose file already exists is skipped, so an
 interrupted download resumes.
 """
-function download_boundary_data(target_grid, config::NorKystHindcastBoundaryDataConfig)
+function fetch_boundary_data(target_grid, config::NorKystHindcastBoundaryDataConfig)
     output_directory = boundary_data_directory(config)
     mkpath(output_directory)
 

@@ -105,13 +105,13 @@ end
 # --- Download ---
 
 """
-    download_forcing(target_grid, config::NorKystHindcastConfig)
+    fetch_forcing(target_grid, config::NorKystHindcastConfig)
 
 Download the Norkyst-v3 hindcast months covering `config.years`, each combined into one NetCDF file
 in `forcing_directory(config)` subset to the lon/lat box of `target_grid` and to one record a day.
 A month whose file already exists is skipped, so an interrupted download resumes.
 """
-function download_forcing(target_grid, config::NorKystHindcastConfig)
+function fetch_forcing(target_grid, config::NorKystHindcastConfig)
     output_directory = forcing_directory(config)
     mkpath(output_directory)
 

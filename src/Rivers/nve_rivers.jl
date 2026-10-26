@@ -1,6 +1,6 @@
 # NVE rivers adapter: the source-specific half of the river pipeline, backed by two NVE services.
 # It owns a config subtype and the hooks `river_locations`, `river_series`, `river_discharge` and
-# `download_rivers`.
+# `fetch_rivers`.
 #
 # **Where the outlets come from** — NVE's map services, an unauthenticated ArcGIS REST endpoint at
 # https://kart.nve.no/enterprise/rest/services. The ELVIS river network gives the river *mouths*
@@ -808,7 +808,7 @@ end
     nve_station_path(config, station)
 
 Where cached HydAPI responses live. One file per (station, parameter, year) for observations, so
-each station's download is independently cacheable and re-running `download_rivers` is a no-op.
+each station's download is independently cacheable and re-running `fetch_rivers` is a no-op.
 
 That granularity costs nothing. A year of daily data for one station and one parameter is 366
 records in a single request, which is far inside both documented limits — 10 series and 150 000
@@ -883,7 +883,7 @@ are translated rather than passed through as a `RequestError` naming only a numb
 **A window with no records is not a 404.** A series that exists but holds nothing in the requested
 interval comes back as **HTTP 200 with `observationCount: 0`** and an empty `observations` array —
 Sarpsfoss (`2.31.0`) has water temperature for 2002–2009 and answers exactly that for 2020. So a
-successful request is not the same as data, which is why `download_rivers` checks the count rather
+successful request is not the same as data, which is why `fetch_rivers` checks the count rather
 than trusting the status; see `nve_observation_count`.
 
 `validate_river_download` then catches the other way this can fail quietly: a response that is an
@@ -953,14 +953,14 @@ function validate_river_download(filepath, url)
 end
 
 """
-    download_rivers(target_grid, config::NVERiversConfig)
+    fetch_rivers(target_grid, config::NVERiversConfig)
 
 Fetch everything this config's rivers need into `nve_download_directory(config)`, in two halves.
 
 First the **map services**, which need no key: REGINE's sea-draining catchments and the ELVIS river
 network over `target_grid`'s domain, from which `nve_outlets` derives the river mouths. This is
 what `target_grid` is for, and it is why this hook takes one — the same argument
-`download_forcing` and `download_boundary_data` already make, that a dataset needs the domain bounds
+`fetch_forcing` and `fetch_boundary_data` already make, that a dataset needs the domain bounds
 and `x_domain`/`y_domain` provide them for any grid. A config naming no `minimum_discharge` states
 its own outlets, so the download is skipped and the grid goes unused.
 
@@ -980,7 +980,7 @@ a series HydAPI does not have at all is a 404, while a series with nothing in th
 is a perfectly successful 200 carrying zero observations. The empty cache file is removed so a
 later run re-requests rather than reading the emptiness back as a gap-filled row of `NaN`.
 """
-function download_rivers(target_grid, config::NVERiversConfig)
+function fetch_rivers(target_grid, config::NVERiversConfig)
     isempty(config.years) && error("The NVE river config names no years.")
     !isfinite(config.minimum_discharge) && isempty(config.outlets) && error(
         "The NVE river config names neither outlets nor a `minimum_discharge`, so it has no " *
@@ -1161,7 +1161,7 @@ function nve_station_series(config::NVERiversConfig, station, parameter)
     for year in config.years
         filepath = nve_observations_path(config, station, parameter, year)
         isfile(filepath) || error(
-            "Cached HydAPI response $filepath does not exist. Run `download_rivers` first.",
+            "Cached HydAPI response $filepath does not exist. Run `fetch_rivers` first.",
         )
         merge!(records, nve_daily_values(filepath))
     end
@@ -1175,7 +1175,7 @@ The outlets, as `RiverLocation`s, from `nve_outlets`.
 
 The coordinates are river mouths — either discovered from the ELVIS river network or stated by the
 setup, never a gauging station's, for the reasons `NVERiver` gives. When they are discovered this
-reads the cached map-service responses, so `download_rivers` has to have run; `add_rivers` calls
+reads the cached map-service responses, so `fetch_rivers` has to have run; `add_rivers` calls
 that first, and the error names the step when it has not.
 """
 river_locations(config::NVERiversConfig) = [
@@ -1332,7 +1332,7 @@ function nve_discharge_row(config::NVERiversConfig, outlet::NVERiver, dates)
             any(isfinite, row) || error(
                 "Discharge station $(outlet.discharge_station) of river $(outlet.id) " *
                 "($(outlet.name)) has no record between $(first(dates)) and $(last(dates)). " *
-                "Give the river config `years` covering the run window and re-run `download_rivers`.",
+                "Give the river config `years` covering the run window and re-run `fetch_rivers`.",
             )
             @info "River $(outlet.id) ($(outlet.name)): daily discharge from station " *
                   "$(outlet.discharge_station)" *

@@ -40,7 +40,7 @@ Only the kernel moves; `target_grid` and the masks stay on the CPU because build
 `peripheral_node` cell by cell.
 
 `Forcing` and `BoundaryData` each add the method reading their config's `architecture` field.
-`Simulations.simulation_architecture` also reuses the `Val` methods below, which is why the
+`Simulations.run_architecture` also reuses the `Val` methods below, which is why the
 resolution and the field read are separate methods rather than one function.
 """
 function interpolation_architecture end
@@ -281,7 +281,7 @@ function pad_time_steps(steps, coverage)
             "The run starts at $first_needed but the downloaded forcing only begins at " *
             "$(head.date), more than one record spacing " *
             "($(Dates.canonicalize(spacing))) later. Download the preceding period, or move the " *
-            "simulation config's `start_date` to " *
+            "run config's `start_date` to " *
             "$(head.date - spacing) or later.",
         )
         pushfirst!(padded, ForcingTimeStep(first_needed, head.lower, head.upper, head.weight))

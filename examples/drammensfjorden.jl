@@ -107,7 +107,7 @@ FjordConfig(
         output_file      = "initial_state.nc",
         parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
     ),
-    # Overloads river_locations, river_series, river_discharge and download_rivers (all
+    # Overloads river_locations, river_series, river_discharge and fetch_rivers (all
     # required). Its own `data_root`: the ELVIS and REGINE caches record the domain they
     # were fetched for under a fixed name, so sharing Oslofjord's `nve` directory would
     # overwrite them.
@@ -227,8 +227,8 @@ FjordConfig(
         ),
     ),
     # How the model is run. Writers, callbacks and time stepping each dispatch on their own
-    # supertype; build_simulation and run_simulation dispatch on this config's type.
-    simulation_config = SimulationConfig(
+    # supertype; the run itself is read through the run config's accessors.
+    run_config = RunConfig(
         results_root       = fjord_results_root("drammensfjorden"),
         architecture       = :auto,
         # Both overload attach_writer!. `variables` may name anything `Oceananigans.fields`

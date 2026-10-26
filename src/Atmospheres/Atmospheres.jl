@@ -17,7 +17,7 @@ using ..Configs:
     AbstractFjordConfig,
     grid_config,
     atmosphere_config,
-    simulation_config
+    run_config
 using ..Utils: coverage_window, with_retries
 using ..Grids: domain_grid
 using ..Plotting: Plotting, plot_atmosphere
@@ -150,25 +150,27 @@ function atmosphere_variable_names end
 
 """
     download_atmosphere(config)
-    download_atmosphere(target_grid, atmosphere_config)
 
-Fetch and subset the atmosphere dataset a setup names, into `atmosphere_directory(config)`.
+Fetch and subset the atmosphere dataset a setup names, into `atmosphere_directory(config)`: builds
+the bare domain grid on the CPU and hands it to the atmosphere config's `fetch_atmosphere` hook. A
+setup naming no atmosphere config is a no-op.
+"""
+download_atmosphere(config::AbstractFjordConfig) =
+    fetch_atmosphere(domain_grid(grid_config(config), CPU()), atmosphere_config(config))
 
-The setup form builds the bare domain grid on the CPU and dispatches on the atmosphere
-config, so a dataset only implements `download_atmosphere(target_grid, config)`. The grid rather
-than the grid config is passed on, because a dataset needs the domain bounds and `x_domain` and
-`y_domain` give those for any `AbstractGridConfig`.
+"""
+    fetch_atmosphere(target_grid, atmosphere_config)
+
+The hook an atmosphere dataset that downloads implements. The grid rather than the grid config is
+passed on, because a dataset needs the domain bounds and `x_domain` and `y_domain` give those for any
+`AbstractGridConfig`.
 
 The bounds it needs are the *padded* ones from `atmosphere_target_axes`, not the ocean domain:
 the prepared grid deliberately overhangs the ocean grid, so a download subset to the ocean
-domain alone would leave the outer prepared cells with nothing to interpolate from.
-
-A setup naming no atmosphere config is a no-op.
+domain alone would leave the outer prepared cells with nothing to interpolate from. A `nothing`
+atmosphere config fetches nothing.
 """
-download_atmosphere(config::AbstractFjordConfig) =
-    download_atmosphere(domain_grid(grid_config(config), CPU()), atmosphere_config(config))
-
-download_atmosphere(target_grid, ::Nothing) = nothing
+fetch_atmosphere(target_grid, ::Nothing) = nothing
 
 """
     prescribed_atmosphere(config, architecture; reference_date = nothing)
@@ -183,7 +185,7 @@ the source's business. A setup naming no atmosphere config gets `nothing` for bo
 `OceanSeaIceModel` takes to mean an uncoupled run.
 
 `reference_date` is the instant the returned time axes are zeroed at, `nothing` meaning the
-prepared file's own first record. `build_simulation` passes the simulation config's `start_date`,
+prepared file's own first record. `build_simulation` passes the run config's `start_date`,
 so the atmosphere and the ocean forcing agree on what model time zero stands for rather than each
 zeroing at its own first record.
 
@@ -348,7 +350,7 @@ end
 # --- Preparation ---
 
 """
-    prepare_atmosphere(target_grid, config::AbstractAtmosphereConfig)
+    regrid_atmosphere(target_grid, config::AbstractAtmosphereConfig; coverage)
 
 Regrid the downloaded atmosphere files onto a regular longitude/latitude grid covering
 `target_grid`, and write the single NetCDF file the simulation reads.
@@ -381,7 +383,7 @@ downloaded range. See `pad_atmosphere_records`.
 
 A named tuple `(; output_file, times, variables)`.
 """
-function prepare_atmosphere(target_grid, config::AbstractAtmosphereConfig; coverage = nothing)
+function regrid_atmosphere(target_grid, config::AbstractAtmosphereConfig; coverage = nothing)
     variable_names = atmosphere_variable_names(config)
     isempty(variable_names) && error("$(nameof(typeof(config))) names no atmosphere variables to prepare")
     # Sorted so the prepared file's variable order does not depend on Dict iteration order.
@@ -410,34 +412,36 @@ function prepare_atmosphere(target_grid, config::AbstractAtmosphereConfig; cover
     )
 end
 
-prepare_atmosphere(target_grid, ::Nothing; coverage = nothing) = nothing
+regrid_atmosphere(target_grid, ::Nothing; coverage = nothing) = nothing
 
 """
     prepare_atmosphere(config)
-    prepare_atmosphere(grid_config, atmosphere_config, simulation_config)
 
 Regrid the atmosphere a setup names onto a regular longitude/latitude grid, and write the diagnostic
-plot. Returns `nothing` for a `nothing` atmosphere config.
-
-It needs no bathymetry: the prepared grid is derived from the setup's longitude/latitude domain
-rather than from the ocean grid's land mask, so unlike `prepare_forcing` it does not depend on
-`prepare_bathymetry`. It does read the files `download_atmosphere` wrote. The coverage window comes
-from the simulation config, so the prepared file spans the run the setup describes; a `nothing`
-simulation config gives the downloaded range. The setup form only picks out the three components
-this step reads.
+plot. Returns `nothing` for a `nothing` atmosphere config. Only picks out the three components this
+step reads and hands them to `regrid_atmosphere`.
 
 # Returns
-The `prepare_atmosphere(target_grid, config)` named tuple with `plot_file` added.
+The `regrid_atmosphere(target_grid, config)` named tuple with `plot_file` added.
 """
 prepare_atmosphere(config::AbstractFjordConfig) =
-    prepare_atmosphere(grid_config(config), atmosphere_config(config), simulation_config(config))
+    regrid_atmosphere(grid_config(config), atmosphere_config(config), run_config(config))
 
-prepare_atmosphere(grid_config, ::Nothing, simulation_config) = nothing
+"""
+    regrid_atmosphere(grid_config, atmosphere_config, run_config)
 
-function prepare_atmosphere(
+`prepare_atmosphere`'s work, on the components it reads. It needs no bathymetry: the prepared grid
+is derived from the setup's longitude/latitude domain rather than from the ocean grid's land mask, so
+unlike `prepare_forcing` it does not depend on `prepare_bathymetry`. It does read the files
+`download_atmosphere` wrote. The coverage window comes from the run config, so the prepared file
+spans the run the setup describes; a `nothing` run config gives the downloaded range.
+"""
+regrid_atmosphere(grid_config, ::Nothing, run_config) = nothing
+
+function regrid_atmosphere(
     grid_config,
     atmosphere_config::AbstractAtmosphereConfig,
-    simulation_config,
+    run_config,
 )
     source_directory = atmosphere_directory(atmosphere_config)
     isdir(source_directory) || error(
@@ -446,7 +450,7 @@ function prepare_atmosphere(
     )
 
     grid = domain_grid(grid_config, CPU())
-    result = prepare_atmosphere(grid, atmosphere_config; coverage = coverage_window(simulation_config))
+    result = regrid_atmosphere(grid, atmosphere_config; coverage = coverage_window(run_config))
     plot_file = plot_atmosphere(atmosphere_config, atmosphere_path(atmosphere_config))
 
     @info "Prepared variables: $(join(result.variables, ", "))"
@@ -511,7 +515,7 @@ function pad_atmosphere_records(records, coverage)
             "The run starts at $first_needed but the downloaded atmosphere only begins at " *
             "$(head.date), more than one record spacing " *
             "($(Dates.canonicalize(spacing))) later. Download the preceding period, or move the " *
-            "simulation config's `start_date` to " *
+            "run config's `start_date` to " *
             "$(head.date - spacing) or later.",
         )
         pushfirst!(padded, AtmosphereRecord(first_needed, head.filepath, head.index))

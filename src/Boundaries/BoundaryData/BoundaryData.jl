@@ -2,7 +2,7 @@ module BoundaryData
 
 # Open-boundary data: the generic half of the boundary pipeline. A dataset adapter subtypes
 # `AbstractBoundaryDataConfig` and implements `boundary_time_steps`, `boundary_source_grid` and
-# `boundary_variable_names` (plus `download_boundary_data` if it fetches data); everything below is
+# `boundary_variable_names` (plus `fetch_boundary_data` if it fetches data); everything below is
 # shared. `norkyst_boundary_data.jl` is the template to copy.
 #
 # What this exists for: an open lateral boundary needs the exterior state *at* the boundary —
@@ -39,7 +39,7 @@ using ..Configs:
     grid_config,
     bathymetry_config,
     boundary_data_config,
-    simulation_config
+    run_config
 using ..Utils: coverage_window
 using ..Grids:
     domain_grid,
@@ -350,20 +350,23 @@ boundary_source_slab(config::AbstractBoundaryDataConfig, reader, step, source_na
 
 """
     download_boundary_data(config)
-    download_boundary_data(target_grid, boundary_data_config)
 
-Fetch and subset the hourly source data a later `prepare_boundary_data` call reads, into
-`boundary_data_directory(boundary_data_config)`.
-
-The setup form builds the bare domain grid on the CPU and dispatches on the boundary data config,
-which is also where the open edges are stated — so a dataset reads them with `open_edges(config)`
-rather than being handed them. It says nothing about forcing: a setup can name boundary data and no
-interior forcing, or the other way round.
+Fetch and subset the hourly source data a later `prepare_boundary_data` reads, into
+`boundary_data_directory(boundary_data_config)`: builds the bare domain grid on the CPU and hands it
+to the boundary data config's `fetch_boundary_data` hook.
 """
 download_boundary_data(config::AbstractFjordConfig) =
-    download_boundary_data(domain_grid(grid_config(config), CPU()), boundary_data_config(config))
+    fetch_boundary_data(domain_grid(grid_config(config), CPU()), boundary_data_config(config))
 
-download_boundary_data(target_grid, ::Nothing) = nothing
+"""
+    fetch_boundary_data(target_grid, boundary_data_config)
+
+The hook an open-boundary dataset that downloads implements. The config is also where the open edges
+are stated, so a dataset reads them with `open_edges(config)` rather than being handed them. It says
+nothing about forcing: a setup can name boundary data and no interior forcing, or the other way
+round. A `nothing` boundary data config fetches nothing.
+"""
+fetch_boundary_data(target_grid, ::Nothing) = nothing
 
 """
     boundary_date_range(config)
@@ -472,7 +475,7 @@ function prepared_boundary_variable(
 end
 
 """
-    prepare_boundary_data(target_grid, config::AbstractBoundaryDataConfig; coverage = nothing)
+    regrid_boundary_data(target_grid, config::AbstractBoundaryDataConfig; coverage = nothing)
 
 Regrid the hourly source files already downloaded into `boundary_data_directory(config)` onto the
 open edge rows of `target_grid`, and write the boundary NetCDF at `boundary_data_path(config)` that
@@ -485,8 +488,8 @@ boundary file, and one time axis serves all of them. A domain in the open ocean 
 therefore writes one file with four sides in it, not four files.
 
 The dataset enters only through `boundary_variable_names`, `boundary_time_steps` and
-`boundary_source_grid`, exactly as `prepare_forcing`'s does; everything after them is shared, and
-most of it *is* `prepare_forcing`'s own machinery applied to a one-cell-thick target slab —
+`boundary_source_grid`, exactly as `regrid_forcing`'s does; everything after them is shared, and
+most of it *is* `regrid_forcing`'s own machinery applied to a one-cell-thick target slab —
 `water_mask`, `SourceFill`, `projected_target_nodes` and the trilinear interpolation kernel are all
 reused unchanged.
 
@@ -497,7 +500,7 @@ range.
 # Returns
 A named tuple with `output_file`, `times` and `variables` (the written variable names).
 """
-function prepare_boundary_data(target_grid, config::AbstractBoundaryDataConfig; coverage = nothing)
+function regrid_boundary_data(target_grid, config::AbstractBoundaryDataConfig; coverage = nothing)
     architecture = interpolation_architecture(config)
     edges = open_edges(config)
 
@@ -536,39 +539,42 @@ function prepare_boundary_data(target_grid, config::AbstractBoundaryDataConfig; 
     )
 end
 
-prepare_boundary_data(target_grid, ::Nothing; coverage = nothing) = nothing
+regrid_boundary_data(target_grid, ::Nothing; coverage = nothing) = nothing
 
 """
     prepare_boundary_data(config)
-    prepare_boundary_data(grid_config, bathymetry_config, boundary_data_config, simulation_config)
 
 Regrid the open-boundary data a setup names onto its simulation grid, and write the diagnostic plot.
-Returns `nothing` for a `nothing` boundary data config.
-
-The grid comes from the processed bathymetry so the boundary row's land mask matches the model
-exactly, which means `prepare_bathymetry` must have run first, and the coverage window comes from
-the simulation config. The setup form only picks out the four components this step reads.
+Returns `nothing` for a `nothing` boundary data config. Only picks out the four components this step
+reads and hands them to `regrid_boundary_data`.
 
 # Returns
-The `prepare_boundary_data(target_grid, config)` named tuple with `plot_file` added.
+The `regrid_boundary_data(target_grid, config)` named tuple with `plot_file` added.
 """
-prepare_boundary_data(config::AbstractFjordConfig) = prepare_boundary_data(
+prepare_boundary_data(config::AbstractFjordConfig) = regrid_boundary_data(
     grid_config(config),
     bathymetry_config(config),
     boundary_data_config(config),
-    simulation_config(config),
+    run_config(config),
 )
 
-prepare_boundary_data(grid_config, bathymetry_config, ::Nothing, simulation_config) = nothing
+"""
+    regrid_boundary_data(grid_config, bathymetry_config, boundary_data_config, run_config)
 
-function prepare_boundary_data(
+`prepare_boundary_data`'s work, on the components it reads. The grid comes from the processed
+bathymetry so the boundary row's land mask matches the model exactly, which means
+`prepare_bathymetry` must have run first, and the coverage window comes from the run config.
+"""
+regrid_boundary_data(grid_config, bathymetry_config, ::Nothing, run_config) = nothing
+
+function regrid_boundary_data(
     grid_config,
     bathymetry_config,
     boundaries::AbstractBoundaryDataConfig,
-    simulation_config,
+    run_config,
 )
     grid = simulation_grid(grid_config, resolve_bathymetry_file(bathymetry_config), CPU())
-    result = prepare_boundary_data(grid, boundaries; coverage = coverage_window(simulation_config))
+    result = regrid_boundary_data(grid, boundaries; coverage = coverage_window(run_config))
     plot_file = plot_boundary_data(boundaries, boundary_data_path(boundaries))
 
     @info "Prepared boundary variables: $(join(result.variables, ", "))"
@@ -900,7 +906,7 @@ Keyed by edge because a domain may be open on several, and keyed on the bare nam
 side is already the outer key — so no boundary condition spells a side into a variable name, and the
 `(; T, S, …)` group a scheme consumes is the same shape whichever edge it came from.
 
-`reference_date` is the instant the time axes are zeroed at — the simulation config's `start_date`,
+`reference_date` is the instant the time axes are zeroed at — the run config's `start_date`,
 the same instant the interior forcing and the atmosphere are zeroed at, which is the only thing
 keeping the three in phase. Indexing is `Cyclical()` like every other FjordSim reader, and
 `validate_time_coverage` is what keeps the wrap unreachable.

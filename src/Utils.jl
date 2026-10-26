@@ -13,7 +13,7 @@ using JLD2: @save
 using Printf: @sprintf
 using Dates: Second
 
-using ..Configs: AbstractSimulationConfig
+using ..Configs: AbstractRunConfig, start_date, stop_time
 
 cell_advection_timescale_coupled_model(coupled_model) = cell_advection_timescale(coupled_model.ocean.model)
 
@@ -167,19 +167,19 @@ recursive_merge(a::NamedTuple, b::NamedTuple, rest::NamedTuple...) =
     coverage_window(config)
 
 The calendar interval a run needs its prepared inputs to span, as `(first, last)` — or `nothing`
-for a setup naming no simulation config.
+for a setup naming no run config.
 
-Passed to `prepare_forcing` and `prepare_atmosphere` as their `coverage`, so each pads its own time
-axis to reach both ends. A plain tuple of dates rather than the config itself, so neither pipeline
-ever sees a simulation config.
+Passed to `regrid_forcing`, `regrid_boundary_data`, `regrid_atmosphere` and `place_rivers` as their
+`coverage`, so each pads its own time axis to reach both ends. A plain tuple of dates rather than the
+config itself, so no pipeline ever sees a run config.
 
 A looped run reuses one window rather than extending it, so this is `stop_time` from `start_date`
 and not `loops * stop_time`.
 """
 coverage_window(::Nothing) = nothing
 
-coverage_window(config::AbstractSimulationConfig) =
-    (config.start_date, config.start_date + Second(round(Int, config.stop_time)))
+coverage_window(config::AbstractRunConfig) =
+    (start_date(config), start_date(config) + Second(round(Int, stop_time(config))))
 
 """
     fjord_data_root(fjord)

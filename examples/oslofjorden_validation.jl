@@ -395,15 +395,15 @@ Plotting.plot_path(config::TideCorrectedBoundaries) = Plotting.plot_path(config.
 Grids.open_edges(config::TideCorrectedBoundaries) = Grids.open_edges(config.source)
 BoundaryData.boundary_variable_names(config::TideCorrectedBoundaries) =
     BoundaryData.boundary_variable_names(config.source)
-BoundaryData.download_boundary_data(target_grid, config::TideCorrectedBoundaries) =
-    BoundaryData.download_boundary_data(target_grid, config.source)
+BoundaryData.fetch_boundary_data(target_grid, config::TideCorrectedBoundaries) =
+    BoundaryData.fetch_boundary_data(target_grid, config.source)
 
-function BoundaryData.prepare_boundary_data(
+function BoundaryData.regrid_boundary_data(
     target_grid,
     config::TideCorrectedBoundaries;
     coverage = nothing,
 )
-    result = BoundaryData.prepare_boundary_data(target_grid, config.source; coverage)
+    result = BoundaryData.regrid_boundary_data(target_grid, config.source; coverage)
     correct_boundary_tide!(result.output_file, Grids.open_edges(config), config.gains)
     return result
 end
@@ -574,7 +574,7 @@ atmosphere = base.atmosphere_config
 atmosphere.data_root = data_root
 atmosphere.years = years
 
-simulation = base.simulation_config
+base_run = base.run_config
 base_model = base.model_config
 
 # The first physics departure from `oslofjorden.jl`: salinity is advected by bounds-preserving WENO.
@@ -715,9 +715,9 @@ FjordConfig(
     atmosphere_config = atmosphere,
     model_config = model,
     boundary_condition_configs = base.boundary_condition_configs,
-    simulation_config = SimulationConfig(
+    run_config = RunConfig(
         results_root        = fjord_results_root("oslofjorden_validation"),
-        architecture        = simulation.architecture,
+        architecture        = base_run.architecture,
         writers = (
             # Daily, not `oslofjorden.jl`'s three-hourly. One record of five fields on this grid is
             # 155 MB, so three-hourly over 640 days is about 790 GB against 99 GB daily. The full
@@ -807,8 +807,8 @@ FjordConfig(
             ),
             CheckpointWriter(interval = 12hours, cleanup = true),
         ),
-        callbacks           = simulation.callbacks,
-        time_stepping       = simulation.time_stepping,
+        callbacks           = base_run.callbacks,
+        time_stepping       = base_run.time_stepping,
         # The previous full run's own state on 1 April 2015 (stamp 20261014T142318, archived as
         # `oslofjorden_validation_2026-10-16`), a year of this model's spin-up, rather than the
         # Norkyst-v3 state of 31 March 2014. Against the 9 April 2014 Inner Oslofjord casts it halves

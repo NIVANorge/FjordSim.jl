@@ -266,7 +266,7 @@ FjordConfig(
             outflow_timescale = 360days,
         ),
     ),
-    simulation_config = SimulationConfig(
+    run_config = RunConfig(
         results_root       = fjord_results_root("lista"),
         architecture       = :auto,
         writers = (

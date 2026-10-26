@@ -46,18 +46,40 @@ same reason.
 
 **The setup is flat.** Every component — the data pipelines, the model, its biogeochemistry, its
 boundary conditions and the run — is a field of `FjordConfig` side by side, and no step reads a
-field: each takes an `AbstractFjordConfig`, picks out the components it reads through the accessors
-(`grid_config(config)`, …), and calls a method dispatched on those alone, which is where the logic
-lives. A missing optional component is a `::Nothing` method at that level rather than an `isnothing`
-branch. Those methods type only their own component and leave the rest untyped, so a setup that
-overloads one on a type of its own does not collide with the built-in method. The download steps are
-the exception: their component level *is* the source's own hook (`download_forcing(target_grid,
-config)`), and a second method on `(grid_config, forcing_config)` would be ambiguous with every
-source's, so the setup form builds the bare grid itself.
+field. **Each step has exactly one method, on `AbstractFjordConfig`**, so a setup type replaces a
+step by overloading that name on itself and nothing else answers to it. The step holds no logic: it
+picks out the components it reads through the accessors (`grid_config(config)`, …) and hands them to
+a function of another name, dispatched on those alone, which is where the logic lives:
+
+| Step | Work function | Source hook |
+|---|---|---|
+| `prepare_bathymetry` | `process_bathymetry` | `bathymetry_dataset` |
+| `download_forcing` | — | `fetch_forcing` |
+| `prepare_forcing` | `regrid_forcing` | `forcing_time_steps`, … |
+| `download_initial_state` | — | `fetch_initial_state` |
+| `prepare_initial_state` | `regrid_initial_state` | `initial_state_record`, … |
+| `add_rivers` | `place_rivers` | `fetch_rivers`, `river_locations`, … |
+| `download_boundary_data` | — | `fetch_boundary_data` |
+| `prepare_boundary_data` | `regrid_boundary_data` | `boundary_time_steps`, … |
+| `download_atmosphere` | — | `fetch_atmosphere` |
+| `prepare_atmosphere` | `regrid_atmosphere` | `atmosphere_time_steps`, … |
+| `build_simulation` | `assemble_simulation` | `coupled_model`, `model_inputs` |
+| `run_simulation` | `run_loops` | — |
+| `validate_simulation` | `score_run` | observation hooks |
+
+A work function has a component-level method, taking the setup's grid config and the rest, and the
+`prepare_*` ones a core method on a built `target_grid` that tests call directly. A missing optional
+component is a `::Nothing` method of the work function rather than an `isnothing` branch. Those
+methods type only their own component and leave the rest untyped, so a method on a component type of
+one's own does not collide with the built-in one. A download step has no work function: it builds the
+bare grid and calls the source's `fetch_*` hook, whose `::Nothing` method is the no-op.
 
 The model and the run are separate components: `model_config` is what is built
-(`AbstractModelConfig`, `coupled_model`), `simulation_config` how it is run (writers, callbacks, time
-stepping, the window). The biogeochemistry is a third, swapped independently of the physics.
+(`AbstractModelConfig`, `coupled_model`), `run_config` how it is run (writers, callbacks, time
+stepping, the window). The biogeochemistry is a third, swapped independently of the physics. The
+pipeline reads a run config only through its accessors (`results_root`, `start_date`, `writers`, …),
+and the initial conditions are a component of the run with a supertype of their own,
+`AbstractInitialConditionsConfig`, whose hook receives the whole setup.
 
 ## 2. Utils (`src/Utils.jl`)
 
@@ -67,7 +89,7 @@ that includes it. Oceananigans writes `zero(eltype)` into every immersed tracer 
 `update_state!`, and most of a fjord grid is land — so the array form reported the land mask as the
 minimum temperature for the whole run. It also keeps the reduction on the GPU.
 
-`coverage_window(simulation_config)` is the `(first, last)` interval the run needs. Every prepare
+`coverage_window(run_config)` is the `(first, last)` interval the run needs. Every prepare
 step that has a time axis — forcing, rivers, boundaries, atmosphere — and `validate_simulation` take
 it as their `coverage`.
 
@@ -330,7 +352,7 @@ reads it as forcing terms at every step and `build_simulation` checks its covera
 forcing downloads whole years. A realistic start needs one record. So the initial state is its own
 config, two steps and a one-record file, and a setup starting from it needs no forcing config.
 
-- **The date is the simulation config's `start_date`**, not a field of its own, so the two cannot
+- **The date is the run config's `start_date`**, not a field of its own, so the two cannot
   disagree. The record is picked when the file is prepared, so the file stores the `start_date` it was
   prepared for and `FromInitialState` refuses a mismatch. A changed `start_date` therefore fails loudly
   instead of starting from the old day.
@@ -381,7 +403,7 @@ compensating deep inflow over the sills, so basins were diluted from above and n
 
 - **HydAPI status codes each mean one thing** (404 no such series, 401 bad key with an empty body,
   400 validation errors, 429 rate limit), so `nve_request` translates them.
-- **"No data" can be HTTP 200** with `observationCount: 0`; `download_rivers` checks
+- **"No data" can be HTTP 200** with `observationCount: 0`; `fetch_rivers` checks
   `nve_observation_count`, or an out-of-record year would be cached as a row of `NaN`. A river with
   genuinely no temperature says `temperature_station = ""`.
 - **Daily records are stamped 11:00 UTC**, so series are matched by calendar date.
@@ -522,8 +544,9 @@ file exists and spans the window, before the grid is built), `simulation_grid`, 
 keywords `coupled_model` receives, each read from one component), `coupled_model` on the model config,
 then `Simulation` and the outputs. `model_inputs` dispatches on the whole setup because it is where
 the components meet, which makes it the one place a setup type with an input of a new kind extends.
-`build_simulation` and `run_simulation` dispatch on the simulation config, so a different way of
-running is a new `AbstractSimulationConfig` subtype. `OceanSeaIceModel` takes the ocean as a
+A different way of running — an ensemble, a nested run — is a setup type of its own overloading
+`run_simulation`; a run config that stores its values differently is a new `AbstractRunConfig`
+implementing the accessors. `OceanSeaIceModel` takes the ocean as a
 `Simulation` of its own, so `coupled_model` still needs `stop_time` and the initial `Δt`.
 
 **The run tag is the wall-clock launch instant** (`yyyymmddTHHMMSS`, `Simulations.LAUNCH_TAG`,

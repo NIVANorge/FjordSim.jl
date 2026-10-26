@@ -42,7 +42,7 @@ takes the basename as the fjord whose data and results directories it stages.
 ## What it must and may contain
 
 Only the grid and the bathymetry are required. Every other field defaults to `nothing`, and every
-step whose config is `nothing` is a no-op. A setup naming a `simulation_config` must also name a
+step whose config is `nothing` is a no-op. A setup naming a `run_config` must also name a
 `model_config` and its `boundary_condition_configs`:
 
 | Field | Built-in config | Steps | Prepared file | Needed for |
@@ -57,7 +57,7 @@ step whose config is `nothing` is a no-op. A setup naming a `simulation_config` 
 | `model_config` | `CoupledHydrostaticModel` | `run_simulation` | — | running at all: what the model is |
 | `biogeochemistry_config` | none (`examples/oslofjorden_npzd.jl` has one) | `run_simulation` | — | a biogeochemical model |
 | `boundary_condition_configs` | a tuple of `AirSeaFluxes`, `QuadraticBottomDrag`, `OpenLateralBoundaryFromData` | `run_simulation` | — | running at all; `()` for the model's defaults |
-| `simulation_config` | `SimulationConfig` | `run_simulation`, `validate_simulation` | results | running at all: how the model is run |
+| `run_config` | `RunConfig` | `run_simulation`, `validate_simulation` | results | running at all: how the model is run |
 
 NorKyst's operational archive (`NorKystConfig`, `NorKystInitialStateConfig`,
 `NorKystBoundaryDataConfig`) begins on 2017-02-20; a window before that needs the hindcast configs,
@@ -69,7 +69,7 @@ A new data source is a new config type, not an edit to the pipeline: `docs/addin
 
 ## Paths
 
-- **Roots.** Build the data root with `fjord_data_root("<fjord>")` and the simulation config's
+- **Roots.** Build the data root with `fjord_data_root("<fjord>")` and the run config's
   `results_root` with `fjord_results_root("<fjord>")`, never from `homedir()`. Both read
   `FJORDSIM_DATA_ROOT` / `FJORDSIM_RESULTS_ROOT`, which is how one setup runs unchanged on a laptop
   and on the cloud VM. Results are never under the data root.
@@ -138,9 +138,9 @@ optional smoothing stage off:
 (Bathymetry) why their order is fixed. Check that `max_island_cells` stays below the smallest real
 island, and that a known sill comes out at its real depth.
 
-## The model and simulation configs
+## The model and run configs
 
-`CoupledHydrostaticModel`, `SimulationConfig` and every config they nest have **no defaults**: each
+`CoupledHydrostaticModel`, `RunConfig` and every config they nest have **no defaults**: each
 field is a scientific choice
 about one fjord, stated in the setup, so a field added later breaks every setup until each names it.
 `README.md` lists the fields; the examples state all of them. Coefficients that depend on the grid

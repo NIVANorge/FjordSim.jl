@@ -174,7 +174,7 @@ One variable of one `FieldStationWriter` file, as a `ModelSeries`.
 
 Oceananigans' JLD2 layout stores `timeseries/<name>/<iteration>` per record and
 `timeseries/t/<iteration>` the model time in seconds, and stores **no grid and no attributes** — so
-unlike the NetCDF path, `reference` has to be supplied by the caller from the simulation config.
+unlike the NetCDF path, `reference` has to be supplied by the caller from the run config.
 """
 function read_station_jld2(path, variable::AbstractString, reference::DateTime)
     return JLD2.jldopen(path, "r") do file

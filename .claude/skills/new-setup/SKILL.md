@@ -17,7 +17,7 @@ This is the order to work through.
    coverage. A shared download only from a domain that contains the new one.
 3. **Write the file** from the closest example: `fjord_data_root`/`fjord_results_root` with the
    file's own basename, one `FT` passed everywhere, every `CoupledHydrostaticModel` and
-   `SimulationConfig` field stated, and the `boundary_condition_configs` tuple. Scale every
+   `RunConfig` field stated, and the `boundary_condition_configs` tuple. Scale every
    grid-spacing-dependent coefficient to the new Δx with the formulas in `docs/setups.md` rather than
    copying it, and state in a comment the number that justifies each value.
 4. **Load it**: `julia --project -e 'using FjordSim; fjord_config("<file>.jl")'` must return a

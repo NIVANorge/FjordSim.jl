@@ -2,7 +2,7 @@ module CLI
 
 export fjord_config
 
-using ..Configs: AbstractSimulationConfig, AbstractFjordConfig, simulation_config
+using ..Configs: AbstractRunConfig, AbstractFjordConfig, run_config, results_root
 using ..Bathymetry: prepare_bathymetry
 using ..Atmospheres: prepare_atmosphere, download_atmosphere
 using ..Forcing: prepare_forcing, download_forcing
@@ -138,12 +138,12 @@ Subcommands, in the order a setup is prepared and run:
                         add_rivers if it names rivers, prepare_boundary_data if it names
                         open-boundary data, and prepare_atmosphere if it names an atmosphere.
                         Only prepare_bathymetry is required. Where it runs
-                        is the simulation config's `architecture` field. A setup with no
-                        simulation config does nothing.
+                        is the run config's `architecture` field. A setup with no
+                        run config does nothing.
   validate_simulation   Score a finished run against observations, writing skill tables and
                         comparison figures under the setup's results directory. Needs
                         run_simulation, and reads the station files it wrote. A setup with no
-                        simulation config does nothing; one whose simulation writes no station
+                        run config does nothing; one whose simulation writes no station
                         output is an error.
 
 Options:
@@ -166,12 +166,12 @@ Where to write this run's transcript: `fjordsim_<run_tag>.log` under the setup's
 log lands beside the output it describes rather than wherever the command happened to be run from,
 and so each launch keeps its own transcript.
 
-Takes the *simulation* config, because `results_root` and the run tag are its fields and only
+Takes the run config, because `results_root` and the run tag are its own and only
 `run_simulation` is logged: that is the one step whose failure is a stacktrace through the whole
-coupled model, and the one step a setup without a simulation config does not run at all.
+coupled model, and the one step a setup without a run config does not run at all.
 """
-log_path(config::AbstractSimulationConfig) =
-    joinpath(config.results_root, string("fjordsim_", run_tag(config), ".log"))
+log_path(config::AbstractRunConfig) =
+    joinpath(results_root(config), string("fjordsim_", run_tag(config), ".log"))
 
 """
 The width, in columns, the error reporter tells `showerror` it has.
@@ -397,9 +397,9 @@ function main(args)
         return 2
     end
 
-    simulation = Base.invokelatest(simulation_config, config)
-    if driver === run_simulation && !isnothing(simulation)
-        log_file = log_path(simulation)
+    run = Base.invokelatest(run_config, config)
+    if driver === run_simulation && !isnothing(run)
+        log_file = log_path(run)
         @info "Logging to $(abspath(log_file))"
 
         return tee_output(log_file) do

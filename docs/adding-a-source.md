@@ -57,8 +57,8 @@ Bathymetry — `AbstractBathymetryConfig`, consumed by `prepare_bathymetry`:
 | `regrid_options(config)` → NamedTuple for `regrid_bathymetry` | no | `(;)` |
 | `smoothing_options(config)` → NamedTuple for `smooth_bathymetry_gaps!` — `open_boundary_land_cells`, `max_island_cells`, `close_narrow_passages`, `spike_ratio`, `minimum_cell_fraction`, `max_slope_factor`, `minimum_depth`, `preserve_sills`. `preserve_sills = true` also has `prepare_bathymetry` read the source back on its own grid (`native_bathymetry`), which needs the dataset's `longitude_interfaces`, `latitude_interfaces`, `size` and a 2D variable in its file | no | `(;)`, leaving only the topological cleanup |
 
-The `edges` keyword `prepare_bathymetry` takes is a pipeline *argument*, not a hook, exactly as
-`prepare_forcing`'s is: the step reads it with `open_edges(boundary_data_config)` and every source
+The `edges` keyword `process_bathymetry` takes is a pipeline *argument*, not a hook, exactly as
+`regrid_forcing`'s is: the step reads it with `open_edges(boundary_data_config)` and every source
 inherits `clear_open_boundary_land` unchanged.
 
 Forcing — `AbstractForcingConfig`, consumed by `prepare_forcing`:
@@ -68,7 +68,7 @@ Forcing — `AbstractForcingConfig`, consumed by `prepare_forcing`:
 | `forcing_time_steps(config)` → `Vector{SourceRecord}` | yes |
 | `forcing_source_grid(config, filepath)` → source grid | yes |
 | `forcing_variable_names(config)` → `Dict` source name => FjordSim name | yes |
-| `download_forcing(target_grid, config)` | only if it downloads |
+| `fetch_forcing(target_grid, config)` | only if it downloads |
 | `simulation_forcing(config, grid, filepath, tracers, reference_date)` → the forcing term object `coupled_model` consumes | no; defaults to `forcing_from_file`, the FjordSim NetCDF contract |
 | `forcing_date_range(config, filepath)` → `(first, last)` `DateTime`s | no; defaults to reading `ds["time"]` from the prepared NetCDF. A source that overrides `simulation_forcing` overrides this too |
 | `source_field_grid(source, architecture)`, `projected_target_nodes(longitude, latitude, source)` | only for a source grid that is not a regular projected grid; dispatch on the source-grid type, not the config |
@@ -80,9 +80,9 @@ Initial state — `AbstractInitialStateConfig`, consumed by `prepare_initial_sta
 | `initial_state_record(config, date)` → the `SourceRecord` holding the state at `date` | yes |
 | `initial_state_source_grid(config, filepath)` → source grid | yes |
 | `initial_state_variable_names(config)` → `Dict` source name => FjordSim name | yes |
-| `download_initial_state(target_grid, config, date)` | only if it downloads |
+| `fetch_initial_state(target_grid, config, date)` | only if it downloads |
 
-`date` is the simulation config's `start_date`, passed by the setup-level step: the dataset
+`date` is the run config's `start_date`, passed by the setup-level step: the dataset
 decides which of its records stands for that instant, and fetches only that one.
 
 Rivers — `AbstractRiverConfig`, consumed by `add_rivers`:
@@ -92,7 +92,7 @@ Rivers — `AbstractRiverConfig`, consumed by `add_rivers`:
 | `river_locations(config)` → `Vector{RiverLocation}` | yes | none |
 | `river_discharge(config, times)` → `(river, time)` matrix in m³/s, finite and non-negative | yes | none |
 | `river_series(config, times)` → `Dict` FjordSim tracer name => `(river, time)` matrix of what the water carries; finite for every river the grid carries (no "ambient" value — unstable), and a tracer it omits enters at zero | yes | none |
-| `download_rivers(target_grid, config)` | only if it downloads | none |
+| `fetch_rivers(target_grid, config)` | only if it downloads | none |
 | `river_search_radius(config)` → cells to search for a coastal cell | no | `config.search_radius` |
 | `river_maximum_inflow_velocity(config)` → m/s, the fastest a river's water may cross the surface of its columns | no | `config.maximum_inflow_velocity` |
 
@@ -118,7 +118,7 @@ Open-boundary data — `AbstractBoundaryDataConfig`, consumed by `prepare_bounda
 | `boundary_time_steps(config)` → `Vector{SourceRecord}` | yes | none |
 | `boundary_source_grid(config, filepath)` → source grid | yes | none |
 | `boundary_variable_names(config)` → `Dict` source name => FjordSim name | yes | none |
-| `download_boundary_data(target_grid, config)` | only if it downloads; reads its edges with `open_edges(config)`, and subsets the box `boundary_domain` derives from them | none |
+| `fetch_boundary_data(target_grid, config)` | only if it downloads; reads its edges with `open_edges(config)`, and subsets the box `boundary_domain` derives from them | none |
 | `boundary_date_range(config)` → `(first, last)` `DateTime`s | no | reads `ds["time"]` from the prepared NetCDF |
 | `boundary_source_slab(config, reader, step, source_name)` → one source slab | no | `blended_slab`, a plain read. Override only for a variable *derived* from more than one of the source's own — a velocity component stated along the source's own grid axes is the case that needs it |
 
@@ -131,7 +131,7 @@ else. Write one `Symbol` or a collection of them — a domain in the open ocean 
 built-in config's keyword constructor normalizes either to a `Vector{Symbol}` with `lateral_edges`, so
 every consumer iterates one shape rather than branching on a scalar. The three pipeline entry points
 take the config and read the edges off it rather than taking both, which is what keeps them from
-disagreeing; `prepare_forcing` takes them as an `edges` keyword, since a forcing dataset has no
+disagreeing; `regrid_forcing` takes them as an `edges` keyword, since a forcing dataset has no
 business naming them, and `nothing` there means a closed domain. Not to be
 confused with `AbstractBoundaryConditionConfig`, which is the scheme rather than the data.
 
@@ -153,7 +153,7 @@ Atmosphere — `AbstractAtmosphereConfig`, consumed by `prepare_atmosphere`:
 | `atmosphere_time_steps(config)` → `Vector{AtmosphereRecord}` | yes |
 | `atmosphere_source_grid(config, filepath)` → source grid, e.g. `ProjectedAtmosphereGrid` | yes |
 | `atmosphere_variable_names(config)` → `Dict` downloaded name => prepared name | yes |
-| `download_atmosphere(target_grid, config)` | only if it downloads |
+| `fetch_atmosphere(target_grid, config)` | only if it downloads |
 | `prescribed_atmosphere(config, architecture; reference_date)` → `PrescribedAtmosphere` | only if the setup is simulated |
 | `prescribed_radiation(config, architecture; reference_date)` → `PrescribedRadiation` | only if the setup is simulated |
 | `atmosphere_date_range(config)` → `(first, last)` `DateTime`s | no; defaults to `nothing`, skipping the coverage check |
@@ -166,7 +166,7 @@ atmosphere config yields `nothing` for all three.
 
 `reference_date` is the instant the returned time axes are zeroed at, and is *not*
 `NORA3PrescribedAtmosphere`'s `start_date`: that one selects which records to load, this one
-selects where t = 0 sits. `build_simulation` passes the simulation config's `start_date` to both
+selects where t = 0 sits. `build_simulation` passes the run config's `start_date` to both
 this hook and `simulation_forcing`, which is the only thing keeping the two in phase — see
 `docs/architecture.md` (Simulations section).
 
@@ -189,19 +189,22 @@ The boundary-condition pieces are a plain tuple because how they combine, and wh
 takes, is the model's business: a model whose boundary objects are not `FieldBoundaryConditions`
 overloads `model_boundary_conditions` on its own config.
 
-Simulation — `AbstractSimulationConfig`, the setup's `simulation_config`: how a built model is run.
-`build_simulation(simulation_config, config)` and `run_simulation(simulation_config, config)` dispatch
-on it, so a different way of building or running — an ensemble, a nested run — is a subtype with
-its own methods of those two. Its fields are read directly, so a subtype that reuses the built-in
-methods supplies the field set its docstring lists. It inherits `results_path`, `run_tag` and
-`coverage_window` — the last reads `start_date`, so a subtype omitting that field inherits only the
-first two. What it nests is dispatched on one hook table each:
+Run — `AbstractRunConfig`, the setup's `run_config`: how a built model is run. The pipeline reads it
+only through accessors (`FjordSim.Configs`), never its fields, so a subtype stores or derives each
+value as it likes: `results_root`, `writers`, `callbacks`, `time_stepping`, `initial_conditions`,
+`start_date`, `stop_time`, `loops`, `pickup`, and `Simulations.run_architecture`. A subtype
+implementing only `results_root`, `start_date` and `stop_time` still gets `results_path`, `run_tag`
+and `coverage_window`, so it can be prepared for; `build_simulation` needs the rest. A different way
+of *running* — an ensemble, a nested run — is not a run config but a setup type of its own
+overloading `run_simulation` (see below). What a run config returns is dispatched on one hook table
+each:
 
-| Supertype | Field | Required hooks |
+| Supertype | Accessor | Required hooks |
 |---|---|---|
 | `AbstractCallbackConfig` | `callbacks` (a tuple) | `attach_callback!(simulation, callback, config)` |
-| `AbstractWriterConfig` | `writers` (a tuple) | `attach_writer!(simulation, writer, config, loop)`; optionally `checkpoint_trait`, `output_path_trait`, both defaulting to the negative. `SnapshotWriter` (NetCDF), `FieldSnapshotWriter` (JLD2, for z-reduced fields NetCDF rejects) and `CheckpointWriter` are the built-ins |
+| `AbstractWriterConfig` | `writers` (a tuple) | `attach_writer!(simulation, writer, config, loop)`; optionally `checkpoint_trait`, `output_path_trait` and `station_output`, all defaulting to the negative. `SnapshotWriter` (NetCDF), `FieldSnapshotWriter` (JLD2, for z-reduced fields NetCDF rejects) and `CheckpointWriter` are the built-ins; `StationWriter` and `FieldStationWriter`, whose `station_output` is `true`, are what `validate_simulation` scores |
 | `AbstractTimeSteppingConfig` | `time_stepping` | `attach_time_stepping!(simulation, config)`, `initial_time_step(config)` |
+| `AbstractInitialConditionsConfig` | `initial_conditions` (or a plain `NamedTuple`) | `resolve_initial_conditions(initial_conditions, grid, config, tracers)` → the `NamedTuple` `set!` takes. `config` is the whole setup, so a source reads whichever component holds its data. `FromForcing`, `FromInitialState` and `FromResults` are the built-ins |
 
 A writer needs an `output_file` field only when its `output_path_trait` is `NamesOutputFile`; on any
 other, `results_path` raises a stated `ArgumentError` rather than failing on a missing field.
@@ -236,13 +239,16 @@ keys that would shadow the fields.
 
 ## A new kind of input, or a setup type of its own
 
-Every step that takes a whole setup takes an `AbstractFjordConfig`, and only picks out the components
-it reads through accessor functions — `grid_config(config)`, `forcing_config(config)`, … — before
-calling the method that does the work, which dispatches on those components alone:
-`prepare_bathymetry(config)` is `prepare_bathymetry(grid_config, bathymetry_config,
-boundary_data_config)`. Each optional component has a `::Nothing` method at that level, which is how
-a step becomes a no-op. So a setup type of its own reuses every step by implementing the eleven
-accessors (`FjordSim.Configs`), and the test suite's `DelegatingFjord` is the minimal example.
+Every pipeline step and `build_simulation` has exactly one method, on `AbstractFjordConfig`, and
+holds no logic: it picks out the components it reads through accessor functions —
+`grid_config(config)`, `forcing_config(config)`, … — and hands them to a work function of another
+name, which dispatches on those components alone: `prepare_bathymetry(config)` is
+`process_bathymetry(grid_config, bathymetry_config, boundary_data_config)`. Each optional component
+has a `::Nothing` method of the work function, which is how a step becomes a no-op. The table of
+steps and work functions is in `docs/architecture.md` (Configs section). So a setup type of its own
+reuses every step by implementing the eleven accessors (`FjordSim.Configs`), and the test suite's
+`DelegatingFjord` is the minimal example; and it replaces one step by overloading that step on
+itself, `FjordSim.run_simulation(config::EnsembleFjord) = …`, which nothing else answers to.
 
 An input of a kind `FjordConfig` has no field for — nutrient loads, wave forcing — is such a type
 with one more field, and three overloads, none of them an edit to FjordSim:
@@ -258,8 +264,8 @@ end
 Configs.grid_config(config::NutrientFjord) = Configs.grid_config(config.base)   # … every accessor
 
 # The keyword the model receives: the default inputs plus the new one.
-Simulations.model_inputs(config::NutrientFjord, grid, simulation) = merge(
-    Simulations.model_inputs(config.base, grid, simulation),
+Simulations.model_inputs(config::NutrientFjord, grid, run) = merge(
+    Simulations.model_inputs(config.base, grid, run),
     (; nutrients = nutrient_forcing(config.nutrient_config, grid)),
 )
 
@@ -270,10 +276,10 @@ CLI.pipeline_steps(config::NutrientFjord) =
 
 The model config it pairs with takes the new keyword in its own `coupled_model` method. A new step
 follows the same shape as the built-in ones: a one-line method on the setup type that picks out the
-components, and the method that does the work on those components.
+components, and a work function of another name on those components.
 
-The `coverage` keyword `prepare_forcing`, `prepare_boundary_data` and `prepare_atmosphere` take is a
-pipeline *argument*, not a hook: the steps derive it from the simulation config with `coverage_window`
+The `coverage` keyword `regrid_forcing`, `place_rivers`, `regrid_boundary_data` and
+`regrid_atmosphere` take is a pipeline *argument*, not a hook: the steps derive it from the run config with `coverage_window`
 and every source inherits the padding unchanged. No source gains a hook for it.
 
 Required fields are listed in each supertype's docstring in `src/Configs.jl`. Path resolution

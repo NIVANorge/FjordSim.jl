@@ -252,7 +252,7 @@ end
 # --- Download ---
 
 """
-    download_boundary_data(target_grid, config::NorKystBoundaryDataConfig)
+    fetch_boundary_data(target_grid, config::NorKystBoundaryDataConfig)
 
 Download the hourly NorKyst-800m months covering `config.years`, each combined into one NetCDF file
 in `boundary_data_directory(config)` subset to the box `boundary_domain` derives from
@@ -263,7 +263,7 @@ For a single open edge that box is a `config.margin`-wide band along the edge, w
 hourly download affordable. For several it is their bounding box, which for opposite edges is the whole
 domain — see `boundary_domain` for why it stays one box.
 """
-function download_boundary_data(target_grid, config::NorKystBoundaryDataConfig)
+function fetch_boundary_data(target_grid, config::NorKystBoundaryDataConfig)
     output_directory = boundary_data_directory(config)
     mkpath(output_directory)
 

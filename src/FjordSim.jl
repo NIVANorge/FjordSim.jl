@@ -32,7 +32,7 @@ export
     NorKystHindcastBoundaryDataConfig,
     NORA3Config,
     # simulation
-    SimulationConfig,
+    RunConfig,
     CoupledHydrostaticModel,
     SplitExplicitFreeSurfaceConfig,
     BoundarySponge,

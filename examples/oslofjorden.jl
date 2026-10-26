@@ -20,7 +20,7 @@
 # land alongside it rather than being shared from elsewhere. It writes `rivers_nve.nc`, which
 # `build_simulation` reads as a volume inflow.
 #
-# It also names a model, its boundary conditions and a `simulation_config`, so `run_simulation`
+# It also names a model, its boundary conditions and a `run_config`, so `run_simulation`
 # works once the preparation steps have run. Nothing about the run has a default, so every knob is
 # stated here and nowhere else — split by what dispatches on it: `CoupledHydrostaticModel` is what
 # the model is, the `boundary_condition_configs` tuple is what bounds it, the `writers` tuple is what
@@ -65,8 +65,8 @@ data_root = fjord_data_root("oslofjorden")
 FT = Float32
 
 # FjordConfig holds every component side by side. Each step (prepare_forcing(), add_rivers(),
-# run_simulation(), ...) picks out the components it reads and dispatches on them, and those
-# call the finer-grained hooks the configs below overload.
+# run_simulation(), ...) picks out the components it reads and hands them to a function that
+# dispatches on them, which calls the finer-grained hooks the configs below overload.
 FjordConfig(
     # EvenGrid overloads the two grid hooks — domain_grid(config, architecture), which every
     # prepare_* pipeline calls, and simulation_grid(config, bathymetry_file, architecture),
@@ -177,7 +177,7 @@ FjordConfig(
         parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
     ),
     # NVERiversConfig overloads river_locations, river_series, river_discharge and
-    # download_rivers (all required, hooks add_rivers calls), all dispatching on this
+    # fetch_rivers (all required, hooks add_rivers calls), all dispatching on this
     # config's type. It queries NVE, so the window follows `years` and every value has
     # provenance. The HydAPI half needs an API key — `NVE_API_KEY`, free at
     # https://hydapi.nve.no/Users.
@@ -409,8 +409,8 @@ FjordConfig(
         ),
     ),
     # How the model is run. Writers, callbacks and time stepping each dispatch on their own
-    # supertype; build_simulation and run_simulation dispatch on this config's type.
-    simulation_config = SimulationConfig(
+    # supertype; the run itself is read through the run config's accessors.
+    run_config = RunConfig(
         results_root       = fjord_results_root("oslofjorden"),
         architecture       = :auto,
         # Both overload attach_writer! — what the run writes. `variables` may name anything

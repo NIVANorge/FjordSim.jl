@@ -1,6 +1,6 @@
 module Simulations
 
-export SimulationConfig,
+export RunConfig,
     CoupledHydrostaticModel,
     SplitExplicitFreeSurfaceConfig,
     BoundarySponge,
@@ -36,7 +36,9 @@ using NCDatasets
 using KernelAbstractions: @kernel, @index, @Const
 
 using ..Configs:
-    AbstractSimulationConfig,
+    Configs,
+    AbstractRunConfig,
+    AbstractInitialConditionsConfig,
     AbstractModelConfig,
     AbstractFreeSurfaceConfig,
     AbstractClosureConfig,
@@ -57,7 +59,16 @@ using ..Configs:
     model_config,
     biogeochemistry_config,
     boundary_condition_configs,
-    simulation_config
+    run_config,
+    results_root,
+    writers,
+    callbacks,
+    time_stepping,
+    initial_conditions,
+    start_date,
+    stop_time,
+    loops,
+    pickup
 using ..Utils: progress, cell_advection_timescale_coupled_model
 using ..Grids: simulation_grid, open_edges
 using ..Atmospheres: prescribed_atmosphere, prescribed_radiation, atmosphere_date_range
@@ -409,7 +420,7 @@ existed.
 
 The keyword constructor is hand-written rather than `Base.@kwdef`, because `extra_kwargs` needs
 validating at construction. That also puts this type in the same category as `SnapshotWriter` and
-`ProgressCallback` rather than `SimulationConfig`'s: the `Base.@kwdef`-on-a-parametric-struct rule
+`ProgressCallback` rather than `RunConfig`'s: the `Base.@kwdef`-on-a-parametric-struct rule
 that makes `stop_time = 3600` a `MethodError` there does not apply here.
 """
 struct CoupledHydrostaticModel{B,C,TA,MA,TR,CO,SI,FS,EK<:NamedTuple} <: AbstractModelConfig
@@ -562,13 +573,13 @@ Constant for the life of the process, so `results_path`, `FjordSim.CLI.log_path`
 all agree however often they ask. `config` is taken only so a simulation-config subtype can name its
 runs differently.
 """
-run_tag(::AbstractSimulationConfig) = LAUNCH_TAG[]
+run_tag(::AbstractRunConfig) = LAUNCH_TAG[]
 
 """
     results_path(writer, config)
     results_path(writer, config, loop)
 
-Resolve `writer.output_file` against `config.results_root`: the file that writer writes to. Results
+Resolve `writer.output_file` against `results_root(config)`: the file that writer writes to. Results
 are rooted separately from the input data, which is why this reads `results_root` rather than
 `data_root`. An absolute `output_file` keeps its own directory.
 
@@ -576,14 +587,14 @@ are rooted separately from the input data, which is why this reads `results_root
 the three-argument form appends the loop index on top of it, which is how a looped run gives each
 repetition its own file.
 
-The filename is the *writer's* rather than the simulation config's, so a setup can name several
+The filename is the *writer's* rather than the run config's, so a setup can name several
 outputs at different intervals. A writer that names no product file has no `output_file` and gets an
 error saying so, rather than a `getproperty` failure — see `AbstractWriterConfig`.
 """
-results_path(writer::AbstractWriterConfig, config::AbstractSimulationConfig) =
+results_path(writer::AbstractWriterConfig, config::AbstractRunConfig) =
     tagged_path(writer, config, run_tag(config))
 
-results_path(writer::AbstractWriterConfig, config::AbstractSimulationConfig, loop::Int) =
+results_path(writer::AbstractWriterConfig, config::AbstractRunConfig, loop::Int) =
     tagged_path(writer, config, string(run_tag(config), "_loop", lpad(loop, 2, '0')))
 
 """
@@ -593,7 +604,7 @@ results_path(writer::AbstractWriterConfig, config::AbstractSimulationConfig, loo
 unless it is absolute — so an absolute `output_file` still relocates just that file, and the tag
 lands on the basename either way.
 """
-function tagged_path(writer::AbstractWriterConfig, config::AbstractSimulationConfig, tag)
+function tagged_path(writer::AbstractWriterConfig, config::AbstractRunConfig, tag)
     hasproperty(writer, :output_file) || throw(
         ArgumentError(
             "$(typeof(writer)) names no `output_file`, so it has no `results_path`. Only a writer " *
@@ -605,7 +616,7 @@ function tagged_path(writer::AbstractWriterConfig, config::AbstractSimulationCon
     stem, extension = splitext(file)
     tagged = string(stem, "_", tag, extension)
     isabspath(writer.output_file) && return joinpath(directory, tagged)
-    return joinpath(config.results_root, directory, tagged)
+    return joinpath(results_root(config), directory, tagged)
 end
 
 """
@@ -995,7 +1006,7 @@ Attach the progress report to the *coupled* simulation, under `callback.name`.
 The coupled one, because that is the clock the run advances and the object `progress` reaches the
 ocean through.
 """
-function attach_callback!(simulation, callback::ProgressCallback, config::AbstractSimulationConfig)
+function attach_callback!(simulation, callback::ProgressCallback, config::AbstractRunConfig)
     simulation.callbacks[callback.name] =
         Callback(callback.report, TimeInterval(callback.interval))
 
@@ -1008,8 +1019,8 @@ end
 Attach every callback the config names. The mirror of `attach_writers!`, and like it, which
 simulation each callback goes on is the method's business.
 """
-function attach_callbacks!(simulation, config::AbstractSimulationConfig)
-    for callback in config.callbacks
+function attach_callbacks!(simulation, config::AbstractRunConfig)
+    for callback in callbacks(config)
         attach_callback!(simulation, callback, config)
     end
 
@@ -1023,8 +1034,8 @@ Reject two callbacks under one name, before anything is read or allocated: the s
 replaces the first in the `callbacks` dictionary, so one of the diagnostics the setup asked for
 never fires. The same failure `validate_writers` rejects for writers.
 """
-function validate_callbacks(config::AbstractSimulationConfig)
-    names = [callback.name for callback in config.callbacks]
+function validate_callbacks(config::AbstractRunConfig)
+    names = [callback.name for callback in callbacks(config)]
     allunique(names) || throw(
         ArgumentError(
             "Callback names must be unique, got $(join(names, ", ")). Two callbacks under one " *
@@ -1069,9 +1080,9 @@ when the `Simulation` is constructed, the policy only once it exists.
 initial_time_step(config::AdaptiveTimeStep) = config.initial_time_step
 
 """
-    SimulationConfig(; results_root, architecture, writers, callbacks, time_stepping, ...)
+    RunConfig(; results_root, architecture, writers, callbacks, time_stepping, ...)
 
-Simulation configuration: how a model built from a setup's prepared data is run.
+Run configuration: how a model built from a setup's prepared data is run.
 
 **No field has a default**, here and in each of the three nested configs. Every knob is a scientific
 choice about a particular fjord, and a default would let one setup silently inherit another's — so a
@@ -1087,7 +1098,7 @@ and its boundary conditions, are not here: they are the setup's `model_config` a
 
 # Fields
 - `results_root`: the directory every writer, and the run log, resolves against.
-- `architecture`: `:auto`, `:cpu` or `:gpu`, resolved by `simulation_architecture`. A `Symbol`
+- `architecture`: `:auto`, `:cpu` or `:gpu`, resolved by `run_architecture`. A `Symbol`
   rather than a live `CPU()`/`GPU()` so this config's field types stay concrete and a setup file
   loads on a machine with no GPU.
 - `writers`: a tuple of `AbstractWriterConfig`s. `()` writes nothing.
@@ -1121,7 +1132,7 @@ durations with `Oceananigans.Units`, whose constants are already `Float64`. `loo
 being an `Int` already, and the nested configs are the other one: each has a hand-written keyword
 constructor that converts, so an integer duration is fine in a writer or a time-stepping config.
 """
-Base.@kwdef mutable struct SimulationConfig{W,CB,TS,I} <: AbstractSimulationConfig
+Base.@kwdef mutable struct RunConfig{W,CB,TS,I} <: AbstractRunConfig
     results_root::String
     architecture::Symbol
     writers::W
@@ -1134,8 +1145,18 @@ Base.@kwdef mutable struct SimulationConfig{W,CB,TS,I} <: AbstractSimulationConf
     pickup::Bool
 end
 
+Configs.results_root(config::RunConfig) = config.results_root
+Configs.writers(config::RunConfig) = config.writers
+Configs.callbacks(config::RunConfig) = config.callbacks
+Configs.time_stepping(config::RunConfig) = config.time_stepping
+Configs.initial_conditions(config::RunConfig) = config.initial_conditions
+Configs.start_date(config::RunConfig) = config.start_date
+Configs.stop_time(config::RunConfig) = config.stop_time
+Configs.loops(config::RunConfig) = config.loops
+Configs.pickup(config::RunConfig) = config.pickup
+
 """
-    simulation_architecture(config)
+    run_architecture(config)
 
 Resolve `config.architecture` to a live `CPU()` or `GPU()`.
 
@@ -1143,7 +1164,7 @@ Shares the `Val`-dispatched methods of `interpolation_architecture`, so `:auto` 
 `CUDA.functional()` and `:gpu` errors rather than silently falling back — the same behavior, and
 the same message, as the forcing interpolation.
 """
-simulation_architecture(config::AbstractSimulationConfig) =
+run_architecture(config::RunConfig) =
     interpolation_architecture(Val(config.architecture))
 
 """
@@ -1165,7 +1186,7 @@ Initial conditions read from the prepared forcing file the simulation is already
 The file is on the model grid by construction (`prepare_forcing` regrids onto it), so this is a
 plain read: no regridding, no inpainting, no `NumericalEarth` dataset wrapper.
 """
-struct FromForcing{D}
+struct FromForcing{D} <: AbstractInitialConditionsConfig
     date::D
 end
 
@@ -1178,7 +1199,7 @@ Initial conditions read from the file `prepare_initial_state` wrote: a single re
 grid, at the run's `start_date`. Needs an `initial_state_config`, and the file must have been prepared
 for this `start_date` — see `initial_state_variables`.
 """
-struct FromInitialState end
+struct FromInitialState <: AbstractInitialConditionsConfig end
 
 """
     FromResults(path, date = nothing)
@@ -1193,7 +1214,7 @@ can only be read by their last record. The date takes the nearest record within 
 interval, so any record is reachable by its scheduled instant although an adaptive time step writes
 it a little late — see `results_record_index`.
 """
-struct FromResults{D}
+struct FromResults{D} <: AbstractInitialConditionsConfig
     path::String
     date::D
 end
@@ -1209,11 +1230,12 @@ initial_conditions_date(::FromForcing{Nothing}, start_date) = start_date
 initial_conditions_date(initial_conditions::FromForcing, start_date) = initial_conditions.date
 
 """
-    resolve_initial_conditions(initial_conditions, grid, forcing_file, initial_state_file, config, tracers)
+    resolve_initial_conditions(initial_conditions, grid, config, tracers)
 
-Turn a setup's `initial_conditions` into the `NamedTuple` `set!(model; ...)` consumes.
-`initial_state_file` is where `prepare_initial_state` writes, unchecked, or `nothing` for a setup
-naming no initial state.
+Turn a run config's `initial_conditions` into the `NamedTuple` `set!(model; ...)` consumes. `config`
+is the whole setup, so each kind of source reads the component its data comes from: `FromForcing`
+the prepared forcing, `FromInitialState` the prepared initial state, `FromResults` the run's
+`results_root`.
 
 Dispatched on the kind of source, so `coupled_model` never learns that there is more than one:
 it still receives something splattable and still applies it with a single `set!`.
@@ -1228,41 +1250,22 @@ The free surface `η` and any closure-owned tracer the config does not name (CAT
 defaults, so reading a state in is a *warm start*, not a restart: the barotropic mode and the
 turbulence field re-adjust over the first hours. Use `pickup` for an exact continuation.
 """
-resolve_initial_conditions(initial_conditions::NamedTuple, grid, forcing_file, initial_state_file, config, tracers) =
-    initial_conditions
+resolve_initial_conditions(initial_conditions::NamedTuple, grid, config, tracers) = initial_conditions
 
-function resolve_initial_conditions(initial_conditions::FromForcing, grid, forcing_file, initial_state_file, config, tracers)
-    date = initial_conditions_date(initial_conditions, config.start_date)
-    @info "Initial conditions from forcing $forcing_file at $date"
-    return forcing_state(forcing_file, grid, date, tracers)
+function resolve_initial_conditions(initial_conditions::FromForcing, grid, config, tracers)
+    date = initial_conditions_date(initial_conditions, start_date(run_config(config)))
+    return forcing_state(resolve_forcing_file(forcing_config(config)), grid, date, tracers)
 end
 
-# There is no forcing file because the setup names no forcing config at all — `resolve_forcing_file`
-# returns `nothing` for one. Stated here rather than left to fail inside `NCDataset(nothing)` after
-# the grid has been built.
-resolve_initial_conditions(::FromForcing, grid, ::Nothing, initial_state_file, config, tracers) = error(
-    "Initial conditions are `FromForcing`, but this setup names no `forcing_config`, so there is no " *
-    "prepared forcing file to read a state from. Name one, give `initial_conditions` a `NamedTuple` " *
-    "of constants, start from one day of source data with `FromInitialState`, or from a previous " *
-    "run's snapshot with `FromResults`.",
+resolve_initial_conditions(::FromInitialState, grid, config, tracers) = initial_state_variables(
+    simulation_initial_state_path(initial_state_config(config)),
+    grid,
+    start_date(run_config(config)),
+    tracers,
 )
 
-function resolve_initial_conditions(::FromInitialState, grid, forcing_file, initial_state_file, config, tracers)
-    isfile(initial_state_file) || error(
-        "Initial state $initial_state_file does not exist. Run `julia --project -m FjordSim " *
-        "download_initial_state` and `prepare_initial_state` for this setup first.",
-    )
-    @info "Initial conditions from initial state $initial_state_file"
-    return initial_state_variables(initial_state_file, grid, config.start_date, tracers)
-end
-
-resolve_initial_conditions(::FromInitialState, grid, forcing_file, ::Nothing, config, tracers) = error(
-    "Initial conditions are `FromInitialState`, but this setup names no `initial_state_config` to " *
-    "read a state from. Name one, or give `initial_conditions` a `NamedTuple` of constants.",
-)
-
-function resolve_initial_conditions(initial_conditions::FromResults, grid, forcing_file, initial_state_file, config, tracers)
-    filepath = results_state_path(initial_conditions, config)
+function resolve_initial_conditions(initial_conditions::FromResults, grid, config, tracers)
+    filepath = results_state_path(initial_conditions, run_config(config))
     isfile(filepath) || error("Results file $filepath does not exist.")
     @info "Initial conditions from results $filepath"
     return results_state(filepath, grid, initial_conditions.date, tracers)
@@ -1277,7 +1280,7 @@ filename alone.
 """
 results_state_path(initial_conditions::FromResults, config) =
     isabspath(initial_conditions.path) ? initial_conditions.path :
-    joinpath(config.results_root, initial_conditions.path)
+    joinpath(results_root(config), initial_conditions.path)
 
 """
     forcing_state(filepath, grid, date, tracers)
@@ -1287,6 +1290,7 @@ The state variables a prepared forcing file holds at `date`.
 The `_lambda` twins are relaxation rates rather than state, so only the bare names are read.
 """
 function forcing_state(filepath, grid, date, tracers)
+    @info "Initial conditions from forcing $filepath at $date"
     return NCDataset(filepath) do ds
         validate_state_dimensions(filepath, ds, grid, ("Nx", "Ny", "Nz"))
         dates = ds["time"][:]
@@ -1299,6 +1303,16 @@ function forcing_state(filepath, grid, date, tracers)
     end
 end
 
+# There is no forcing file because the setup names no forcing config at all — `resolve_forcing_file`
+# returns `nothing` for one. Stated here rather than left to fail inside `NCDataset(nothing)` after
+# the grid has been built.
+forcing_state(::Nothing, grid, date, tracers) = error(
+    "Initial conditions are `FromForcing`, but this setup names no `forcing_config`, so there is no " *
+    "prepared forcing file to read a state from. Name one, give `initial_conditions` a `NamedTuple` " *
+    "of constants, start from one day of source data with `FromInitialState`, or from a previous " *
+    "run's snapshot with `FromResults`.",
+)
+
 """
     initial_state_variables(filepath, grid, start_date, tracers)
 
@@ -1307,6 +1321,11 @@ The state variables a prepared initial-state file holds, refusing a file prepare
 otherwise start the run from the old one.
 """
 function initial_state_variables(filepath, grid, start_date, tracers)
+    isfile(filepath) || error(
+        "Initial state $filepath does not exist. Run `julia --project -m FjordSim " *
+        "download_initial_state` and `prepare_initial_state` for this setup first.",
+    )
+    @info "Initial conditions from initial state $filepath"
     return NCDataset(filepath) do ds
         validate_state_dimensions(filepath, ds, grid, ("Nx", "Ny", "Nz"))
         prepared_date = DateTime(ds.attrib[INITIAL_STATE_DATE_ATTRIBUTE])
@@ -1318,6 +1337,11 @@ function initial_state_variables(filepath, grid, start_date, tracers)
         return state_variables(ds, 1, eltype(grid), tracers)
     end
 end
+
+initial_state_variables(::Nothing, grid, start_date, tracers) = error(
+    "Initial conditions are `FromInitialState`, but this setup names no `initial_state_config` to " *
+    "read a state from. Name one, or give `initial_conditions` a `NamedTuple` of constants.",
+)
 
 """
     results_state(filepath, grid, date, tracers)
@@ -1383,7 +1407,7 @@ end
 
 The state variables `ds` carries at time `index`, as a `NamedTuple` of `FT` arrays.
 
-Which variables those are comes from the simulation config's `tracers` plus the two horizontal
+Which variables those are comes from the run config's `tracers` plus the two horizontal
 velocities — never a list written out here, so a setup that adds a biogeochemical tracer gets it read
 back without this module being touched. The rule is
 `(map(String, tracers) ∪ ("u", "v")) ∩ keys(ds)`, the same one `forcing_from_file` uses to decide
@@ -1501,7 +1525,7 @@ function validate_time_coverage(label, range, start_date, stop_time, remedy)
 
     start_date >= first_available || error(
         "The run starts at $start_date but the $label only begins at $first_available. Move the " *
-        "simulation config's `start_date` to $first_available or later, or $remedy.",
+        "run config's `start_date` to $first_available or later, or $remedy.",
     )
     end_date <= last_available || error(
         "The run ends at $end_date but the $label stops at $last_available. Shorten `stop_time` " *
@@ -1518,8 +1542,8 @@ One writer's file for one repetition: the plain run-tagged name for a setup that
 once, and the loop-indexed one when it repeats. A single run therefore keeps the shorter name
 rather than gaining a `_loop01` nobody asked for.
 """
-loop_output_path(writer::AbstractWriterConfig, config::AbstractSimulationConfig, loop) =
-    config.loops == 1 ? results_path(writer, config) : results_path(writer, config, loop)
+loop_output_path(writer::AbstractWriterConfig, config::AbstractRunConfig, loop) =
+    loops(config) == 1 ? results_path(writer, config) : results_path(writer, config, loop)
 
 """
     CheckpointTrait
@@ -1545,12 +1569,23 @@ checkpoint_trait(::CheckpointWriter) = Checkpointing()
     checkpoints(writer)
     checkpoints(config)
 
-Whether a writer contributes a `Checkpointer`, or whether any of a simulation config's does.
+Whether a writer contributes a `Checkpointer`, or whether any of a run config's does.
 """
 checkpoints(writer::AbstractWriterConfig) = checkpoints(checkpoint_trait(writer))
 checkpoints(::Checkpointing) = true
 checkpoints(::NotCheckpointing) = false
-checkpoints(config::AbstractSimulationConfig) = any(checkpoints, config.writers)
+checkpoints(config::AbstractRunConfig) = any(checkpoints, writers(config))
+
+"""
+    station_output(writer)
+
+Whether a writer records one series per station that `validate_simulation` scores: files named by
+`station_tag` beside its `output_file`, holding its `variables` at its `stations`. `false` for a
+writer that does not say otherwise.
+"""
+station_output(::AbstractWriterConfig) = false
+station_output(::StationWriter) = true
+station_output(::FieldStationWriter) = true
 
 """
     OutputPathTrait
@@ -1579,7 +1614,7 @@ output_path_trait(::SectionWriter) = NamesOutputFile()
 The files `writer` writes for repetition `loop` that `run_simulation` should report, as a tuple —
 empty for a writer that names none, so flattening over the whole tuple is total.
 """
-reported_paths(writer::AbstractWriterConfig, config::AbstractSimulationConfig, loop) =
+reported_paths(writer::AbstractWriterConfig, config::AbstractRunConfig, loop) =
     reported_paths(output_path_trait(writer), writer, config, loop)
 
 reported_paths(::NamesOutputFile, writer, config, loop) =
@@ -1592,8 +1627,8 @@ reported_paths(::NamesNoOutputFile, writer, config, loop) = ()
 
 Every product file one repetition writes.
 """
-loop_output_paths(config::AbstractSimulationConfig, loop) = String[
-    path for writer in config.writers for path in reported_paths(writer, config, loop)
+loop_output_paths(config::AbstractRunConfig, loop) = String[
+    path for writer in writers(config) for path in reported_paths(writer, config, loop)
 ]
 
 """
@@ -1637,10 +1672,10 @@ The pattern is the exact inverse of `checkpoint_prefix`, and the coupling is sil
 `CheckpointWriter` that gained a `prefix` field would leave this finding nothing, so `resume_loop`
 would warn and replay the whole spin-up. Change both or neither.
 """
-function checkpointed_loops(config::AbstractSimulationConfig)
-    isdir(config.results_root) || return Int[]
+function checkpointed_loops(config::AbstractRunConfig)
+    isdir(results_root(config)) || return Int[]
     pattern = r"^checkpoint_loop(\d+)_iteration\d+\.jld2$"
-    found = filter(!isnothing, match.(pattern, readdir(config.results_root)))
+    found = filter(!isnothing, match.(pattern, readdir(results_root(config))))
     return [parse(Int, captured[1]) for captured in found]
 end
 
@@ -1667,11 +1702,11 @@ is what a later `pickup` would resume. So a fresh run (`pickup = false`) is reje
 own `results_root`. The snapshots are per launch, so a resumed run's file starts at the resume point
 and the records before it stay in the previous launch's file.
 """
-function resume_loop(config::AbstractSimulationConfig)
-    if !config.pickup
+function resume_loop(config::AbstractRunConfig)
+    if !pickup(config)
         isempty(checkpointed_loops(config)) || throw(
             ArgumentError(
-                "$(config.results_root) already holds checkpoints from an earlier run, and a fresh " *
+                "$(results_root(config)) already holds checkpoints from an earlier run, and a fresh " *
                 "run there would leave them beside its own, for a later `pickup` to resume the " *
                 "highest-numbered one whichever run wrote it. Archive the earlier run by renaming " *
                 "the directory to `<name>_<YYYY-MM-DD>`, give this run its own `results_root`, or " *
@@ -1688,14 +1723,14 @@ function resume_loop(config::AbstractSimulationConfig)
         ),
     )
 
-    loops = checkpointed_loops(config)
-    if isempty(loops)
-        @warn "`pickup` is set but no checkpoint was found in $(config.results_root); " *
+    found = checkpointed_loops(config)
+    if isempty(found)
+        @warn "`pickup` is set but no checkpoint was found in $(results_root(config)); " *
               "starting from the beginning"
         return 1
     end
 
-    return maximum(loops)
+    return maximum(found)
 end
 
 """
@@ -1707,8 +1742,8 @@ Called once by `build_simulation` and again by `restart_loop!` for each subseque
 each writer does with that is `attach_writer!`'s business — including which simulation it attaches
 to, which is not the same for all of them.
 """
-function attach_writers!(simulation, config::AbstractSimulationConfig, loop)
-    for writer in config.writers
+function attach_writers!(simulation, config::AbstractRunConfig, loop)
+    for writer in writers(config)
         attach_writer!(simulation, writer, config, loop)
     end
 
@@ -1769,7 +1804,7 @@ The `mkpath` is load-bearing: `NetCDFWriter` creates only its `dir` keyword, whi
 default while the whole path goes in as `filename`, so nothing else would create the directory an
 absolute `output_file` points into.
 """
-function attach_writer!(simulation, writer::SnapshotWriter, config::AbstractSimulationConfig, loop)
+function attach_writer!(simulation, writer::SnapshotWriter, config::AbstractRunConfig, loop)
     ocean_sim = simulation.model.ocean
 
     haskey(ocean_sim.output_writers, writer.name) &&
@@ -1784,7 +1819,7 @@ function attach_writer!(simulation, writer::SnapshotWriter, config::AbstractSimu
         filename = filepath,
         schedule = TimeInterval(writer.interval),
         overwrite_files = writer.overwrite_existing,
-        global_attributes = Dict(RESULTS_START_DATE_ATTRIBUTE => string(config.start_date)),
+        global_attributes = Dict(RESULTS_START_DATE_ATTRIBUTE => string(start_date(config))),
     )
 
     return simulation
@@ -1805,7 +1840,7 @@ the ones it does not, are the same question whatever the file format.
 function attach_writer!(
     simulation,
     writer::FieldSnapshotWriter,
-    config::AbstractSimulationConfig,
+    config::AbstractRunConfig,
     loop,
 )
     ocean_sim = simulation.model.ocean
@@ -1967,7 +2002,7 @@ end
 Where one station's file goes: the writer's own run-tagged path with the station's tag appended to
 the stem, so `moorings.nc` becomes `moorings_<run tag>_Km1.nc`.
 """
-function station_output_path(writer, config::AbstractSimulationConfig, loop, station::Station)
+function station_output_path(writer, config::AbstractRunConfig, loop, station::Station)
     base = loop_output_path(writer, config, loop)
     directory, file = splitdir(base)
     stem, extension = splitext(file)
@@ -2032,7 +2067,7 @@ station file's `time` is seconds from its own run's zero and carries no calendar
 station's own metadata goes in beside it, so a file can be matched to observations without the
 config that produced it.
 """
-function attach_writer!(simulation, writer::StationWriter, config::AbstractSimulationConfig, loop)
+function attach_writer!(simulation, writer::StationWriter, config::AbstractRunConfig, loop)
     ocean_sim = simulation.model.ocean
     grid = ocean_sim.model.grid
     placed = station_cells(writer, grid)
@@ -2069,7 +2104,7 @@ logged by `report_station_cells` and recoverable from the filename's station tag
 function attach_writer!(
     simulation,
     writer::FieldStationWriter,
-    config::AbstractSimulationConfig,
+    config::AbstractRunConfig,
     loop,
 )
     ocean_sim = simulation.model.ocean
@@ -2120,7 +2155,7 @@ end
 Attach one `SectionOutputWriter` for all of `writer.stations` to the ocean sub-simulation, under
 `writer.name`, after creating its file (`create_section_file`).
 """
-function attach_writer!(simulation, writer::SectionWriter, config::AbstractSimulationConfig, loop)
+function attach_writer!(simulation, writer::SectionWriter, config::AbstractRunConfig, loop)
     ocean_sim = simulation.model.ocean
     grid = ocean_sim.model.grid
     placed = station_cells(writer, grid)
@@ -2159,11 +2194,11 @@ Create a section file: `station`, the vertical dimensions the outputs sit on and
 every output as `(station, level, time)`; and `station_attributes`' per-station metadata, with `i`
 and `j`, as variables along `station`.
 """
-function create_section_file(filepath, outputs, placed, config::AbstractSimulationConfig, grid)
+function create_section_file(filepath, outputs, placed, config::AbstractRunConfig, grid)
     records = [station_attributes(config, site, grid) for site in placed]
 
     NCDataset(filepath, "c") do ds
-        ds.attrib[RESULTS_START_DATE_ATTRIBUTE] = string(config.start_date)
+        ds.attrib[RESULTS_START_DATE_ATTRIBUTE] = string(start_date(config))
         defDim(ds, "station", length(placed))
         defDim(ds, "time", Inf)
         defVar(ds, "time", Float64, ("time",), attrib = Dict("units" => "seconds"))
@@ -2235,12 +2270,12 @@ The global attributes a station NetCDF carries: the run's `start_date`, and wher
 to be against where it ended up — including both of `station_cells`' depths, `model_water_depth`
 and `model_level_depth`.
 """
-function station_attributes(config::AbstractSimulationConfig, site, grid)
+function station_attributes(config::AbstractRunConfig, site, grid)
     longitude = Array(λnodes(grid, Center()))[site.i]
     latitude = Array(φnodes(grid, Center()))[site.j]
 
     return Dict(
-        RESULTS_START_DATE_ATTRIBUTE => string(config.start_date),
+        RESULTS_START_DATE_ATTRIBUTE => string(start_date(config)),
         "station_name" => site.station.name,
         "station_longitude" => site.station.longitude,
         "station_latitude" => site.station.latitude,
@@ -2277,11 +2312,11 @@ file handle, and its schedule is rebuilt with it.
 `Checkpointer`'s `overwrite_files` is left at its default, since it is a field the writer stores
 and never reads — see `CheckpointWriter`.
 """
-function attach_writer!(simulation, writer::CheckpointWriter, config::AbstractSimulationConfig, loop)
+function attach_writer!(simulation, writer::CheckpointWriter, config::AbstractRunConfig, loop)
     simulation.output_writers[:checkpointer] = Checkpointer(
         simulation.model;
         schedule = TimeInterval(writer.interval),
-        dir = config.results_root,
+        dir = results_root(config),
         prefix = checkpoint_prefix(loop),
         cleanup = writer.cleanup,
     )
@@ -2355,7 +2390,7 @@ snapshot writer would never have its schedule initialized or its `t = 0` record 
 `clock.last_Δt` comes back as `Inf`, which makes the first step of each loop a forward Euler step.
 That is both harmless and right: `G⁻` refers to a step taken under forcing a year away.
 """
-function restart_loop!(simulation, config::AbstractSimulationConfig, loop)
+function restart_loop!(simulation, config::AbstractRunConfig, loop)
     model = simulation.model
 
     rewind_clock!(model)
@@ -2373,7 +2408,6 @@ end
 
 """
     build_simulation(config)
-    build_simulation(simulation_config, config)
 
 Assemble the simulation a setup describes, with its writers, callbacks and time stepping attached,
 and return it without running it.
@@ -2385,56 +2419,59 @@ simulation = build_simulation(fjord_config("examples/oslofjorden.jl"))
 run!(simulation)
 ```
 
-The setup form only dispatches on the setup's simulation config, so a different way of building a
-run is a new `AbstractSimulationConfig` subtype with its own method. The built-in method runs in
-stages, each its own function: check the prerequisites (`validate_model_inputs`), build the grid,
-gather everything the model is built from (`model_inputs`), build the model (`coupled_model`, on the
-model config), wrap it in a `Simulation`, and attach the outputs.
+Only picks out the run config and hands it, with the setup, to `assemble_simulation`. Returns
+`nothing` for a setup naming no run config.
+"""
+build_simulation(config::AbstractFjordConfig) = assemble_simulation(run_config(config), config)
+
+"""
+    assemble_simulation(run, config)
+
+`build_simulation`'s work, in stages, each its own function: check the prerequisites
+(`validate_model_inputs`), build the grid, gather everything the model is built from
+(`model_inputs`), build the model (`coupled_model`, on the model config), wrap it in a
+`Simulation`, and attach the outputs. The run config `run` is read only through its accessors, and
+the rest of the setup through its own.
 
 Every input comes from the setup's own prepared files, and a missing one is reported naming the step
 that writes it, rather than as a read error from deep inside NetCDF. Note that `pickup` supersedes the
 initial conditions: the checkpoint restores the state that `set!` had just written.
-
-Returns `nothing` for a setup naming no simulation config.
 """
-build_simulation(config::AbstractFjordConfig) = build_simulation(simulation_config(config), config)
+assemble_simulation(::Nothing, config) = nothing
 
-build_simulation(::Nothing, config) = nothing
-
-function build_simulation(simulation::AbstractSimulationConfig, config)
+function assemble_simulation(run::AbstractRunConfig, config)
     bathymetry_file = resolve_bathymetry_file(bathymetry_config(config))
 
-    simulation.loops >= 1 || throw(ArgumentError("loops must be at least 1, got $(simulation.loops)"))
-    validate_writers(simulation)
-    validate_callbacks(simulation)
-    validate_model_inputs(config, simulation)
+    loops(run) >= 1 || throw(ArgumentError("loops must be at least 1, got $(loops(run))"))
+    validate_writers(run)
+    validate_callbacks(run)
+    validate_model_inputs(config, run)
 
-    grid = simulation_grid(grid_config(config), bathymetry_file, simulation_architecture(simulation))
+    grid = simulation_grid(grid_config(config), bathymetry_file, run_architecture(run))
 
     # The one place a results directory is created. `coupled_model` is about assembling a model, and
     # `NetCDFWriter` only creates the `dir` keyword it is not given.
-    mkpath(simulation.results_root)
+    mkpath(results_root(run))
 
-    model = coupled_model(model_config(config), grid; model_inputs(config, grid, simulation)...)
-    built = Simulation(model; Δt = initial_time_step(simulation.time_stepping), stop_time = simulation.stop_time)
+    model = coupled_model(model_config(config), grid; model_inputs(config, grid, run)...)
+    simulation = Simulation(model; Δt = initial_time_step(time_stepping(run)), stop_time = stop_time(run))
 
-    attach_callbacks!(built, simulation)
+    attach_callbacks!(simulation, run)
 
     # For the loop `run_simulation` will start at, not unconditionally the first: a resumed run has
     # to write into the loop it left off in, and to checkpoint under that loop's prefix.
-    start_loop = resume_loop(simulation)
-    attach_writers!(built, simulation, start_loop)
+    start_loop = resume_loop(run)
+    attach_writers!(simulation, run, start_loop)
 
-    @info "Run $(run_tag(simulation)): output to " *
-          "$(join(loop_output_paths(simulation, start_loop), ", "))"
+    @info "Run $(run_tag(run)): output to $(join(loop_output_paths(run, start_loop), ", "))"
 
-    attach_time_stepping!(built, simulation.time_stepping)
+    attach_time_stepping!(simulation, time_stepping(run))
 
-    return built
+    return simulation
 end
 
 """
-    validate_model_inputs(config, simulation_config)
+    validate_model_inputs(config, run)
 
 Check every prepared file the model reads exists and spans the run window, before the grid is built.
 
@@ -2442,39 +2479,39 @@ One window, not `loops` of them: every repetition replays the same interval, so 
 files have to span does not grow with the loop count. Each check goes through a hook on its own
 config (`forcing_date_range`, `atmosphere_date_range`, …), so nothing here names a file layout.
 """
-function validate_model_inputs(config::AbstractFjordConfig, simulation)
+function validate_model_inputs(config::AbstractFjordConfig, run)
     forcing_file = resolve_forcing_file(forcing_config(config))
     rivers = river_config(config)
     river_file = resolve_river_file(rivers)
-    start_date = simulation.start_date
-    stop_time = simulation.stop_time
+    first_date = start_date(run)
+    duration = stop_time(run)
 
     validate_time_coverage(
         "forcing $forcing_file",
         forcing_date_range(forcing_config(config), forcing_file),
-        start_date,
-        stop_time,
+        first_date,
+        duration,
         "prepare more years of forcing",
     )
     validate_time_coverage(
         "rivers $river_file",
         river_date_range(rivers),
-        start_date,
-        stop_time,
+        first_date,
+        duration,
         "re-run add_rivers for this run window",
     )
     validate_time_coverage(
         "atmosphere",
         atmosphere_date_range(atmosphere_config(config)),
-        start_date,
-        stop_time,
+        first_date,
+        duration,
         "prepare more years of atmosphere",
     )
     validate_time_coverage(
         "open-boundary data",
         boundary_date_range(boundary_data_config(config)),
-        start_date,
-        stop_time,
+        first_date,
+        duration,
         "prepare more years of open-boundary data",
     )
 
@@ -2482,14 +2519,14 @@ function validate_model_inputs(config::AbstractFjordConfig, simulation)
 end
 
 """
-    model_inputs(config, grid, simulation_config)
+    model_inputs(config, grid, run)
 
 Everything `coupled_model` is built from besides its own config, as the `NamedTuple` of keywords it
 receives: each read from one component of the setup, through that component's own hook.
 
 The rivers are forcing terms of their own, added to the file forcing by `combine_forcing`: a
 free-surface source `η` and a top-cell source on each tracer the river file carries. The boundary
-conditions are built from the file forcing alone. Every time axis is zeroed at the simulation's
+conditions are built from the file forcing alone. Every time axis is zeroed at the run's
 `start_date`, so the components stay in phase: each prepared file has its own first record, and left
 to itself each reader would zero there. The initial conditions go through
 `resolve_initial_conditions`, so what `coupled_model` receives is always a plain `NamedTuple`.
@@ -2498,23 +2535,23 @@ Dispatched on the whole setup because this is where its components meet. A setup
 input of a new kind overloads it and merges its own keyword into the default's; the model config it
 pairs with takes that keyword in its `coupled_model` method.
 """
-function model_inputs(config::AbstractFjordConfig, grid, simulation)
+function model_inputs(config::AbstractFjordConfig, grid, run)
     model = model_config(config)
     tracers = model_tracers(model)
     forcing_data = forcing_config(config)
     rivers = river_config(config)
     boundary_data = boundary_data_config(config)
     atmosphere = atmosphere_config(config)
-    architecture = simulation_architecture(simulation)
-    start_date = simulation.start_date
+    architecture = run_architecture(run)
+    reference_date = start_date(run)
 
     forcing_file = resolve_forcing_file(forcing_data)
     river_file = resolve_river_file(rivers)
-    forcing = simulation_forcing(forcing_data, grid, forcing_file, tracers, start_date)
-    boundaries = boundary_series(boundary_data, grid, start_date)
+    forcing = simulation_forcing(forcing_data, grid, forcing_file, tracers, reference_date)
+    boundaries = boundary_series(boundary_data, grid, reference_date)
 
     return (;
-        forcing = combine_forcing(forcing, river_forcing(rivers, grid, river_file, tracers, start_date)),
+        forcing = combine_forcing(forcing, river_forcing(rivers, grid, river_file, tracers, reference_date)),
         boundary_conditions = model_boundary_conditions(
             model,
             boundary_condition_configs(config),
@@ -2524,21 +2561,14 @@ function model_inputs(config::AbstractFjordConfig, grid, simulation)
             tracers,
             boundaries,
         ),
-        initial_conditions = resolve_initial_conditions(
-            simulation.initial_conditions,
-            grid,
-            forcing_file,
-            simulation_initial_state_path(initial_state_config(config)),
-            simulation,
-            tracers,
-        ),
+        initial_conditions = resolve_initial_conditions(initial_conditions(run), grid, config, tracers),
         biogeochemistry = model_biogeochemistry(biogeochemistry_config(config), grid),
-        atmosphere = prescribed_atmosphere(atmosphere, architecture; reference_date = start_date),
-        radiation = prescribed_radiation(atmosphere, architecture; reference_date = start_date),
+        atmosphere = prescribed_atmosphere(atmosphere, architecture; reference_date),
+        radiation = prescribed_radiation(atmosphere, architecture; reference_date),
         boundary_data_config = boundary_data,
         river_columns = read_river_columns(rivers),
-        stop_time = simulation.stop_time,
-        initial_time_step = initial_time_step(simulation.time_stepping),
+        stop_time = stop_time(run),
+        initial_time_step = initial_time_step(time_stepping(run)),
     )
 end
 
@@ -2552,8 +2582,8 @@ requires exactly one to resume from, and `checkpoint_at_end` with several writes
 `@warn`. And two writers under the same key: the second simply replaces the first in the
 `output_writers` dictionary, so one of the files the setup asked for is never written.
 """
-function validate_writers(config::AbstractSimulationConfig)
-    checkpointing = count(checkpoints, config.writers)
+function validate_writers(config::AbstractRunConfig)
+    checkpointing = count(checkpoints, writers(config))
     checkpointing <= 1 || throw(
         ArgumentError(
             "A simulation may name at most one checkpointing writer, got $checkpointing. " *
@@ -2562,7 +2592,7 @@ function validate_writers(config::AbstractSimulationConfig)
     )
 
     # Not named `keys`: a local of that name shadows `Base.keys` for the rest of the body.
-    names = [name for writer in config.writers for name in writer_keys(writer)]
+    names = [name for writer in writers(config) for name in writer_keys(writer)]
     allunique(names) || throw(
         ArgumentError(
             "Writer names must be unique, got $(join(names, ", ")). Two writers under one name " *
@@ -2575,16 +2605,23 @@ end
 
 """
     run_simulation(config)
-    run_simulation(simulation_config, config)
 
 Build the simulation a setup describes and run its window `loops` times.
 
 The last step of the pipeline: it needs `prepare_bathymetry`, and each of `prepare_forcing`,
-`add_rivers`, `prepare_boundary_data` and `prepare_atmosphere` whose config the setup names. The
-setup form only dispatches on the setup's simulation config, so a different way of running — an
-ensemble, a nested run — is a new `AbstractSimulationConfig` subtype with its own method.
+`add_rivers`, `prepare_boundary_data` and `prepare_atmosphere` whose config the setup names. Builds
+with `build_simulation` and hands the result, with the run config, to `run_loops`. A different way of
+running — an ensemble, a nested run — is a setup type of its own with its own method of this.
 
-# Looping
+Returns `nothing` for a setup naming no run config, which is how `FjordSim.CLI.main`
+reports a step a setup opts out of; otherwise `(; simulation, output_files)`.
+"""
+run_simulation(config::AbstractFjordConfig) = run_loops(build_simulation(config), run_config(config))
+
+"""
+    run_loops(simulation, run)
+
+`run_simulation`'s work: run the built `simulation`'s window `loops(run)` times.
 
 Each repetition replays `[start_date, start_date + stop_time]` with the ocean state carried over, so
 `loops > 1` is a spin-up: one forcing year run again and again until the deep basins stop drifting.
@@ -2595,36 +2632,29 @@ The clock is reset rather than left to run on for `loops * stop_time` because th
 inside `[t¹, tᴺ]` of every prepared file. Both readers use `Cyclical()` time indexing, and a
 monotonic clock would lean on its wrap-around, whose period is inferred from the file's own axis and
 so stops matching the loop the moment a file is padded to a different window.
-
-Returns `nothing` for a setup naming no simulation config, which is how `FjordSim.CLI.main`
-reports a step a setup opts out of; otherwise `(; simulation, output_files)`.
 """
-run_simulation(config::AbstractFjordConfig) = run_simulation(simulation_config(config), config)
+run_loops(::Nothing, ::Nothing) = nothing
 
-run_simulation(::Nothing, config) = nothing
-
-function run_simulation(simulation_config::AbstractSimulationConfig, config)
-    simulation = build_simulation(simulation_config, config)
-
+function run_loops(simulation, run::AbstractRunConfig)
     # Asked again rather than threaded out of `build_simulation`, whose contract is the bare
-    # `Simulation`: it is a directory scan, and both entry points have to agree on the answer
-    # anyway. The one visible cost is that a `pickup` with no checkpoints warns twice.
-    start_loop = resume_loop(simulation_config)
+    # `Simulation`: it is a directory scan, and both have to agree on the answer anyway. The one
+    # visible cost is that a `pickup` with no checkpoints warns twice.
+    start_loop = resume_loop(run)
     output_files = String[]
 
-    for loop = start_loop:simulation_config.loops
-        loop > start_loop && restart_loop!(simulation, simulation_config, loop)
+    for loop = start_loop:loops(run)
+        loop > start_loop && restart_loop!(simulation, run, loop)
 
-        loop_files = loop_output_paths(simulation_config, loop)
+        loop_files = loop_output_paths(run, loop)
         append!(output_files, loop_files)
-        @info "Loop $loop of $(simulation_config.loops): output to $(join(loop_files, ", "))"
+        @info "Loop $loop of $(loops(run)): output to $(join(loop_files, ", "))"
 
         # `pickup` applies to the loop we resume into and to no other: the loops after it start from
         # a reset clock, and picking up there would send them back to the checkpoint every time.
         run!(
             simulation;
-            pickup = simulation_config.pickup && loop == start_loop,
-            checkpoint_at_end = checkpoints(simulation_config),
+            pickup = pickup(run) && loop == start_loop,
+            checkpoint_at_end = checkpoints(run),
         )
 
         @info "Loop $loop reached $(prettytime(simulation.model.clock.time)) of model time"

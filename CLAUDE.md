@@ -68,11 +68,14 @@ no-ops (`docs/architecture.md`, "What a run is assembled from").
 open-boundary dataset or atmosphere dataset is added by subtyping the matching `Abstract*Config` supertype and overloading
 methods on it — never by editing the generic pipeline.** Read `docs/adding-a-source.md` first.
 
-**A step holds no logic on the setup type.** `step(config::AbstractFjordConfig)` only picks out the
-components it reads through the accessors (`grid_config(config)`, …) and calls the method that
-dispatches on those components, typing only its own; a missing component is a `::Nothing` method,
-not an `isnothing` branch. The model (`model_config`), its biogeochemistry, its boundary conditions
-and the run (`simulation_config`) are separate setup components (`docs/architecture.md`, Configs).
+**A step has one method, on the setup type, and holds no logic.** Every pipeline step and
+`build_simulation` is defined only as `step(config::AbstractFjordConfig)`, which picks out the
+components it reads through the accessors (`grid_config(config)`, …) and calls a work function of
+another name (`regrid_forcing`, `place_rivers`, …) that dispatches on those components, typing only
+its own; a missing component is a `::Nothing` method, not an `isnothing` branch. Never add a method
+of a step's own name on anything but a setup type. The model (`model_config`), its biogeochemistry,
+its boundary conditions and the run (`run_config`, read only through its accessors) are separate
+setup components (`docs/architecture.md`, Configs).
 
 The modules, in `include` order from `src/FjordSim.jl`:
 
@@ -105,9 +108,9 @@ The modules, in `include` order from `src/FjordSim.jl`:
     (`download_boundary_data`, `prepare_boundary_data`, `boundary_series`) and its NorKyst adapters.
     Independent of `BoundaryConditions`; `build_simulation` hands one's output to the other.
 14. **Simulations** (`src/Simulations.jl`) — `CoupledHydrostaticModel` and `coupled_model`,
-    `SimulationConfig`, `build_simulation` (staged: `validate_model_inputs`, `model_inputs`,
-    `coupled_model`)/`run_simulation`, writers, callbacks, looping, checkpointing, initial
-    conditions, the run tag.
+    `RunConfig`, `build_simulation` (staged in `assemble_simulation`: `validate_model_inputs`,
+    `model_inputs`, `coupled_model`)/`run_simulation` (`run_loops`), writers, callbacks, looping,
+    checkpointing, initial conditions, the run tag.
 15. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
     observation sources, skill and tidal statistics, and the comparison figures. `StationWriter`
     (in `Simulations`) is what a run writes for it.
@@ -120,7 +123,7 @@ No setup is part of the package. A setup is a script whose last expression is a 
 passed by path to `--config` and loaded by `fjord_config`; `examples/` holds the worked ones
 (`oslofjorden.jl`, `drammensfjorden.jl`, `lista.jl`, and variants that
 `include("oslofjorden.jl")`). Adding a fjord is one new file. `CoupledHydrostaticModel`,
-`SimulationConfig` and everything they nest have **no defaults** — every field is a scientific
+`RunConfig` and everything they nest have **no defaults** — every field is a scientific
 choice a setup must state. How to write
 one is `docs/setups.md`; why a setup has the values it has belongs in its own comments.
 
@@ -167,7 +170,7 @@ forcings.
   box, a year, a `start_date`, a station list, which dataset it picks. Those are the setup author's
   to change, and a test that pins them turns every scientific choice into a test failure. The suite
   never loads a file from `examples/`.
-- Build fixtures from `test/utilities.jl` (`test_simulation_config`, `immersed_test_grid`, ...).
+- Build fixtures from `test/utilities.jl` (`test_run_config`, `immersed_test_grid`, ...).
   A config file a test writes is evaluated in `Main`, so it can call those fixtures too.
 - **Do not test plotting.** No test asserts that a figure was drawn or how it looks.
 - The suite is offline: write a fixture file rather than fetching one. Anything needing the network
@@ -221,10 +224,10 @@ forcings.
   instead. Use `Pkg.update()` after raising a compat bound. (`Pkg.up` is not a name in current Pkg.)
 - `Base.@kwdef` on a *parametric* struct does not convert its arguments, unlike on a
   non-parametric one: the generated constructor keeps the declared field types in its signature,
-  so `SimulationConfig(stop_time = 3600, ...)` is a `MethodError` where `stop_time = 1hour` is
+  so `RunConfig(stop_time = 3600, ...)` is a `MethodError` where `stop_time = 1hour` is
   fine. Every `Oceananigans.Units` constant is already a `Float64`, so writing durations with them —
   `365days`, `1hour`, `3minutes` — sidesteps this. `loops` is the one field this does *not* apply to,
-  being an `Int` already. `SimulationConfig` is now the **only** config the rule reaches: every other
+  being an `Int` already. `RunConfig` is now the **only** config the rule reaches: every other
   one is either non-parametric, or — like `SnapshotWriter`, `ProgressCallback` and
   `CoupledHydrostaticModel`, all of which *are* parametric — has a hand-written keyword
   constructor that converts. `Regridding.PreparedVariable` is the one internal type the rule reaches
@@ -234,7 +237,7 @@ forcings.
 
 - Bathymetry convention: `h < 0` = below sea level (bottom height), `h >= 0` = land.
 - Data files default to `~/FjordSim_data/<fjord>/` and results to `~/FjordSim_results/<fjord>/`,
-  the latter from the simulation config's `results_root`. A setup must build both with
+  the latter from the run config's `results_root`. A setup must build both with
   `fjord_data_root("<fjord>")` / `fjord_results_root("<fjord>")` (`src/Utils.jl`) rather than
   `joinpath(homedir(), ...)`: those read `FJORDSIM_DATA_ROOT` / `FJORDSIM_RESULTS_ROOT`, which is
   what lets one setup run unchanged on a laptop and on a cloud VM's staging disk. A setup sharing

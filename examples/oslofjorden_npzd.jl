@@ -444,8 +444,8 @@ Rivers.river_discharge(rivers::NPZDRivers, times) = Rivers.river_discharge(river
 Rivers.river_search_radius(rivers::NPZDRivers) = Rivers.river_search_radius(rivers.base)
 Rivers.river_maximum_inflow_velocity(rivers::NPZDRivers) =
     Rivers.river_maximum_inflow_velocity(rivers.base)
-Rivers.download_rivers(target_grid, rivers::NPZDRivers) =
-    Rivers.download_rivers(target_grid, rivers.base)
+Rivers.fetch_rivers(target_grid, rivers::NPZDRivers) =
+    Rivers.fetch_rivers(target_grid, rivers.base)
 
 """
     river_series(rivers::NPZDRivers, times)
@@ -493,11 +493,11 @@ file has no series for one — naming an open edge is a statement that the bound
 whole exterior state there. So `OpenLateralBoundaryFromData` below is `oslofjorden.jl`'s, unchanged,
 and this is what makes it work.
 
-`boundary_variable_names` is extended as well as `prepare_boundary_data`: the map is what
+`boundary_variable_names` is extended as well as `regrid_boundary_data`: the map is what
 `boundary_edge_series` reads the file back through, so a variable missing from it would be written
 and then ignored. The four new entries are keyed by themselves rather than by a NorKyst variable —
 nothing in the download corresponds to them, and nothing looks for them there, because
-`prepare_boundary_data` only ever considers the source names listed in `parameters`.
+`regrid_boundary_data` only ever considers the source names listed in `parameters`.
 """
 struct NPZDBoundaries{B} <: AbstractBoundaryDataConfig
     base::B
@@ -515,11 +515,11 @@ BoundaryData.boundary_variable_names(config::NPZDBoundaries) = merge(
     Dict(String(name) => String(name) for name in keys(NPZD_PROFILES)),
 )
 
-BoundaryData.download_boundary_data(target_grid, config::NPZDBoundaries) =
-    download_boundary_data(target_grid, config.base)
+BoundaryData.fetch_boundary_data(target_grid, config::NPZDBoundaries) =
+    BoundaryData.fetch_boundary_data(target_grid, config.base)
 
 """
-    prepare_boundary_data(target_grid, config::NPZDBoundaries; coverage)
+    regrid_boundary_data(target_grid, config::NPZDBoundaries; coverage)
 
 Regrid `base`'s exterior state, then append the biogeochemical variables to the file it wrote.
 
@@ -527,8 +527,8 @@ Appended after the pipeline rather than inside it: `boundary_source_slab` can *d
 from others in the download, but `prepared_boundary_variable` still validates the source name
 against the downloaded file, so a variable with no source at all has no place there.
 """
-function BoundaryData.prepare_boundary_data(target_grid, config::NPZDBoundaries; coverage = nothing)
-    result = prepare_boundary_data(target_grid, config.base; coverage)
+function BoundaryData.regrid_boundary_data(target_grid, config::NPZDBoundaries; coverage = nothing)
+    result = BoundaryData.regrid_boundary_data(target_grid, config.base; coverage)
     edges = config.open_edges
     append_boundary_variables!(result.output_file, edges, NPZD_PROFILES)
 
@@ -569,7 +569,7 @@ boundaries = NPZDBoundaries(
     ),
 )
 
-simulation = base.simulation_config
+base_run = base.run_config
 base_model = base.model_config
 
 FjordConfig(
@@ -606,11 +606,11 @@ FjordConfig(
     # first NPZD, which has no gas exchange and no atmospheric nitrogen deposition. The open
     # southern edge is what `NPZDBoundaries` exists to feed.
     boundary_condition_configs = base.boundary_condition_configs,
-    simulation_config = SimulationConfig(
+    run_config = RunConfig(
         # Its own root. Checkpoints are shared per `results_root`, so pointing this at
         # `oslofjorden.jl`'s would have the two runs pick each other's up.
         results_root = fjord_results_root("oslofjorden_npzd"),
-        architecture = simulation.architecture,
+        architecture = base_run.architecture,
         writers = (
             SnapshotWriter(
                 name = :ocean,
@@ -630,18 +630,18 @@ FjordConfig(
             ),
             CheckpointWriter(interval = 12hours, cleanup = true),
         ),
-        callbacks = simulation.callbacks,
-        time_stepping = simulation.time_stepping,
+        callbacks = base_run.callbacks,
+        time_stepping = base_run.time_stepping,
         # A uniform T and S, plus N, P, Z and D as their profiles on `start_date`. Not
         # `oslofjorden.jl`'s `FromInitialState()`, which reads a file and does not combine with
         # the profiles here.
         initial_conditions = merge(
             (T = 5.0, S = 33.0),
-            map(profile -> (λ, φ, z) -> profile(z, simulation.start_date), NPZD_PROFILES),
+            map(profile -> (λ, φ, z) -> profile(z, base_run.start_date), NPZD_PROFILES),
         ),
-        start_date = simulation.start_date,
-        stop_time = simulation.stop_time,
-        loops = simulation.loops,
-        pickup = simulation.pickup,
+        start_date = base_run.start_date,
+        stop_time = base_run.stop_time,
+        loops = base_run.loops,
+        pickup = base_run.pickup,
     ),
 )

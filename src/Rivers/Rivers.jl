@@ -2,7 +2,7 @@ module Rivers
 
 # Rivers: the generic half of the river pipeline. `add_rivers` writes every river as a volume inflow
 # into a set of surface columns near its mouth, in a river file of its own on its own daily axis.
-# Only the four hooks `river_locations`, `river_series`, `river_discharge` and `download_rivers` are
+# Only the four hooks `river_locations`, `river_series`, `river_discharge` and `fetch_rivers` are
 # dataset-specific — `nve_rivers.jl` is the template to copy for a new river dataset.
 #
 # The run reads that file back through `river_forcing`, at the bottom of this file: the inflow
@@ -35,7 +35,7 @@ using ..Configs:
     bathymetry_config,
     river_config,
     forcing_config,
-    simulation_config
+    run_config
 using ..Utils: coverage_window
 using ..Grids: domain_grid, simulation_grid
 using ..Plotting: Plotting, plot_rivers
@@ -137,17 +137,17 @@ the estuarine circulation. Must be finite and non-negative throughout.
 function river_discharge end
 
 """
-    download_rivers(target_grid, config)
+    fetch_rivers(target_grid, config)
 
 Fetch the source data of a river dataset. Only needed by a dataset that downloads: the fallback
-does nothing, since `add_rivers` calls this for every dataset.
+does nothing, since `place_rivers` calls this for every dataset.
 
-`target_grid` is the bare domain grid, and is there for the same reason `download_forcing` and
-`download_boundary_data` take one: a dataset that has to *find* its rivers rather than being told
+`target_grid` is the bare domain grid, and is there for the same reason `fetch_forcing` and
+`fetch_boundary_data` take one: a dataset that has to *find* its rivers rather than being told
 where they are needs the domain bounds, which `x_domain`/`y_domain` give for any grid. A dataset
 whose outlets are stated in the config ignores it.
 """
-download_rivers(target_grid, config::AbstractRiverConfig) = nothing
+fetch_rivers(target_grid, config::AbstractRiverConfig) = nothing
 
 """
     river_search_radius(config)
@@ -452,8 +452,22 @@ end
 
 """
     add_rivers(config)
-    add_rivers(grid_config, bathymetry_config, river_config, forcing_config, simulation_config)
-    add_rivers(target_grid, rivers::AbstractRiverConfig; coverage = nothing)
+
+Place the rivers a setup names on its simulation grid and write their inflow file. Returns `nothing`
+for a `nothing` river config. Only picks out the five components this step reads and hands them to
+`place_rivers`.
+"""
+add_rivers(config::AbstractFjordConfig) = place_rivers(
+    grid_config(config),
+    bathymetry_config(config),
+    river_config(config),
+    forcing_config(config),
+    run_config(config),
+)
+
+"""
+    place_rivers(grid_config, bathymetry_config, river_config, forcing_config, run_config)
+    place_rivers(target_grid, rivers::AbstractRiverConfig; coverage = nothing)
 
 Write the river inflow file at `river_forcing_path(rivers)`. Returns `nothing` for a `nothing`
 river config.
@@ -471,38 +485,30 @@ and `FromForcing` initial conditions read a forcing file no river has touched. I
 
 The component form reads the grid from the processed bathymetry, so the rivers are placed against
 the same land mask the model sees, downloads the river data first, and takes `coverage` from the
-simulation config; the forcing config is read only to refuse a river file that would overwrite the
-prepared forcing. The setup form only picks those five components out.
+run config; the forcing config is read only to refuse a river file that would overwrite the
+prepared forcing.
 """
-add_rivers(config::AbstractFjordConfig) = add_rivers(
-    grid_config(config),
-    bathymetry_config(config),
-    river_config(config),
-    forcing_config(config),
-    simulation_config(config),
-)
+place_rivers(grid_config, bathymetry_config, ::Nothing, forcing_config, run_config) = nothing
 
-add_rivers(grid_config, bathymetry_config, ::Nothing, forcing_config, simulation_config) = nothing
-
-function add_rivers(
+function place_rivers(
     grid_config,
     bathymetry_config,
     rivers::AbstractRiverConfig,
     forcing_config,
-    simulation_config,
+    run_config,
 )
     validate_river_output(rivers, forcing_config)
     bathymetry_file = resolve_bathymetry_file(bathymetry_config)
 
     # The bare domain grid, which is all a download needs: a dataset that discovers its outlets is
     # asking where the domain is, not where the coastline is — the coastline decides where an outlet
-    # is *placed*, and that happens below against the immersed grid. Same grid `download_forcing`
-    # and `download_boundary_data` hand their own datasets, for the same reason.
-    download_rivers(domain_grid(grid_config, CPU()), rivers)
+    # is *placed*, and that happens below against the immersed grid. Same grid `fetch_forcing`
+    # and `fetch_boundary_data` hand their own datasets, for the same reason.
+    fetch_rivers(domain_grid(grid_config, CPU()), rivers)
 
     # The grid stays on the CPU: building the land masks walks `peripheral_node` cell by cell.
     grid = simulation_grid(grid_config, bathymetry_file, CPU())
-    result = add_rivers(grid, rivers; coverage = coverage_window(simulation_config))
+    result = place_rivers(grid, rivers; coverage = coverage_window(run_config))
 
     plot_file = plot_rivers(grid, rivers, river_forcing_path(rivers), result.mouths)
 
@@ -531,7 +537,7 @@ function validate_river_output(rivers::AbstractRiverConfig, forcing_config::Abst
     return nothing
 end
 
-function add_rivers(target_grid, rivers::AbstractRiverConfig; coverage = nothing)
+function place_rivers(target_grid, rivers::AbstractRiverConfig; coverage = nothing)
     times = river_forcing_times(coverage)
     locations = river_locations(rivers)
     discharge = river_discharge(rivers, times)
@@ -597,7 +603,7 @@ want a hook here.
 function river_forcing_times(coverage)
     isnothing(coverage) && error(
         "A river file takes its time axis from the run window, but this setup names no " *
-        "`simulation_config` to read `start_date` and `stop_time` from. Name one.",
+        "`run_config` to read `start_date` and `stop_time` from. Name one.",
     )
 
     first_date, last_date = coverage

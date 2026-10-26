@@ -19,7 +19,7 @@ using NumericalEarth: FreezingLimitedOceanTemperature
 using FjordSim.Configs: AbstractAtmosphereConfig, AbstractBathymetryConfig,
     AbstractBoundaryConditionConfig, AbstractCallbackConfig, AbstractFjordConfig,
     AbstractModelConfig, AbstractForcingConfig, AbstractFreeSurfaceConfig,
-    AbstractGridConfig, AbstractRiverConfig, AbstractSimulationConfig, AbstractTimeSteppingConfig,
+    AbstractGridConfig, AbstractRiverConfig, AbstractRunConfig, AbstractTimeSteppingConfig,
     AbstractWriterConfig
 
 # Alternative config types
@@ -62,18 +62,19 @@ struct MinimalAtmosphere <: AbstractAtmosphereConfig
     padding::Float64
 end
 
-struct MinimalSimulation <: AbstractSimulationConfig
-    # The supertype-level minimum, and nothing else. `results_root` is what `results_path` and
-    # `FjordSim.CLI.log_path` root against — the *filename* comes from a writer, not from here —
-    # and `coverage_window` reports the interval the prepare steps pad to, so `start_date` and
-    # `stop_time` are part of the field set as much as `results_root` is. An alternative simulation
-    # config omitting one would inherit neither helper.
-    results_root::String
-    start_date::DateTime
-    stop_time::Float64
+# Holds only what `results_path`, `FjordSim.CLI.log_path` and `coverage_window` read, through the
+# accessors, under field names of its own: the pipeline never reads a run config's fields.
+struct MinimalRun <: AbstractRunConfig
+    root::String
+    first_date::DateTime
+    duration::Float64
 end
 
-# The supertypes `SimulationConfig` nests, plus the free surface one level further down, each with
+FjordSim.Configs.results_root(config::MinimalRun) = config.root
+FjordSim.Configs.start_date(config::MinimalRun) = config.first_date
+FjordSim.Configs.stop_time(config::MinimalRun) = config.duration
+
+# The supertypes `RunConfig` nests, plus the free surface one level further down, each with
 # no hook overloaded, so the "Config extensibility" testset can assert that a missing hook surfaces
 # as a `MethodError` naming it.
 struct MinimalModel <: AbstractModelConfig end
@@ -101,7 +102,7 @@ for accessor in (
     :model_config,
     :biogeochemistry_config,
     :boundary_condition_configs,
-    :simulation_config,
+    :run_config,
 )
     @eval FjordSim.Configs.$accessor(config::DelegatingFjord) = FjordSim.Configs.$accessor(config.base)
 end
@@ -245,10 +246,10 @@ test_atmosphere_config(; data_root = tempdir(), kwargs...) = NORA3Config(;
     kwargs...,
 )
 
-# Simulation config
+# Run config
 
 """
-Where a test simulation config's output resolves to.
+Where a test run config's output resolves to.
 
 Under `tempdir()` rather than the real `~/FjordSim_results`, so every `results_path` assertion is
 exact and machine-independent and nothing a test builds can land beside a real run's snapshots.
@@ -352,9 +353,9 @@ test_progress_callback(; name = :progress, interval = 1hour, report = progress) 
     ProgressCallback(; name, interval, report)
 
 """
-    test_simulation_fields(; kwargs...)
+    test_run_fields(; kwargs...)
 
-Every one of `SimulationConfig`'s fields, as a `Dict` the constructor can be splatted from.
+Every one of `RunConfig`'s fields, as a `Dict` the constructor can be splatted from.
 
 A `Dict` rather than a `NamedTuple` because the "no field has a default" sweep needs to *remove* one
 field at a time, which `delete!(copy(fields), name)` does and a `NamedTuple` cannot.
@@ -362,7 +363,7 @@ field at a time, which `delete!(copy(fields), name)` does and a `NamedTuple` can
 The four nested-config fields come from the factories above, so a test that cares about one of them
 overrides just that one.
 """
-function test_simulation_fields(; kwargs...)
+function test_run_fields(; kwargs...)
     fields = Dict{Symbol,Any}(
         :results_root => TEST_RESULTS_ROOT,
         :architecture => :cpu,          # pinned, never :auto — no test may depend on a GPU
@@ -381,24 +382,24 @@ function test_simulation_fields(; kwargs...)
         :pickup => false,
     )
 
-    return override_fields(fields, "test_simulation_fields", kwargs)
+    return override_fields(fields, "test_run_fields", kwargs)
 end
 
 """
-    test_simulation_config(; kwargs...)
+    test_run_config(; kwargs...)
 
-A `SimulationConfig` on the test suite's own values, with `kwargs` overriding named fields.
+A `RunConfig` on the test suite's own values, with `kwargs` overriding named fields.
 
-Every duration is written with an `Oceananigans.Units` constant, which is the style `SimulationConfig`'s
+Every duration is written with an `Oceananigans.Units` constant, which is the style `RunConfig`'s
 own field types force: `Base.@kwdef` on a parametric struct dispatches rather than converting, so
 `stop_time = 3600` is a `MethodError` where `1hour` is fine. The nested configs each have a
 hand-written keyword constructor that *does* convert, so an integer duration is fine in one of those.
 
-Overriding `writers`, `time_stepping` or `initial_conditions` yields a different `SimulationConfig`
+Overriding `writers`, `time_stepping` or `initial_conditions` yields a different `RunConfig`
 type, and so a fresh `build_simulation` specialization — a full recompile of the coupled model. Vary
 only the `String`/`Symbol`/`Float64`/`Int`/`Bool` fields inside a testset that builds one.
 """
-test_simulation_config(; kwargs...) = SimulationConfig(; test_simulation_fields(; kwargs...)...)
+test_run_config(; kwargs...) = RunConfig(; test_run_fields(; kwargs...)...)
 
 # Grid and bathymetry fixtures
 

@@ -1,7 +1,7 @@
 # NorKyst-800m adapter: the source-specific half of the forcing pipeline. Copy this file's
 # shape to add a new forcing dataset — it owns a config subtype, its own download, and the
 # three hook methods `forcing_time_steps`, `forcing_source_grid` and `forcing_variable_names`
-# (plus `download_forcing` if it fetches data). Everything else comes from the generic core
+# (plus `fetch_forcing` if it fetches data). Everything else comes from the generic core
 # in `Forcing.jl` and `Regridding.jl`, and what is NorKyst's own — its endpoints, grid and subset
 # I/O — from `src/DataSources/NorKyst.jl`.
 
@@ -127,13 +127,13 @@ forcing_source_grid(config::AbstractNorKystConfig, filepath) = norkyst_source_gr
 # --- Download ---
 
 """
-    download_forcing(target_grid, config::NorKystConfig)
+    fetch_forcing(target_grid, config::NorKystConfig)
 
 Download the NorKyst-800m months covering `config.years`, each combined into one NetCDF file
 in `forcing_directory(config)` subset to the lon/lat box of `target_grid`. A month whose file
 already exists is skipped, so an interrupted download resumes.
 """
-function download_forcing(target_grid, config::NorKystConfig)
+function fetch_forcing(target_grid, config::NorKystConfig)
     output_directory = forcing_directory(config)
     mkpath(output_directory)
 

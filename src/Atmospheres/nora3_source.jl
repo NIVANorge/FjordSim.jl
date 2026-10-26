@@ -1,7 +1,7 @@
 # NORA3 adapter: the source-specific half of the atmosphere pipeline. Copy this file's shape to
 # add a new atmosphere dataset — it owns a config subtype, its own download, and the three hook
 # methods `atmosphere_time_steps`, `atmosphere_source_grid` and `atmosphere_variable_names`
-# (plus `download_atmosphere` if it fetches data). Everything else comes from the generic core in
+# (plus `fetch_atmosphere` if it fetches data). Everything else comes from the generic core in
 # Atmospheres.jl.
 
 using Dates: Date, Day, lastdayofmonth
@@ -248,7 +248,7 @@ end
 # --- Download ---
 
 """
-    download_atmosphere(target_grid, config::NORA3Config)
+    fetch_atmosphere(target_grid, config::NORA3Config)
 
 Download NORA3 for `config.years` into `atmosphere_directory(config)`, one gap-free hourly file
 per month.
@@ -259,7 +259,7 @@ half-written file left behind by an interrupted run must never be mistaken for a
 
 Returns the output directory.
 """
-function download_atmosphere(target_grid, config::NORA3Config)
+function fetch_atmosphere(target_grid, config::NORA3Config)
     output_directory = atmosphere_directory(config)
     mkpath(output_directory)
 

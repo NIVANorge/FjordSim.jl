@@ -33,15 +33,18 @@ using NCDatasets
 using Statistics: cor, mean, std, var
 
 using ..Configs:
-    AbstractSimulationConfig,
+    AbstractRunConfig,
     AbstractFjordConfig,
     bathymetry_config,
-    simulation_config
+    run_config,
+    results_root,
+    writers,
+    start_date
 using ..Utils: coverage_window
+using ..Bathymetry: bathymetry_path
 using ..Simulations:
     Station,
-    StationWriter,
-    FieldStationWriter,
+    station_output,
     station_tag,
     RESULTS_START_DATE_ATTRIBUTE
 
@@ -53,21 +56,21 @@ include("plots.jl")
 """
     validation_directory(config)
 
-Where a run's validation output goes: `validation/` under the simulation's `results_root`, beside
+Where a run's validation output goes: `validation/` under the run's `results_root`, beside
 the station files it scores.
 """
-validation_directory(config::AbstractSimulationConfig) =
-    joinpath(config.results_root, "validation")
+validation_directory(config::AbstractRunConfig) =
+    joinpath(results_root(config), "validation")
 
 """
     station_writers(config)
 
-The `StationWriter`s and `FieldStationWriter`s a simulation config names, which is what says where a
-run's station output is and what is in it. Reading it from the config rather than from the directory
-means the validation and the run cannot disagree about which variables exist.
+The writers a run config names whose `station_output` is `true` — the built-in `StationWriter`s and
+`FieldStationWriter`s — which is what says where a run's station output is and what is in it.
+Reading it from the config rather than from the directory means the validation and the run cannot
+disagree about which variables exist.
 """
-station_writers(config::AbstractSimulationConfig) =
-    [writer for writer in config.writers if writer isa StationWriter || writer isa FieldStationWriter]
+station_writers(config::AbstractRunConfig) = [writer for writer in writers(config) if station_output(writer)]
 
 """
     model_series(config, writer, station, variable)
@@ -77,13 +80,13 @@ The run's output for one station and variable, or `nothing` when the run did not
 error.
 
 `FieldStationWriter` output is JLD2 and carries no attributes, so the calendar comes from the
-simulation config; `StationWriter` output is NetCDF and carries its own.
+run config; `StationWriter` output is NetCDF and carries its own.
 
 `variable` is the observation's name for it, which `model_variable` turns into the model field the
 writer recorded.
 """
 function model_series(
-    config::AbstractSimulationConfig,
+    config::AbstractRunConfig,
     writer,
     station::Station,
     variable,
@@ -91,7 +94,7 @@ function model_series(
     name = model_variable(variable)
     name in writer.variables || return nothing
 
-    directory = config.results_root
+    directory = results_root(config)
     stem = first(splitext(writer.output_file))
     tag = station_tag(station)
     candidates = [path for (found, path) in station_files(directory, stem) if found == tag]
@@ -99,7 +102,7 @@ function model_series(
 
     path = first(candidates)
     return if endswith(path, ".jld2")
-        read_station_jld2(path, String(name), config.start_date)
+        read_station_jld2(path, String(name), start_date(config))
     else
         read_station_netcdf(path, String(name))
     end
@@ -116,7 +119,7 @@ model_variable(variable) = get(MODEL_VARIABLES, String(variable), Symbol(variabl
 const VALIDATION_VARIABLES = ("eta", "T", "S", "u", "v")
 
 """
-    default_observations(simulation_config, bathymetry_config)
+    default_observations(run_config, bathymetry_config)
 
 The observation sources a setup can be validated against without anyone supplying a file.
 
@@ -133,30 +136,36 @@ explicitly once their exports exist.
 Returns an empty tuple for a setup with no free-surface station writer, which is not an error —
 `validate_simulation` will simply find nothing to score and say so.
 """
-function default_observations(simulation::AbstractSimulationConfig, bathymetry)
+function default_observations(run::AbstractRunConfig, bathymetry)
     gauges = Station[]
-    for writer in station_writers(simulation)
-        writer isa FieldStationWriter || continue
+    # Only a `FieldStationWriter` can record `η`: a `StationWriter` refuses it when it is attached.
+    for writer in station_writers(run)
         :η in writer.variables || continue
         append!(gauges, writer.stations)
     end
 
     isempty(gauges) && return ()
 
-    # The bathymetry's data root, the one every setup has, so the cache lands beside its other
-    # downloads.
-    data_root = bathymetry.data_root
+    # Beside the processed bathymetry, the one file every setup has, so the cache lands with its
+    # other data.
+    data_root = dirname(bathymetry_path(bathymetry))
     return (KartverketSeaLevel(; data_root, stations = unique(g -> g.name, gauges)),)
 end
 
 """
     validate_simulation(config; observations, window, depths)
-    validate_simulation(simulation_config, bathymetry_config; observations, window, depths)
 
 Score a finished run against observations and write the tables and figures. Returns the
-validation directory, or `nothing` for a setup naming no `simulation_config`.
+validation directory, or `nothing` for a setup naming no `run_config`. Only picks out the run and
+bathymetry configs and hands them to `score_run`.
+"""
+validate_simulation(config::AbstractFjordConfig; kwargs...) =
+    score_run(run_config(config), bathymetry_config(config); kwargs...)
 
-The setup-level driver, and the one pipeline step that runs *after* `run_simulation` rather than
+"""
+    score_run(run, bathymetry_config; observations, window, depths)
+
+`validate_simulation`'s work, and the one pipeline step that runs *after* `run_simulation` rather than
 before it. It fetches whatever each observation source can supply over the run's window, pairs it
 with the run's station output, and writes a skill table, a tidal constituent table, and one figure
 per station-variable pair into `validation_directory`.
@@ -179,31 +188,28 @@ as "no model output for ..." rather than as an error.
 - `depths`: which depths to score profiles at, in metres. Defaults to a spread through the upper
   ocean and the basin; a surface series ignores it.
 """
-validate_simulation(config::AbstractFjordConfig; kwargs...) =
-    validate_simulation(simulation_config(config), bathymetry_config(config); kwargs...)
-
 # A setup that is never simulated has nothing to validate, which is an opt-out rather than an error —
 # the same `nothing` `run_simulation` returns for it, reported as a no-op by `CLI.main`.
-validate_simulation(::Nothing, bathymetry; kwargs...) = nothing
+score_run(::Nothing, bathymetry; kwargs...) = nothing
 
-function validate_simulation(
-    simulation::AbstractSimulationConfig,
+function score_run(
+    run::AbstractRunConfig,
     bathymetry;
-    observations = default_observations(simulation, bathymetry),
-    window = coverage_window(simulation),
+    observations = default_observations(run, bathymetry),
+    window = coverage_window(run),
     depths = (0.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0),
 )
-    writers = station_writers(simulation)
-    isempty(writers) && throw(
+    recorders = station_writers(run)
+    isempty(recorders) && throw(
         ArgumentError(
             "This setup's simulation writes no station output, so there is nothing to validate " *
             "against. Add a `StationWriter` or `FieldStationWriter` to its `writers`.",
         ),
     )
 
-    directory = validation_directory(simulation)
+    directory = validation_directory(run)
     mkpath(directory)
-    @info "Validating $(basename(simulation.results_root)) over $(window[1]) .. $(window[2])"
+    @info "Validating $(basename(results_root(run))) over $(window[1]) .. $(window[2])"
 
     for source in observations
         download_observations(source, window)
@@ -218,9 +224,9 @@ function validate_simulation(
             isnothing(observed) && continue
 
             modelled = nothing
-            for writer in writers
+            for writer in recorders
                 any(s -> s.name == station.name, writer.stations) || continue
-                modelled = model_series(simulation, writer, station, variable)
+                modelled = model_series(run, writer, station, variable)
                 isnothing(modelled) || break
             end
 

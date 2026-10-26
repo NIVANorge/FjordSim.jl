@@ -19,8 +19,8 @@ configure is a no-op.
 | `download_forcing` | — | raw NorKyst months | network |
 | `prepare_forcing` | bathymetry, download | `forcing.nc` | pure regrid |
 | `add_rivers` | bathymetry | `rivers_nve.nc` | needs `NVE_API_KEY` (free: https://hydapi.nve.no/Users) |
-| `download_boundaries` | — | hourly NorKyst band along the open edges | network |
-| `prepare_boundaries` | bathymetry, download | `boundaries.nc` | pure regrid |
+| `download_boundary_data` | — | hourly NorKyst band along the open edges | network |
+| `prepare_boundary_data` | bathymetry, download | `boundaries.nc` | pure regrid |
 | `download_atmosphere` | — | raw NORA3 months | slow: ~10000 OPeNDAP reads per simulated year |
 | `prepare_atmosphere` | download | `atmosphere.nc` | pure regrid, independent of the ocean grid |
 | `run_simulation` | every prepared file the setup names | results under `results_root` | needs a GPU in practice |
@@ -40,7 +40,7 @@ julia --project -e 'using FjordSim; FjordSim.main(ARGS)' -- prepare_bathymetry -
 
 ### From the REPL, and debugging a step
 
-Each subcommand is a `FjordConfig` method on the generic function of the same name:
+Each subcommand is a method on the generic function of the same name, taking the whole setup:
 
 ```julia
 using Pkg; Pkg.activate(".")
@@ -68,7 +68,7 @@ some config edits silently do nothing until the files are rewritten.
 
 ```bash
 julia --project -m FjordSim add_rivers          --config examples/oslofjorden.jl
-julia --project -m FjordSim prepare_boundaries  --config examples/oslofjorden.jl
+julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden.jl
 julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden.jl
 ```
 
@@ -81,7 +81,7 @@ them:
 ```bash
 julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden.jl
 julia --project -m FjordSim add_rivers          --config examples/oslofjorden.jl
-julia --project -m FjordSim prepare_boundaries  --config examples/oslofjorden.jl
+julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden.jl
 ```
 
 `prepare_atmosphere` is not in this list: the atmosphere is 2D on its own lon/lat grid. Existing

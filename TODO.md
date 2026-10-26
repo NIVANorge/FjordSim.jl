@@ -38,7 +38,7 @@ bathymetry comments of `examples/oslofjorden.jl`. On the validation box the mode
 15 m of the casts except Im2 (165 against 201 m) in the narrow Drøbak Sound, and Drøbak is 23.5 m
 against the real ~20 m.
 
-- [ ] Re-run `prepare_bathymetry`, `add_rivers` and `prepare_boundaries` for
+- [ ] Re-run `prepare_bathymetry`, `add_rivers` and `prepare_boundary_data` for
       `oslofjorden` and `drammensfjorden` on the linear gridding and `preserve_sills` (done for the
       validation example). Their existing checkpoints are invalid.
 - [ ] Re-measure `examples/lista.jl`'s `z_faces` gate on the linear gridding.
@@ -89,7 +89,7 @@ The correction is implemented in `examples/oslofjorden_validation.jl` only: `Tid
 wraps the hindcast boundary config and rescales each constituent by `VIKER_TIDE_GAINS` after the
 regrid (`correct_boundary_tide!`), velocities by the same complex gain as the sea level.
 
-- [ ] Re-run `prepare_boundaries` for the example, then a 60-day run. Check M2 and S2 at the three
+- [ ] Re-run `prepare_boundary_data` for the example, then a 60-day run. Check M2 and S2 at the three
       gauges, and the Km1 current (expected about 2.3 cm/s from the M2 factor alone). The interior
       M2 phase error (11° ahead at Oscarsborg and Oslo, 3° at Viker) will remain.
 

@@ -1,7 +1,6 @@
 module BoundaryConditions
 
-export MergedBoundaryConditions,
-    AirSeaFluxes,
+export AirSeaFluxes,
     QuadraticBottomDrag,
     OpenLateralBoundaryFromData
 
@@ -15,7 +14,7 @@ using NumericalEarth.Oceans:
     u_immersed_bottom_drag,
     v_immersed_bottom_drag,
     build_tracer_top_bc
-using ..Configs: AbstractBoundaryConditionConfig, AbstractBoundaryConditionSetConfig
+using ..Configs: AbstractBoundaryConditionConfig, AbstractModelConfig
 using ..Utils: recursive_merge
 
 """
@@ -111,21 +110,18 @@ top_bottom_boundary_conditions(; grid, bottom_drag_coefficient) = recursive_merg
 )
 
 """
-    boundary_condition_sides(config, grid, forcing, boundary_config, tracers, boundaries)
-    boundary_condition_sides(config, grid, forcing, boundary_config, tracers)
+    boundary_condition_sides(config, grid, forcing, boundary_data_config, tracers, boundaries)
+    boundary_condition_sides(config, grid, forcing, boundary_data_config, tracers)
 
 One `AbstractBoundaryConditionConfig`'s contribution, as a nested named tuple keyed by field and
 then by side: `(u = (top = …, bottom = …), T = (top = …,))`.
 
 The per-piece hook. Named for what it returns — the per-field *sides* that
-`field_boundary_conditions` materializes — rather than `boundary_conditions`, which is what it used
-to be called. That name shadowed `Oceananigans.Fields.boundary_conditions`, and any caller binding
-a local of that name shadowed the hook it was trying to call.
+`model_boundary_conditions` materializes — rather than `boundary_conditions`, which would shadow
+`Oceananigans.Fields.boundary_conditions`.
 
-`boundary_config` is the setup's `AbstractBoundaryDataConfig`, or `nothing` — what a piece reads
-`open_edges` from. It was the *forcing* config while the boundary dataset and the open edge both hung
-off that one; the arity is unchanged, so an out-of-tree piece that ignores this argument, as both
-built-in pieces below do, is unaffected. One that reads it now receives the boundary config.
+`boundary_data_config` is the setup's `AbstractBoundaryDataConfig`, or `nothing` — what a piece reads
+`open_edges` from.
 
 `boundaries` is the prepared open-boundary state — the `NamedTuple` of reduced `FieldTimeSeries`
 `FjordSim.BoundaryData.boundary_series` returns, or `nothing` for a setup with no boundary data. Passed
@@ -141,8 +137,8 @@ signature and never sees it.
 Declared with no six-argument method beyond that forwarding, so a subtype that implements neither
 fails as a `MethodError` naming the hook.
 """
-boundary_condition_sides(config, grid, forcing, boundary_config, tracers, boundaries) =
-    boundary_condition_sides(config, grid, forcing, boundary_config, tracers)
+boundary_condition_sides(config, grid, forcing, boundary_data_config, tracers, boundaries) =
+    boundary_condition_sides(config, grid, forcing, boundary_data_config, tracers)
 
 """
     AirSeaFluxes()
@@ -161,7 +157,7 @@ restating the surface.
 """
 struct AirSeaFluxes <: AbstractBoundaryConditionConfig end
 
-boundary_condition_sides(::AirSeaFluxes, grid, forcing, boundary_config, tracers) =
+boundary_condition_sides(::AirSeaFluxes, grid, forcing, boundary_data_config, tracers) =
     air_sea_flux_boundary_conditions(grid)
 
 """
@@ -181,67 +177,50 @@ end
 
 QuadraticBottomDrag(coefficient::Real) = QuadraticBottomDrag(Float64(coefficient))
 
-boundary_condition_sides(config::QuadraticBottomDrag, grid, forcing, boundary_config, tracers) =
+boundary_condition_sides(config::QuadraticBottomDrag, grid, forcing, boundary_data_config, tracers) =
     quadratic_bottom_drag_boundary_conditions(convert(eltype(grid), config.coefficient))
 
 """
-    field_boundary_conditions(config, grid, forcing, boundary_config, tracers, boundaries)
+    model_boundary_conditions(model, pieces, grid, forcing, boundary_data_config, tracers, boundaries)
 
-The boundary conditions a whole `AbstractBoundaryConditionSetConfig` describes, materialized into
-the `NamedTuple` a model constructor consumes.
+The boundary conditions a setup's `boundary_condition_configs` describe, materialized into what
+`model`'s constructor consumes.
 
-The set-level hook, and a separate name from `boundary_condition_sides` on purpose: one function
-returning a nested named tuple for one piece and a materialized one for a set of them would be two
-shapes behind a single name.
+Dispatched on the model config, because the shape of the result is the model's business: the default,
+for any `AbstractModelConfig`, merges every piece's `boundary_condition_sides` with
+`recursive_merge` — last wins per leaf, so tuple order is precedence order — and wraps each field's
+sides in `FieldBoundaryConditions`, which is what an Oceananigans model takes. A model whose boundary
+objects are something else overloads this on its own config. An empty tuple is a valid statement — a
+model with default boundary conditions everywhere — and yields `(;)`.
 
-Declared with no method, so a set config that does not implement it fails as a `MethodError` naming
-the hook.
-"""
-function field_boundary_conditions end
-
-"""
-    MergedBoundaryConditions(pieces...)
-
-The built-in `AbstractBoundaryConditionSetConfig`: merge every piece's contribution with
-`recursive_merge`, then materialize each field's sides into `FieldBoundaryConditions`.
-
-Merging is last-wins per leaf, so argument order is precedence order. Naming no pieces at all is a
-valid statement — a model with default boundary conditions everywhere — and yields `(;)`.
-
-A struct rather than the bare `Tuple` this used to dispatch on. A `Tuple` is not a type any subtype
-can specialize, so the merge strategy and the `FieldBoundaryConditions` result shape were fixed for
-every model FjordSim could ever assemble; and it said nothing about what the tuple *was*. A model
-whose boundary objects are something else, or that wants precedence resolved another way, is now a
-sibling of this type.
-
-The materialized result may name barotropic `U`/`V` and `η` as well as the prognostic fields, which
+The result may name barotropic `U`/`V` and `η` as well as the prognostic fields, which
 `HydrostaticFreeSurfaceModel` accepts: it regularizes them through `assumed_field_location` and hands
 `bcs.U`/`bcs.V` to the split-explicit free surface.
 """
-struct MergedBoundaryConditions{P<:Tuple} <: AbstractBoundaryConditionSetConfig
-    pieces::P
-end
-
-MergedBoundaryConditions(pieces::AbstractBoundaryConditionConfig...) =
-    MergedBoundaryConditions(pieces)
-
-function field_boundary_conditions(
-    config::MergedBoundaryConditions,
+function model_boundary_conditions(
+    model::AbstractModelConfig,
+    pieces::Tuple,
     grid,
     forcing,
-    boundary_config,
+    boundary_data_config,
     tracers,
-    boundaries = nothing,
+    boundaries,
 )
     merged = mapreduce(
-        piece -> boundary_condition_sides(piece, grid, forcing, boundary_config, tracers, boundaries),
+        piece -> boundary_condition_sides(piece, grid, forcing, boundary_data_config, tracers, boundaries),
         recursive_merge,
-        config.pieces;
+        pieces;
         init = (;),
     )
 
     return map(sides -> FieldBoundaryConditions(; sides...), merged)
 end
+
+model_boundary_conditions(model, ::Nothing, grid, forcing, boundary_data_config, tracers, boundaries) = error(
+    "This setup is simulated but names no `boundary_condition_configs`. State them on the FjordConfig " *
+    "— `(AirSeaFluxes(), QuadraticBottomDrag(coefficient = ...), ...)` — or `()` for the model's " *
+    "defaults everywhere.",
+)
 
 include("open_boundary_conditions.jl")
 

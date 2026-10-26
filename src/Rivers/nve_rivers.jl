@@ -960,7 +960,7 @@ Fetch everything this config's rivers need into `nve_download_directory(config)`
 First the **map services**, which need no key: REGINE's sea-draining catchments and the ELVIS river
 network over `target_grid`'s domain, from which `nve_outlets` derives the river mouths. This is
 what `target_grid` is for, and it is why this hook takes one — the same argument
-`download_forcing` and `download_boundaries` already make, that a dataset needs the domain bounds
+`download_forcing` and `download_boundary_data` already make, that a dataset needs the domain bounds
 and `x_domain`/`y_domain` provide them for any grid. A config naming no `minimum_discharge` states
 its own outlets, so the download is skipped and the grid goes unused.
 

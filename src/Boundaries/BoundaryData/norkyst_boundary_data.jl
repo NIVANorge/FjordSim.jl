@@ -50,10 +50,10 @@ const NORKYST_GRID_RELATIVE_COMPONENTS = ("ubar", "vbar")
 const NORKYST_GRID_ANGLE_VARIABLE = "angle"
 
 """
-    AbstractNorKystBoundariesConfig <: AbstractBoundaryDataConfig
+    AbstractNorKystBoundaryDataConfig <: AbstractBoundaryDataConfig
 
 Supertype of the NorKyst open-boundary configs. The operational archive
-(`NorKystBoundariesConfig`) and the Norkyst-v3 hindcast (`NorKystHindcastBoundariesConfig`) publish
+(`NorKystBoundaryDataConfig`) and the Norkyst-v3 hindcast (`NorKystHindcastBoundaryDataConfig`) publish
 the same fields on the same polar-stereographic grid with the same projection variable and depth
 axis, so `boundary_time_steps` and `boundary_source_grid` are written once against this type.
 
@@ -61,10 +61,10 @@ What is *not* shared is `boundary_source_slab`: the operational collection needs
 derotated from ROMS' curvilinear axes and overloads it to do that, while the hindcast publishes the
 pair already derotated and takes the generic default.
 """
-abstract type AbstractNorKystBoundariesConfig <: AbstractBoundaryDataConfig end
+abstract type AbstractNorKystBoundaryDataConfig <: AbstractBoundaryDataConfig end
 
 """
-    NorKystBoundariesConfig
+    NorKystBoundaryDataConfig
 
 Configuration for downloading and subsetting hourly NorKyst-800m data along one open lateral
 boundary.
@@ -76,12 +76,12 @@ overrides `data_root` for that entry only.
 # Fields
 - `data_root`: Directory holding this setup's boundary files. Required.
 - `output_directory`: Name of the directory the monthly downloads are written to. Required.
-- `output_file`: Name of the prepared boundary NetCDF written by `prepare_boundaries`.
+- `output_file`: Name of the prepared boundary NetCDF written by `prepare_boundary_data`.
 - `plot_file`: Name of the diagnostic boundary plot.
 - `open_edges`: Lateral boundaries the domain is open on, each one of `:south`, `:north`, `:west` or
   `:east`. Write one `Symbol` for a single edge or a collection for several — a domain in the open
   ocean names all four — and the constructor normalizes either to a `Vector{Symbol}`. Required, and
-  stated only here: the download subsets a band along each, `prepare_boundaries` regrids onto each and
+  stated only here: the download subsets a band along each, `prepare_boundary_data` regrids onto each and
   writes them all into one file, `water_mask` unmasks each edge's velocity face row for both this
   pipeline and the interior forcing's, and the open lateral boundary condition puts its schemes on
   every one of them.
@@ -90,14 +90,14 @@ overrides `data_root` for that entry only.
   NorKyst's spacing is 800 m, so a few hundredths of a degree. Kept small because the download is
   hourly: the whole domain box at 24 records a day is more than twenty times the interior forcing,
   while a thin band is a tenth of the box.
-- `architecture`: Where `prepare_boundaries` interpolates — `:auto`, `:cpu` or `:gpu`, resolved by
+- `architecture`: Where `prepare_boundary_data` interpolates — `:auto`, `:cpu` or `:gpu`, resolved by
   `interpolation_architecture`.
 - `catalog_url`, `opendap_url`: The hourly NorKyst collection's own public endpoints; the only
   defaulted fields.
 - `parameters`: Source variable names to extract. Required.
 - `years`: Calendar years to download. Required.
 """
-mutable struct NorKystBoundariesConfig <: AbstractNorKystBoundariesConfig
+mutable struct NorKystBoundaryDataConfig <: AbstractNorKystBoundaryDataConfig
     data_root::String
     output_directory::String
     output_file::String
@@ -115,7 +115,7 @@ end
 # `Symbol` or as a collection of them and is normalized here: `lateral_edges` validates each edge and
 # rejects a repeat, and every consumer then iterates one shape. `@kwdef` would `convert` instead, and
 # `convert(Vector{Symbol}, :south)` has no method.
-function NorKystBoundariesConfig(;
+function NorKystBoundaryDataConfig(;
     data_root,
     output_directory,
     output_file = "boundaries.nc",
@@ -131,13 +131,13 @@ function NorKystBoundariesConfig(;
     edges = lateral_edges(open_edges)
     isempty(edges) && throw(
         ArgumentError(
-            "NorKystBoundariesConfig names no `open_edges`. A boundary dataset exists to supply the " *
+            "NorKystBoundaryDataConfig names no `open_edges`. A boundary dataset exists to supply the " *
             "exterior state along at least one open edge; a closed domain names no boundary config " *
             "at all.",
         ),
     )
 
-    return NorKystBoundariesConfig(
+    return NorKystBoundaryDataConfig(
         data_root,
         output_directory,
         output_file,
@@ -153,31 +153,31 @@ function NorKystBoundariesConfig(;
 end
 
 """
-    boundary_monthly_filename(config::NorKystBoundariesConfig, year, month)
+    boundary_monthly_filename(config::NorKystBoundaryDataConfig, year, month)
 
 Name of the combined monthly hourly-NorKyst NetCDF written for `year` and `month`.
 """
-boundary_monthly_filename(config::NorKystBoundariesConfig, year, month) =
+boundary_monthly_filename(config::NorKystBoundaryDataConfig, year, month) =
     "NorKyst-800m_ZDEPTHS_his_$(year)$(lpad(month, 2, '0')).nc"
 
 """
-    boundary_variable_names(config::NorKystBoundariesConfig)
+    boundary_variable_names(config::NorKystBoundaryDataConfig)
 
 The NorKyst variables this dataset can supply along a boundary and the FjordSim names they become.
 """
-boundary_variable_names(config::NorKystBoundariesConfig) = NORKYST_BOUNDARY_VARIABLE_NAMES
+boundary_variable_names(config::NorKystBoundaryDataConfig) = NORKYST_BOUNDARY_VARIABLE_NAMES
 
 """
-    boundary_time_steps(config::AbstractNorKystBoundariesConfig)
+    boundary_time_steps(config::AbstractNorKystBoundaryDataConfig)
 
 Every time record of every downloaded monthly file for `config.years`, sorted by date with
 duplicates dropped. Errors if the directory or the files are missing.
 """
-function boundary_time_steps(config::AbstractNorKystBoundariesConfig)
+function boundary_time_steps(config::AbstractNorKystBoundaryDataConfig)
     directory = boundary_data_directory(config)
     isdir(directory) || error(
         "NorKyst boundary directory $directory does not exist. " *
-        "Run `julia --project -m FjordSim download_boundaries` for this setup first.",
+        "Run `julia --project -m FjordSim download_boundary_data` for this setup first.",
     )
 
     records = SourceRecord[]
@@ -199,15 +199,15 @@ function boundary_time_steps(config::AbstractNorKystBoundariesConfig)
 end
 
 """
-    boundary_source_grid(config::AbstractNorKystBoundariesConfig, filepath)
+    boundary_source_grid(config::AbstractNorKystBoundaryDataConfig, filepath)
 
 `norkyst_source_grid(filepath)`: every NorKyst collection shares its grid, its projection variable
 and its depth axis.
 """
-boundary_source_grid(config::AbstractNorKystBoundariesConfig, filepath) = norkyst_source_grid(filepath)
+boundary_source_grid(config::AbstractNorKystBoundaryDataConfig, filepath) = norkyst_source_grid(filepath)
 
 """
-    boundary_source_slab(config::NorKystBoundariesConfig, reader, step, source_name)
+    boundary_source_slab(config::NorKystBoundaryDataConfig, reader, step, source_name)
 
 As the default for every variable except `ubar` and `vbar`, which are rotated from NorKyst's own
 curvilinear axes to eastward/northward before being returned.
@@ -233,7 +233,7 @@ is grid geometry — every monthly file of one subset carries the same plane —
 `blended_slab` calls, since those are what leave the reader pointing at a file at all.
 """
 function boundary_source_slab(
-    config::NorKystBoundariesConfig,
+    config::NorKystBoundaryDataConfig,
     reader,
     step,
     source_name,
@@ -252,7 +252,7 @@ end
 # --- Download ---
 
 """
-    download_boundaries(target_grid, config::NorKystBoundariesConfig)
+    download_boundary_data(target_grid, config::NorKystBoundaryDataConfig)
 
 Download the hourly NorKyst-800m months covering `config.years`, each combined into one NetCDF file
 in `boundary_data_directory(config)` subset to the box `boundary_domain` derives from
@@ -263,7 +263,7 @@ For a single open edge that box is a `config.margin`-wide band along the edge, w
 hourly download affordable. For several it is their bounding box, which for opposite edges is the whole
 domain — see `boundary_domain` for why it stays one box.
 """
-function download_boundaries(target_grid, config::NorKystBoundariesConfig)
+function download_boundary_data(target_grid, config::NorKystBoundaryDataConfig)
     output_directory = boundary_data_directory(config)
     mkpath(output_directory)
 
@@ -291,7 +291,7 @@ The interior download's `process_month` in shape, and it shares every helper bel
 separate function: this collection has its own catalog, its own filename pattern and 24 records per
 file rather than one, and folding both into one driver would mean a config-shaped branch inside it.
 """
-function process_boundary_month(year, month, longitude, latitude, config::NorKystBoundariesConfig; files = nothing)
+function process_boundary_month(year, month, longitude, latitude, config::NorKystBoundaryDataConfig; files = nothing)
     files = isnothing(files) ? list_opendap_files(catalog_url = config.catalog_url) : files
     month_string = ".$(year)$(lpad(month, 2, '0'))"
     year_month = month_string[2:end]

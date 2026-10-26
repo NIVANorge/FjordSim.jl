@@ -146,7 +146,7 @@ function boundary_series_value(boundaries, name, edge)
     haskey(boundaries, name) || error(
         "The open :$edge boundary needs `$name` but the prepared boundary file does not carry it. " *
         "Add its source variable to the boundary config's `parameters` and re-run " *
-        "`prepare_boundaries`.",
+        "`prepare_boundary_data`.",
     )
     return getproperty(boundaries, name)
 end
@@ -326,20 +326,20 @@ function boundary_condition_sides(
     config::OpenLateralBoundaryFromData,
     grid,
     forcing,
-    boundary_config,
+    boundary_data_config,
     tracers,
     boundaries,
 )
-    isnothing(boundary_config) && error(
+    isnothing(boundary_data_config) && error(
         "OpenLateralBoundaryFromData puts its schemes on the edges a boundary data config names, " *
-        "but this setup's `FjordConfig` names no `boundary_config`. Give it an " *
+        "but this setup's `FjordConfig` names no `boundary_data_config`. Give it an " *
         "`AbstractBoundaryDataConfig`, or use a boundary condition that carries its own exterior " *
         "state and edges.",
     )
 
     isnothing(boundaries) && error(
         "OpenLateralBoundaryFromData reads its exterior state from the prepared boundary file, but " *
-        "none was read for this setup. Run `julia --project -m FjordSim prepare_boundaries` for it, " *
+        "none was read for this setup. Run `julia --project -m FjordSim prepare_boundary_data` for it, " *
         "or use a boundary condition that carries its own exterior state.",
     )
 
@@ -348,7 +348,7 @@ function boundary_condition_sides(
     return mapreduce(
         edge -> open_edge_boundary_conditions(Val(edge), getproperty(boundaries, edge), tracers, scheme),
         recursive_merge,
-        open_edges(boundary_config);
+        open_edges(boundary_data_config);
         init = (;),
     )
 end

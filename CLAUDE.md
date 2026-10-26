@@ -28,10 +28,10 @@ julia --project -m FjordSim <step> --config <setup.jl>             # one pipelin
 
 The steps, in order: `prepare_bathymetry`, `download_forcing`, `prepare_forcing`,
 `download_initial_state`, `prepare_initial_state`, `add_rivers` (needs `NVE_API_KEY`),
-`download_boundaries`, `prepare_boundaries`, `download_atmosphere`, `prepare_atmosphere`,
+`download_boundary_data`, `prepare_boundary_data`, `download_atmosphere`, `prepare_atmosphere`,
 `run_simulation` (needs a GPU), `validate_simulation`. `--config` is the only
-option and is required. From the REPL each step is a function of the same name on a `FjordConfig`;
-`build_simulation(config)` assembles a `Simulation` without running it. Details: `docs/running.md`.
+option and is required. From the REPL each step is a function of the same name on a setup (any
+`AbstractFjordConfig`); `build_simulation(config)` assembles a `Simulation` without running it. Details: `docs/running.md`.
 
 `run_simulation` on a cloud GPU goes through `gcp/fjordsim-gcp`; read `gcp/README.md` first.
 
@@ -68,9 +68,16 @@ no-ops (`docs/architecture.md`, "What a run is assembled from").
 open-boundary dataset or atmosphere dataset is added by subtyping the matching `Abstract*Config` supertype and overloading
 methods on it — never by editing the generic pipeline.** Read `docs/adding-a-source.md` first.
 
+**A step holds no logic on the setup type.** `step(config::AbstractFjordConfig)` only picks out the
+components it reads through the accessors (`grid_config(config)`, …) and calls the method that
+dispatches on those components, typing only its own; a missing component is a `::Nothing` method,
+not an `isnothing` branch. The model (`model_config`), its biogeochemistry, its boundary conditions
+and the run (`simulation_config`) are separate setup components (`docs/architecture.md`, Configs).
+
 The modules, in `include` order from `src/FjordSim.jl`:
 
-1. **Configs** (`src/Configs.jl`) — the abstract supertypes and `FjordConfig`.
+1. **Configs** (`src/Configs.jl`) — the abstract supertypes, `AbstractFjordConfig` and its
+   accessors, and `FjordConfig`.
 2. **Utils** (`src/Utils.jl`) — `progress` callback, `recursive_merge`, time-step helpers,
    `coverage_window`, `fjord_data_root`/`fjord_results_root`.
 3. **Grids** (`src/Grids.jl`) — `EvenGrid`, the `domain_grid`/`simulation_grid` hooks, and the edge
@@ -91,14 +98,16 @@ The modules, in `include` order from `src/FjordSim.jl`:
     one source record at `start_date` for `FromInitialState`, and its NorKyst adapter.
 11. **Rivers** (`src/Rivers/`) — the river pipeline (`add_rivers`) and its NVE adapter.
 12. **Boundary conditions** (`src/Boundaries/BoundaryConditions/`) — the `boundary_condition_sides`
-    and `field_boundary_conditions` hooks, `MergedBoundaryConditions`, `AirSeaFluxes`,
+    hook, `model_boundary_conditions` (the default merge on any model config), `AirSeaFluxes`,
     `QuadraticBottomDrag`, and `OpenLateralBoundaryFromData`, the condition that reads the prepared
     open-boundary data.
 13. **Boundary data** (`src/Boundaries/BoundaryData/`) — the open-boundary data pipeline
-    (`download_boundaries`, `prepare_boundaries`, `boundary_series`) and its NorKyst adapters.
+    (`download_boundary_data`, `prepare_boundary_data`, `boundary_series`) and its NorKyst adapters.
     Independent of `BoundaryConditions`; `build_simulation` hands one's output to the other.
-14. **Simulations** (`src/Simulations.jl`) — `SimulationConfig`, `build_simulation`/`run_simulation`,
-    writers, callbacks, looping, checkpointing, initial conditions, the run tag.
+14. **Simulations** (`src/Simulations.jl`) — `CoupledHydrostaticModel` and `coupled_model`,
+    `SimulationConfig`, `build_simulation` (staged: `validate_model_inputs`, `model_inputs`,
+    `coupled_model`)/`run_simulation`, writers, callbacks, looping, checkpointing, initial
+    conditions, the run tag.
 15. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
     observation sources, skill and tidal statistics, and the comparison figures. `StationWriter`
     (in `Simulations`) is what a run writes for it.
@@ -110,8 +119,9 @@ The modules, in `include` order from `src/FjordSim.jl`:
 No setup is part of the package. A setup is a script whose last expression is a `FjordConfig`,
 passed by path to `--config` and loaded by `fjord_config`; `examples/` holds the worked ones
 (`oslofjorden.jl`, `drammensfjorden.jl`, `lista.jl`, and variants that
-`include("oslofjorden.jl")`). Adding a fjord is one new file. `SimulationConfig` and everything it
-nests have **no defaults** — every field is a scientific choice a setup must state. How to write
+`include("oslofjorden.jl")`). Adding a fjord is one new file. `CoupledHydrostaticModel`,
+`SimulationConfig` and everything they nest have **no defaults** — every field is a scientific
+choice a setup must state. How to write
 one is `docs/setups.md`; why a setup has the values it has belongs in its own comments.
 
 ## GPU & Kernel Compatibility
@@ -197,7 +207,7 @@ forcings.
   is `EvenGrid`'s `float_type` (default `Float32`, for GPU speed), and a setup passes that same `FT`
   to every model component that takes one (`WENO(FT)`, `CATKEVerticalDiffusivity(FT; ...)`,
   `FreezingLimitedOceanTemperature(FT)`, ...), since those read the global when not given one. The
-  model clock stays `Float64` whatever the grid is (`coupled_simulation`): a `Float32` kernel time
+  model clock stays `Float64` whatever the grid is (`coupled_model`): a `Float32` kernel time
   rounds to a different `FieldTimeSeries` slice than the host near an exact hour and faults on GPU.
 - Never extend `getproperty` to fix undefined-property bugs — fix the caller instead
 - A variable named the same as a function produces "type is not callable" — rename the variable
@@ -216,7 +226,7 @@ forcings.
   `365days`, `1hour`, `3minutes` — sidesteps this. `loops` is the one field this does *not* apply to,
   being an `Int` already. `SimulationConfig` is now the **only** config the rule reaches: every other
   one is either non-parametric, or — like `SnapshotWriter`, `ProgressCallback` and
-  `CoupledHydrostaticSimulation`, all of which *are* parametric — has a hand-written keyword
+  `CoupledHydrostaticModel`, all of which *are* parametric — has a hand-written keyword
   constructor that converts. `Regridding.PreparedVariable` is the one internal type the rule reaches
   too, for the same reason.
 
@@ -232,7 +242,7 @@ forcings.
 - Open-boundary convention: the domain is open on any subset of its four lateral edges — none, one,
   or all four for a region in the open ocean — named once by the boundary data config's `open_edges`
   and read through the `open_edges` accessor as a `Vector{Symbol}`, empty for a setup naming no
-  boundary config, whose lateral boundaries are then all closed walls. Everything that acts on an edge
+  boundary data config, whose lateral boundaries are then all closed walls. Everything that acts on an edge
   dispatches on `Val(edge)` and every consumer *iterates*, so the four edges are independent; the
   prepared boundary file names every variable for its side (`south_T`), which is how they all fit in
   one file on one time axis.

@@ -178,7 +178,7 @@ Better for the slow steps, and it keeps the raw sources off your disk entirely.
 
 ```bash
 gcp/fjordsim-gcp run --config examples/oslofjorden.jl \
-    --steps prepare_bathymetry,download_initial_state,prepare_initial_state,add_rivers,download_boundaries,prepare_boundaries
+    --steps prepare_bathymetry,download_initial_state,prepare_initial_state,add_rivers,download_boundary_data,prepare_boundary_data
 gcp/fjordsim-gcp run --config examples/oslofjorden.jl \
     --steps download_atmosphere,prepare_atmosphere
 gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --gpu

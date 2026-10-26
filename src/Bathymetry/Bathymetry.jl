@@ -21,7 +21,10 @@ using NumericalEarth.DataWrangling:
 
 using ..Configs:
     AbstractBathymetryConfig,
-    FjordConfig
+    AbstractFjordConfig,
+    grid_config,
+    bathymetry_config,
+    boundary_data_config
 using ..Grids: domain_grid, open_edges, lateral_edges, LATERAL_EDGES
 using ..Plotting: Plotting, plot_bathymetry
 
@@ -34,6 +37,22 @@ path resolution; one without those fields overloads it. An absolute `output_file
 unchanged.
 """
 bathymetry_path(config::AbstractBathymetryConfig) = joinpath(config.data_root, config.output_file)
+
+"""
+    resolve_bathymetry_file(config)
+
+`bathymetry_path(config)`, checked to exist: every step after `prepare_bathymetry` reads the model
+grid back from it, and a missing file is reported naming the step that writes it.
+"""
+function resolve_bathymetry_file(config::AbstractBathymetryConfig)
+    bathymetry_file = bathymetry_path(config)
+    isfile(bathymetry_file) || error(
+        "Processed bathymetry $bathymetry_file does not exist. " *
+        "Run `julia --project -m FjordSim prepare_bathymetry` for this setup first.",
+    )
+    return bathymetry_file
+end
+
 Plotting.plot_path(config::AbstractBathymetryConfig) = joinpath(config.data_root, config.plot_file)
 
 # Matches the fixed loop count and neighbor threshold used in the Oslofjord notebook's
@@ -152,30 +171,37 @@ function native_bathymetry(metadata)
 end
 
 """
-    prepare_bathymetry(config::FjordConfig)
+    prepare_bathymetry(config)
+    prepare_bathymetry(grid_config, bathymetry_config, boundary_data_config)
 
-Prepare the bathymetry a whole setup names: build its grid, regrid the source onto it, write the
+Prepare the bathymetry a setup names: build its grid, regrid the source onto it, write the
 processed NetCDF and the diagnostic plot.
 
-This is the setup-level driver, the same shape as `download_forcing(config::FjordConfig)`. The
-grid is built on the CPU because that is what the rest of the preparation pipeline reads, and
-`bathymetry_path`'s directory is created here since this is the first step of a setup and nothing
-has written into `data_root` yet.
+The setup form only picks out the three components this step reads. The grid is built on the CPU
+because that is what the rest of the preparation pipeline reads, and `bathymetry_path`'s directory is
+created here since this is the first step of a setup and nothing has written into `data_root` yet.
 
-The open edges come from `open_edges(config.boundary_config)` — the one place a setup states them —
-so a setup naming no boundary data config prepares its bathymetry with every lateral boundary
-treated as a wall, which is the right reading when there is no exterior state to admit.
+The open edges come from `open_edges(boundary_data_config)` — the one place a setup states them — so
+a `nothing` boundary data config prepares the bathymetry with every lateral boundary treated as a
+wall, which is the right reading when there is no exterior state to admit.
 
 # Returns
 The `prepare_bathymetry(target_grid, config)` named tuple with `plot_file` added.
 """
-function prepare_bathymetry(config::FjordConfig)
-    grid = domain_grid(config.grid_config, CPU())
-    mkpath(dirname(bathymetry_path(config.bathymetry_config)))
+prepare_bathymetry(config::AbstractFjordConfig) =
+    prepare_bathymetry(grid_config(config), bathymetry_config(config), boundary_data_config(config))
+
+function prepare_bathymetry(
+    grid_config,
+    bathymetry_config::AbstractBathymetryConfig,
+    boundary_data_config,
+)
+    grid = domain_grid(grid_config, CPU())
+    mkpath(dirname(bathymetry_path(bathymetry_config)))
     print_grid_extents(grid)
 
-    result = prepare_bathymetry(grid, config.bathymetry_config; edges = open_edges(config.boundary_config))
-    plot_file = plot_bathymetry(grid, result.bottom_height, config.bathymetry_config)
+    result = prepare_bathymetry(grid, bathymetry_config; edges = open_edges(boundary_data_config))
+    plot_file = plot_bathymetry(grid, result.bottom_height, bathymetry_config)
 
     @info "Raw bathymetry saved to $(result.raw_file)"
     @info "Processed FjordSim bathymetry saved to $(result.output_file)"

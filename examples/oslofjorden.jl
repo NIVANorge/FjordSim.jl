@@ -20,17 +20,17 @@
 # land alongside it rather than being shared from elsewhere. It writes `rivers_nve.nc`, which
 # `build_simulation` reads as a volume inflow.
 #
-# It also names a `simulation_config`, so `run_simulation` works once the preparation steps have
-# run. Nothing about the run has a default, so every knob is stated here and nowhere else — split
-# across four nested configs by what dispatches on it: `CoupledHydrostaticSimulation` is what the
-# model is, the `boundary_conditions` tuple is what bounds it, the `writers` tuple is what it writes,
-# and `AdaptiveTimeStep` is how its clock advances. Results go to `~/FjordSim_results/oslofjorden/`,
+# It also names a model, its boundary conditions and a `simulation_config`, so `run_simulation`
+# works once the preparation steps have run. Nothing about the run has a default, so every knob is
+# stated here and nowhere else — split by what dispatches on it: `CoupledHydrostaticModel` is what
+# the model is, the `boundary_condition_configs` tuple is what bounds it, the `writers` tuple is what
+# it writes, and `AdaptiveTimeStep` is how its clock advances. Results go to `~/FjordSim_results/oslofjorden/`,
 # separate from the input data root, and each writer's file carries the launch tag so runs do not
 # overwrite each other.
 #
 # `start_date` and `stop_time` also decide what the prepare steps write: they pad the boundary and
 # atmosphere time axes to span exactly this window, and the river file is written on it, so changing
-# either means re-running `add_rivers`, `prepare_boundaries` and `prepare_atmosphere`. The initial
+# either means re-running `add_rivers`, `prepare_boundary_data` and `prepare_atmosphere`. The initial
 # state is the day `start_date` falls in, so changing `start_date` also means re-running
 # `download_initial_state` and `prepare_initial_state`.
 #
@@ -40,8 +40,8 @@
 #   julia --project -m FjordSim download_initial_state --config examples/oslofjorden.jl
 #   julia --project -m FjordSim prepare_initial_state  --config examples/oslofjorden.jl
 #   julia --project -m FjordSim add_rivers             --config examples/oslofjorden.jl
-#   julia --project -m FjordSim download_boundaries    --config examples/oslofjorden.jl
-#   julia --project -m FjordSim prepare_boundaries     --config examples/oslofjorden.jl
+#   julia --project -m FjordSim download_boundary_data --config examples/oslofjorden.jl
+#   julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden.jl
 #   julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden.jl
 #   julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden.jl
 #   julia --project -m FjordSim run_simulation         --config examples/oslofjorden.jl   # needs a GPU
@@ -64,9 +64,9 @@ data_root = fjord_data_root("oslofjorden")
 # `Oceananigans.defaults.FloatType` — see `EvenGrid`'s `float_type`.
 FT = Float32
 
-# FjordConfig is what the driver-level generics (run_simulation(), add_rivers(), etc.)
-# dispatch on — one method per subcommand, shared by every setup. Each driver then calls the
-# finer-grained hooks the nested configs below overload.
+# FjordConfig holds every component side by side. Each step (prepare_forcing(), add_rivers(),
+# run_simulation(), ...) picks out the components it reads and dispatches on them, and those
+# call the finer-grained hooks the configs below overload.
 FjordConfig(
     # EvenGrid overloads the two grid hooks — domain_grid(config, architecture), which every
     # prepare_* pipeline calls, and simulation_grid(config, bathymetry_file, architecture),
@@ -143,7 +143,7 @@ FjordConfig(
         # not reconciling a radiation scheme, a prescribed exterior state and a headland within
         # a couple of cells of each other. On this domain the band is nearly clear already and
         # it moves nine cells, none in the boundary row itself — cheap insurance rather than a
-        # correction. The open edges come from `boundary_config` below.
+        # correction. The open edges come from `boundary_data_config` below.
         open_boundary_land_cells = 5,
         # Six and no more. Every remaining interior land component is 7 cells or larger with a
         # minimum width of 2 to 4 cells — compact skerries, not the one-cell ridges this stage
@@ -271,10 +271,10 @@ FjordConfig(
     # so the file is a few hundred MB.
     #
     # It is what states the open edge — for the boundary steps and for the boundary condition.
-    # NorKystBoundariesConfig overloads boundary_time_steps, boundary_source_grid,
-    # boundary_variable_names (all required) and download_boundaries — hooks
-    # prepare_boundaries and download_boundaries call, dispatching on this config's type.
-    boundary_config = NorKystBoundariesConfig(
+    # NorKystBoundaryDataConfig overloads boundary_time_steps, boundary_source_grid,
+    # boundary_variable_names (all required) and download_boundary_data — hooks
+    # prepare_boundary_data and download_boundary_data call, dispatching on this config's type.
+    boundary_data_config = NorKystBoundaryDataConfig(
         data_root        = data_root,
         output_directory = "norkyst_hourly",
         output_file      = "boundaries.nc",
@@ -304,116 +304,115 @@ FjordConfig(
         padding          = 0.1,
         years            = [2020],
     ),
-    # SimulationConfig itself has no hooks — everything below dispatches through one of its
-    # four nested configs instead.
+    # CoupledHydrostaticModel overloads coupled_model and model_tracers — the model hooks
+    # build_simulation calls, dispatching on this config's type.
+    model_config = CoupledHydrostaticModel(
+        buoyancy           = SeawaterBuoyancy(FT, equation_of_state = TEOS10EquationOfState(FT)),
+        # A BoundarySponge rather than a bare closure tuple: it adds a harmonic viscosity
+        # and diffusivity ramping to zero over 16 cells (~3.2 km) inward from whichever
+        # edges `boundary_data_config` opens, and passes `base` through untouched everywhere
+        # else. Without it nothing damped what the open boundary radiates — the 2020 run
+        # carried velocities of 0.4 m/s std and 2 m/s peak on the boundary row against
+        # 0.13 and 0.43 in the interior, and grid-scale salinity roughness 70x the interior
+        # value, which accumulated for 50 days in the near-boundary bottom cells and then
+        # ran away. Viscous rather than a tracer relaxation band, so it cannot fight the
+        # open boundary's own nudging towards the same data.
+        #
+        # 30 m² s⁻¹ is set by explicit-diffusion stability, not by taste: Δt ≤ Δx²/4ν is
+        # 310 s on this 193 m cell, comfortably clear of `max_time_step` below. Raising it
+        # much past 50 would cap the time step instead of the CFL doing it.
+        closure            = BoundarySponge(
+            # `minimum_tke` is not a safety net on this grid — it *is* the vertical
+            # closure over most of the column. CATKE takes `w★ = sqrt(max(minimum_tke, e))`,
+            # and measured on the 2020 run at day 20.5 the prognostic `e` sits below this
+            # floor in 85 % of wet cells: 89 % below 6 m, 95-100 % below 9 m. So κ there is
+            # the documented background κ = Cʰⁱᶜ·e_min/N = 0.098·e_min/N with
+            # ν = 0.242·e_min/N, which the domain-median κᵤ/κᶜ of 2.38 against
+            # Cʰⁱᵤ/Cʰⁱᶜ = 2.47 confirms.
+            #
+            # 7e-6 is ROMS' `GLS_KMIN` default (7.6e-6), and it does *not* carry over
+            # unchanged: ROMS floors its length scale too (`GLS_PMIN`) where CATKE's is
+            # diagnostic and unfloored, so the same TKE floor buys a much larger κ. It is
+            # kept because it lands in the right place for *this* fjord, not because it came
+            # from ROMS. Median κᶜ at 94-118 m is 8-9e-5 m² s⁻¹ against basin-mean values
+            # measured here by density budget — 1.0-1.8e-4 in Bunnefjorden, 4.9-7.6e-4 in
+            # Vestfjorden, 2.5e-3 just inside the Drøbak sill (Gade 1970; Staalstrøm et al.
+            # 2012, Ocean Sci. 8, 525) — so the basin water is at the low end already and
+            # lowering the floor would slow the deep-water renewal this domain is judged on.
+            # The fjord relation is κ ∝ N^-1.5 (Stigebrandt & Aure 1989) where the floor
+            # gives κ ∝ N^-1, so one number cannot fit both the pycnocline and the basin;
+            # the basin is the one to fit.
+            #
+            # `Cᵇ` stays at Oceananigans' 0.28 rather than NumericalEarth's regional 0.01
+            # (`default_ocean_closure`), deliberately: it scales the near-bottom mixing
+            # length, and Stigebrandt attributed the high basin-mean diffusivity here to
+            # exactly that boundary mixing.
+            base = (
+                CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6),
+                # 2e4 m⁴ s⁻¹, down from 1e5. Biharmonic damping of the 2Δx mode goes as
+                # ν₄·16/Δx⁴, an e-folding of 14.5 min at 1e5 on this 193 m cell — the commit
+                # that raised it from 15 aimed at "~1.7 hours" and was out by 7x. 2e4 gives
+                # the 72 min it meant, keeps the scale selectivity that leaves an 8 km
+                # baroclinic eddy alone (56 h at 8Δx), and is still ~1300x what it replaced.
+                # For scale, Norkyst-800 — the ROMS system feeding this run — applies no
+                # explicit interior viscosity at all and a 10 m² s⁻¹ harmonic tracer
+                # diffusivity, where κ = 2e3 here is 0.2 m² s⁻¹ at 2Δx.
+                #
+                # It also matters for a stability limit nothing else watches: the explicit
+                # biharmonic needs Δt ≤ Δx⁴/32ν₄, which is 434 s at 1e5 and 2170 s here, and
+                # `AdaptiveTimeStep` measures only the advective CFL
+                # (`cell_advection_timescale_coupled_model`).
+                HorizontalScalarBiharmonicDiffusivity(FT; ν = 2e4, κ = 2e3),
+            ),
+            width_cells = 16,
+            viscosity   = 30.0,
+            diffusivity = 15.0,
+        ),
+        # One scheme for every tracer, not a NamedTuple naming T and S. Oceananigans gives
+        # any tracer a NamedTuple omits the `Centered()` default, and CATKE contributes an
+        # `e` the setup never names — so `e` was being advected by an unbounded centered
+        # scheme, which makes the vertical diffusivity noisy exactly where the bottom cells
+        # were failing. A scalar covers whatever the closure adds, now and later.
+        tracer_advection   = WENO(FT),
+        momentum_advection = WENOVectorInvariant(FT),
+        tracers            = (:T, :S),
+        coriolis           = HydrostaticSphericalCoriolis(FT),
+        sea_ice            = FreezingLimitedOceanTemperature(FT),
+        # Overloads free_surface(config, grid) — its own hook, called from inside
+        # coupled_model once the grid exists.
+        free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),
+        # Anything else the three constructors coupled_model calls accept, one slot each:
+        # :ocean_model, :ocean_simulation, :coupled_model.
+        # Nothing extra here, but stated rather than defaulted like every other field.
+        extra_kwargs       = (;),
+    ),
+    # Each piece overloads boundary_condition_sides, and the model config's
+    # model_boundary_conditions merges them. Air-sea fluxes and quadratic bottom drag are
+    # separate pieces, so either can be swapped alone, plus the genuinely open southern
+    # edge — which edge, and whose exterior state, come from `boundary_data_config` above.
+    # Dropping it would close the domain; tuple order is merge precedence.
+    #
+    # The two timescales are Marchesiello et al. (2001): nudge hard towards the data on
+    # inflow, let radiation do the work on outflow.
+    boundary_condition_configs = (
+        AirSeaFluxes(),
+        QuadraticBottomDrag(coefficient = 0.003),
+        OpenLateralBoundaryFromData(
+            # 3 hours, not the 1 day this was. At the time steps this run actually takes
+            # (~10 s), a one-day timescale relaxes by 1.2e-4 per step against an advective
+            # rate into the boundary cell of ~2.5e-3 s⁻¹ — 200x weaker, which is why the
+            # nudging never caught the drift it was there to catch. Both numbers are
+            # tuning knobs: too strong an inflow nudge over-constrains an open boundary
+            # and reflects.
+            inflow_timescale  = 3hours,
+            outflow_timescale = 360days,
+        ),
+    ),
+    # How the model is run. Writers, callbacks and time stepping each dispatch on their own
+    # supertype; build_simulation and run_simulation dispatch on this config's type.
     simulation_config = SimulationConfig(
         results_root       = fjord_results_root("oslofjorden"),
         architecture       = :auto,
-        # CoupledHydrostaticSimulation overloads coupled_simulation and model_tracers — the
-        # model hooks build_simulation calls, dispatching on this config's type.
-        model              = CoupledHydrostaticSimulation(
-            buoyancy           = SeawaterBuoyancy(FT, equation_of_state = TEOS10EquationOfState(FT)),
-            # A BoundarySponge rather than a bare closure tuple: it adds a harmonic viscosity
-            # and diffusivity ramping to zero over 16 cells (~3.2 km) inward from whichever
-            # edges `boundary_config` opens, and passes `base` through untouched everywhere
-            # else. Without it nothing damped what the open boundary radiates — the 2020 run
-            # carried velocities of 0.4 m/s std and 2 m/s peak on the boundary row against
-            # 0.13 and 0.43 in the interior, and grid-scale salinity roughness 70x the interior
-            # value, which accumulated for 50 days in the near-boundary bottom cells and then
-            # ran away. Viscous rather than a tracer relaxation band, so it cannot fight the
-            # open boundary's own nudging towards the same data.
-            #
-            # 30 m² s⁻¹ is set by explicit-diffusion stability, not by taste: Δt ≤ Δx²/4ν is
-            # 310 s on this 193 m cell, comfortably clear of `max_time_step` below. Raising it
-            # much past 50 would cap the time step instead of the CFL doing it.
-            closure            = BoundarySponge(
-                # `minimum_tke` is not a safety net on this grid — it *is* the vertical
-                # closure over most of the column. CATKE takes `w★ = sqrt(max(minimum_tke, e))`,
-                # and measured on the 2020 run at day 20.5 the prognostic `e` sits below this
-                # floor in 85 % of wet cells: 89 % below 6 m, 95-100 % below 9 m. So κ there is
-                # the documented background κ = Cʰⁱᶜ·e_min/N = 0.098·e_min/N with
-                # ν = 0.242·e_min/N, which the domain-median κᵤ/κᶜ of 2.38 against
-                # Cʰⁱᵤ/Cʰⁱᶜ = 2.47 confirms.
-                #
-                # 7e-6 is ROMS' `GLS_KMIN` default (7.6e-6), and it does *not* carry over
-                # unchanged: ROMS floors its length scale too (`GLS_PMIN`) where CATKE's is
-                # diagnostic and unfloored, so the same TKE floor buys a much larger κ. It is
-                # kept because it lands in the right place for *this* fjord, not because it came
-                # from ROMS. Median κᶜ at 94-118 m is 8-9e-5 m² s⁻¹ against basin-mean values
-                # measured here by density budget — 1.0-1.8e-4 in Bunnefjorden, 4.9-7.6e-4 in
-                # Vestfjorden, 2.5e-3 just inside the Drøbak sill (Gade 1970; Staalstrøm et al.
-                # 2012, Ocean Sci. 8, 525) — so the basin water is at the low end already and
-                # lowering the floor would slow the deep-water renewal this domain is judged on.
-                # The fjord relation is κ ∝ N^-1.5 (Stigebrandt & Aure 1989) where the floor
-                # gives κ ∝ N^-1, so one number cannot fit both the pycnocline and the basin;
-                # the basin is the one to fit.
-                #
-                # `Cᵇ` stays at Oceananigans' 0.28 rather than NumericalEarth's regional 0.01
-                # (`default_ocean_closure`), deliberately: it scales the near-bottom mixing
-                # length, and Stigebrandt attributed the high basin-mean diffusivity here to
-                # exactly that boundary mixing.
-                base = (
-                    CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6),
-                    # 2e4 m⁴ s⁻¹, down from 1e5. Biharmonic damping of the 2Δx mode goes as
-                    # ν₄·16/Δx⁴, an e-folding of 14.5 min at 1e5 on this 193 m cell — the commit
-                    # that raised it from 15 aimed at "~1.7 hours" and was out by 7x. 2e4 gives
-                    # the 72 min it meant, keeps the scale selectivity that leaves an 8 km
-                    # baroclinic eddy alone (56 h at 8Δx), and is still ~1300x what it replaced.
-                    # For scale, Norkyst-800 — the ROMS system feeding this run — applies no
-                    # explicit interior viscosity at all and a 10 m² s⁻¹ harmonic tracer
-                    # diffusivity, where κ = 2e3 here is 0.2 m² s⁻¹ at 2Δx.
-                    #
-                    # It also matters for a stability limit nothing else watches: the explicit
-                    # biharmonic needs Δt ≤ Δx⁴/32ν₄, which is 434 s at 1e5 and 2170 s here, and
-                    # `AdaptiveTimeStep` measures only the advective CFL
-                    # (`cell_advection_timescale_coupled_model`).
-                    HorizontalScalarBiharmonicDiffusivity(FT; ν = 2e4, κ = 2e3),
-                ),
-                width_cells = 16,
-                viscosity   = 30.0,
-                diffusivity = 15.0,
-            ),
-            # One scheme for every tracer, not a NamedTuple naming T and S. Oceananigans gives
-            # any tracer a NamedTuple omits the `Centered()` default, and CATKE contributes an
-            # `e` the setup never names — so `e` was being advected by an unbounded centered
-            # scheme, which makes the vertical diffusivity noisy exactly where the bottom cells
-            # were failing. A scalar covers whatever the closure adds, now and later.
-            tracer_advection   = WENO(FT),
-            momentum_advection = WENOVectorInvariant(FT),
-            tracers            = (:T, :S),
-            coriolis           = HydrostaticSphericalCoriolis(FT),
-            sea_ice            = FreezingLimitedOceanTemperature(FT),
-            biogeochemistry    = nothing,
-            # Overloads free_surface(config, grid) — its own hook, called from inside
-            # coupled_simulation once the grid exists.
-            free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),
-            # Anything else the four constructors coupled_simulation calls accept, one slot
-            # each: :ocean_model, :ocean_simulation, :coupled_model, :coupled_simulation.
-            # Nothing extra here, but stated rather than defaulted like every other field.
-            extra_kwargs       = (;),
-        ),
-        # MergedBoundaryConditions overloads field_boundary_conditions; each piece inside it
-        # overloads boundary_condition_sides. Air-sea fluxes and quadratic bottom drag are
-        # separate pieces, so either can be swapped alone, plus the genuinely open southern
-        # edge — which edge, and whose exterior state, come from `boundary_config` above.
-        # Dropping it would close the domain; argument order is merge precedence.
-        #
-        # The two timescales are Marchesiello et al. (2001): nudge hard towards the data on
-        # inflow, let radiation do the work on outflow.
-        boundary_conditions = MergedBoundaryConditions(
-            AirSeaFluxes(),
-            QuadraticBottomDrag(coefficient = 0.003),
-            OpenLateralBoundaryFromData(
-                # 3 hours, not the 1 day this was. At the time steps this run actually takes
-                # (~10 s), a one-day timescale relaxes by 1.2e-4 per step against an advective
-                # rate into the boundary cell of ~2.5e-3 s⁻¹ — 200x weaker, which is why the
-                # nudging never caught the drift it was there to catch. Both numbers are
-                # tuning knobs: too strong an inflow nudge over-constrains an open boundary
-                # and reflects.
-                inflow_timescale  = 3hours,
-                outflow_timescale = 360days,
-            ),
-        ),
         # Both overload attach_writer! — what the run writes. `variables` may name anything
         # `Oceananigans.fields` exposes on the ocean model — add `:w`, `:η` or a
         # biogeochemical tracer by naming it here. Dropping the `CheckpointWriter` turns

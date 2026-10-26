@@ -18,8 +18,8 @@
 #   julia --project -m FjordSim download_initial_state --config examples/drammensfjorden.jl
 #   julia --project -m FjordSim prepare_initial_state  --config examples/drammensfjorden.jl
 #   julia --project -m FjordSim add_rivers             --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim download_boundaries    --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim prepare_boundaries     --config examples/drammensfjorden.jl
+#   julia --project -m FjordSim download_boundary_data --config examples/drammensfjorden.jl
+#   julia --project -m FjordSim prepare_boundary_data  --config examples/drammensfjorden.jl
 #   julia --project -m FjordSim download_atmosphere    --config examples/drammensfjorden.jl
 #   julia --project -m FjordSim prepare_atmosphere     --config examples/drammensfjorden.jl
 #   julia --project -m FjordSim run_simulation         --config examples/drammensfjorden.jl   # needs a GPU
@@ -144,7 +144,7 @@ FjordConfig(
     # The hourly exterior state along the open southern edge, and the one place that edge is
     # stated. Its own download directory: the band is a thin strip along *this* grid's southern
     # edge, 60 km north of Oslofjord's, so it is different data rather than a subset.
-    boundary_config = NorKystBoundariesConfig(
+    boundary_data_config = NorKystBoundaryDataConfig(
         data_root        = data_root,
         output_directory = "norkyst_hourly",
         output_file      = "boundaries.nc",
@@ -170,68 +170,67 @@ FjordConfig(
         padding          = 0.1,
         years            = [2020],
     ),
-    # SimulationConfig itself has no hooks — everything below dispatches through one of its
-    # four nested configs instead.
+    # Overloads coupled_model and model_tracers.
+    model_config = CoupledHydrostaticModel(
+        buoyancy           = SeawaterBuoyancy(FT, equation_of_state = TEOS10EquationOfState(FT)),
+        # A `BoundarySponge` for the same reason `oslofjorden.jl` has one: nothing else damps
+        # what the open boundary radiates. 13 m² s⁻¹ rather than Oslofjord's 30, because
+        # explicit `Δt ≤ Δx²/4ν` is 82 s at 30 on a 99 m cell — below `max_time_step`, so
+        # the sponge and not the CFL would silently set the time step. At 13 it is 189 s.
+        # `width_cells` stays 16: what the sponge damps is grid-scale noise, so its width
+        # is a count of wavelengths rather than a distance.
+        closure            = BoundarySponge(
+            base = (
+                # CATKE takes `w★ = sqrt(max(minimum_tke, e))`, so this floor, not the
+                # prognostic TKE, sets κ = 0.098·e_min/N over most of the column. See
+                # `oslofjorden.jl` for the measurements behind the value.
+                CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6),
+                # A biharmonic coefficient is only meaningful against Δx⁴, and this grid's
+                # 99 m cell is a factor 14 smaller in Δx⁴ than Oslofjord's 193 m one. 1e3
+                # damps the 2Δx mode with a 101 min e-folding (`Δx⁴/16ν₄`) against
+                # Oslofjord's 72 min at 2e4, and leaves a 3026 s explicit-stability limit
+                # `Δt ≤ Δx⁴/32ν₄` that `AdaptiveTimeStep` never measures. The 1e5 this file
+                # once copied put that limit at 24 s, below the steps the run takes.
+                HorizontalScalarBiharmonicDiffusivity(FT; ν = 1e3, κ = 1e2),
+            ),
+            width_cells = 16,
+            viscosity   = 13.0,
+            diffusivity = 6.5,
+        ),
+        # One scheme for every tracer: Oceananigans gives any tracer a NamedTuple omits the
+        # `Centered()` default, and CATKE contributes an `e` this setup never names, so
+        # `(T = WENO(), S = WENO())` left the TKE on an unbounded centered scheme.
+        tracer_advection   = WENO(FT),
+        momentum_advection = WENOVectorInvariant(FT),
+        tracers            = (:T, :S),
+        coriolis           = HydrostaticSphericalCoriolis(FT),
+        sea_ice            = FreezingLimitedOceanTemperature(FT),
+        # Overloads free_surface(config, grid), called from inside coupled_model once the
+        # grid exists.
+        free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),
+        # Anything else the three constructors coupled_model calls accept, one slot each:
+        # :ocean_model, :ocean_simulation, :coupled_model.
+        extra_kwargs       = (;),
+    ),
+    # Each piece overloads boundary_condition_sides, so any one can be swapped alone; the
+    # model config merges them. Dropping the last would close the domain; tuple order is merge
+    # precedence. The two timescales are
+    # Marchesiello et al. (2001), and 3 hours rather than a day because at the ~10 s steps
+    # these runs take a one-day timescale is ~200x weaker than advection into the boundary
+    # cell.
+    boundary_condition_configs = (
+        AirSeaFluxes(),
+        QuadraticBottomDrag(coefficient = 0.003),
+        OpenLateralBoundaryFromData(
+            inflow_timescale  = 3hours,
+            outflow_timescale = 360days,
+        ),
+    ),
+    # How the model is run. Writers, callbacks and time stepping each dispatch on their own
+    # supertype; build_simulation and run_simulation dispatch on this config's type.
     simulation_config = SimulationConfig(
         results_root       = fjord_results_root("drammensfjorden"),
         architecture       = :auto,
-        # Overloads coupled_simulation and model_tracers.
-        model              = CoupledHydrostaticSimulation(
-            buoyancy           = SeawaterBuoyancy(FT, equation_of_state = TEOS10EquationOfState(FT)),
-            # A `BoundarySponge` for the same reason `oslofjorden.jl` has one: nothing else damps
-            # what the open boundary radiates. 13 m² s⁻¹ rather than Oslofjord's 30, because
-            # explicit `Δt ≤ Δx²/4ν` is 82 s at 30 on a 99 m cell — below `max_time_step`, so
-            # the sponge and not the CFL would silently set the time step. At 13 it is 189 s.
-            # `width_cells` stays 16: what the sponge damps is grid-scale noise, so its width
-            # is a count of wavelengths rather than a distance.
-            closure            = BoundarySponge(
-                base = (
-                    # CATKE takes `w★ = sqrt(max(minimum_tke, e))`, so this floor, not the
-                    # prognostic TKE, sets κ = 0.098·e_min/N over most of the column. See
-                    # `oslofjorden.jl` for the measurements behind the value.
-                    CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6),
-                    # A biharmonic coefficient is only meaningful against Δx⁴, and this grid's
-                    # 99 m cell is a factor 14 smaller in Δx⁴ than Oslofjord's 193 m one. 1e3
-                    # damps the 2Δx mode with a 101 min e-folding (`Δx⁴/16ν₄`) against
-                    # Oslofjord's 72 min at 2e4, and leaves a 3026 s explicit-stability limit
-                    # `Δt ≤ Δx⁴/32ν₄` that `AdaptiveTimeStep` never measures. The 1e5 this file
-                    # once copied put that limit at 24 s, below the steps the run takes.
-                    HorizontalScalarBiharmonicDiffusivity(FT; ν = 1e3, κ = 1e2),
-                ),
-                width_cells = 16,
-                viscosity   = 13.0,
-                diffusivity = 6.5,
-            ),
-            # One scheme for every tracer: Oceananigans gives any tracer a NamedTuple omits the
-            # `Centered()` default, and CATKE contributes an `e` this setup never names, so
-            # `(T = WENO(), S = WENO())` left the TKE on an unbounded centered scheme.
-            tracer_advection   = WENO(FT),
-            momentum_advection = WENOVectorInvariant(FT),
-            tracers            = (:T, :S),
-            coriolis           = HydrostaticSphericalCoriolis(FT),
-            sea_ice            = FreezingLimitedOceanTemperature(FT),
-            biogeochemistry    = nothing,
-            # Overloads free_surface(config, grid), called from inside coupled_simulation once
-            # the grid exists.
-            free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),
-            # Anything else the four constructors coupled_simulation calls accept, one slot
-            # each: :ocean_model, :ocean_simulation, :coupled_model, :coupled_simulation.
-            extra_kwargs       = (;),
-        ),
-        # MergedBoundaryConditions overloads field_boundary_conditions; each piece inside it
-        # overloads boundary_condition_sides, so any one can be swapped alone. Dropping the last
-        # would close the domain; argument order is merge precedence. The two timescales are
-        # Marchesiello et al. (2001), and 3 hours rather than a day because at the ~10 s steps
-        # these runs take a one-day timescale is ~200x weaker than advection into the boundary
-        # cell.
-        boundary_conditions = MergedBoundaryConditions(
-            AirSeaFluxes(),
-            QuadraticBottomDrag(coefficient = 0.003),
-            OpenLateralBoundaryFromData(
-                inflow_timescale  = 3hours,
-                outflow_timescale = 360days,
-            ),
-        ),
         # Both overload attach_writer!. `variables` may name anything `Oceananigans.fields`
         # exposes on the ocean model; dropping the `CheckpointWriter` turns checkpointing off.
         writers = (

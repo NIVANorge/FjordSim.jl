@@ -2,22 +2,23 @@ module CLI
 
 export fjord_config
 
-using ..Configs: AbstractSimulationConfig, FjordConfig
+using ..Configs: AbstractSimulationConfig, AbstractFjordConfig, simulation_config
 using ..Bathymetry: prepare_bathymetry
 using ..Atmospheres: prepare_atmosphere, download_atmosphere
 using ..Forcing: prepare_forcing, download_forcing
 using ..InitialState: download_initial_state, prepare_initial_state
 using ..Rivers: add_rivers
-using ..BoundaryData: download_boundaries, prepare_boundaries
+using ..BoundaryData: download_boundary_data, prepare_boundary_data
 using ..Simulations: run_simulation, run_tag
 using ..Validation: validate_simulation
 
 """
     fjord_config(path)
 
-Load a config file and return the `FjordConfig` it evaluates to: a Julia script whose last
-expression is a `FjordConfig`, such as `examples/oslofjorden.jl`. A setup is never part of the
-package, so this is how every one of them is read, by `--config` and from the REPL alike.
+Load a config file and return the `AbstractFjordConfig` it evaluates to: a Julia script whose last
+expression is a `FjordConfig`, or another subtype, such as `examples/oslofjorden.jl`. A setup is
+never part of the package, so this is how every one of them is read, by `--config` and from the REPL
+alike.
 
 Evaluated in `Main` rather than in this module: the file's own `using FjordSim` and any helper
 bindings belong in the caller's namespace, and a bare `include` here would resolve `path`
@@ -30,9 +31,9 @@ function fjord_config(path)
     isfile(filepath) || throw(ArgumentError("Config file $filepath does not exist"))
 
     config = Base.include(Main, filepath)
-    config isa FjordConfig || throw(
+    config isa AbstractFjordConfig || throw(
         ArgumentError(
-            "$filepath evaluated to a $(typeof(config)), not a FjordConfig. " *
+            "$filepath evaluated to a $(typeof(config)), not an AbstractFjordConfig. " *
             "A config file's last expression must be the FjordConfig it describes.",
         ),
     )
@@ -41,8 +42,9 @@ function fjord_config(path)
 end
 
 """
-Every subcommand, named exactly like the function it calls, so `-m FjordSim prepare_forcing` and
-`prepare_forcing(config)` in the REPL are the same thing spelled the same way.
+The built-in pipeline steps, named exactly like the function each calls, so
+`-m FjordSim prepare_forcing` and `prepare_forcing(config)` in the REPL are the same thing spelled
+the same way.
 
 Ordered by the sequence a setup is prepared and run in, which is the order `USAGE` lists them in.
 """
@@ -53,8 +55,8 @@ const SUBCOMMANDS = [
     "download_initial_state" => download_initial_state,
     "prepare_initial_state" => prepare_initial_state,
     "add_rivers" => add_rivers,
-    "download_boundaries" => download_boundaries,
-    "prepare_boundaries" => prepare_boundaries,
+    "download_boundary_data" => download_boundary_data,
+    "prepare_boundary_data" => prepare_boundary_data,
     "download_atmosphere" => download_atmosphere,
     "prepare_atmosphere" => prepare_atmosphere,
     "run_simulation" => run_simulation,
@@ -62,24 +64,33 @@ const SUBCOMMANDS = [
 ]
 
 """
-    subcommand_names()
+    pipeline_steps(config)
+
+The steps the command line offers for `config`, as `name => function` pairs in run order. Every
+built-in setup type offers `SUBCOMMANDS`; a setup type carrying an input of a new kind overloads
+this to append the steps that prepare it.
+"""
+pipeline_steps(config::AbstractFjordConfig) = SUBCOMMANDS
+
+"""
+    subcommand_names(steps = SUBCOMMANDS)
 
 The subcommand names, in pipeline order.
 """
-subcommand_names() = [name for (name, _) in SUBCOMMANDS]
+subcommand_names(steps = SUBCOMMANDS) = [name for (name, _) in steps]
 
 """
-    subcommand_driver(name)
+    subcommand_driver(name, steps = SUBCOMMANDS)
 
 The driver function `name` runs, or an error listing the known subcommands.
 """
-function subcommand_driver(name)
-    index = findfirst(pair -> pair.first == name, SUBCOMMANDS)
+function subcommand_driver(name, steps = SUBCOMMANDS)
+    index = findfirst(pair -> pair.first == name, steps)
     isnothing(index) && throw(
-        ArgumentError("Unknown subcommand \"$name\". Available: $(join(subcommand_names(), ", "))."),
+        ArgumentError("Unknown subcommand \"$name\". Available: $(join(subcommand_names(steps), ", "))."),
     )
 
-    return SUBCOMMANDS[index].second
+    return steps[index].second
 end
 
 const USAGE = """
@@ -106,12 +117,13 @@ Subcommands, in the order a setup is prepared and run:
                         the surface columns it enters through, on a daily axis over the run window.
                         Needs prepare_bathymetry, not prepare_forcing; re-run it when start_date or
                         stop_time change. A setup with no rivers does nothing.
-  download_boundaries   Download and subset hourly source data along the open lateral boundary. A
+  download_boundary_data
+                        Download and subset hourly source data along the open lateral boundary. A
                         thin band rather than the whole domain, since the exterior state an open
                         boundary needs has to resolve the tide and daily means do not. A setup
-                        naming no boundary config does nothing.
-  prepare_boundaries    Regrid the download onto the open edge of the simulation grid. Needs
-                        prepare_bathymetry and download_boundaries.
+                        naming no boundary data config does nothing.
+  prepare_boundary_data Regrid the download onto the open edge of the simulation grid. Needs
+                        prepare_bathymetry and download_boundary_data.
   download_atmosphere   Download and subset the atmosphere dataset. By far the slowest step: NORA3
                         is served one file per forecast lead hour, so a year is close to 10000
                         OPeNDAP reads. A month already downloaded is skipped, so an interrupted run
@@ -123,7 +135,7 @@ Subcommands, in the order a setup is prepared and run:
                         setup's results directory. Needs every step above that the setup
                         configures: prepare_bathymetry, prepare_forcing if it names forcing,
                         prepare_initial_state if it starts FromInitialState,
-                        add_rivers if it names rivers, prepare_boundaries if it names
+                        add_rivers if it names rivers, prepare_boundary_data if it names
                         open-boundary data, and prepare_atmosphere if it names an atmosphere.
                         Only prepare_bathymetry is required. Where it runs
                         is the simulation config's `architecture` field. A setup with no
@@ -374,17 +386,20 @@ function main(args)
         return 0
     end
 
+    # The config is loaded first because it decides which steps exist. `invokelatest` because a
+    # config file may have defined its own `pipeline_steps` method, newer than this running `main`.
     driver, config = try
-        subcommand_driver(arguments.subcommand), fjord_config(arguments.config)
+        config = fjord_config(arguments.config)
+        subcommand_driver(arguments.subcommand, Base.invokelatest(pipeline_steps, config)), config
     catch exception
         exception isa ArgumentError || rethrow()
         println(stderr, "fjordsim: ", exception.msg)
         return 2
     end
 
-    simulation_config = config.simulation_config
-    if driver === run_simulation && !isnothing(simulation_config)
-        log_file = log_path(simulation_config)
+    simulation = Base.invokelatest(simulation_config, config)
+    if driver === run_simulation && !isnothing(simulation)
+        log_file = log_path(simulation)
         @info "Logging to $(abspath(log_file))"
 
         return tee_output(log_file) do

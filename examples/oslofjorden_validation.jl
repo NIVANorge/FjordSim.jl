@@ -16,8 +16,8 @@
 #
 #   julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden_validation.jl
 #   julia --project -m FjordSim add_rivers          --config examples/oslofjorden_validation.jl
-#   julia --project -m FjordSim download_boundaries --config examples/oslofjorden_validation.jl
-#   julia --project -m FjordSim prepare_boundaries  --config examples/oslofjorden_validation.jl
+#   julia --project -m FjordSim download_boundary_data --config examples/oslofjorden_validation.jl
+#   julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden_validation.jl
 #   julia --project -m FjordSim download_atmosphere --config examples/oslofjorden_validation.jl
 #   julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden_validation.jl
 #   julia --project -m FjordSim run_simulation      --config examples/oslofjorden_validation.jl
@@ -33,17 +33,17 @@
 # configuration are taken from the config `oslofjorden.jl` returns, not restated. A validation of a model that has drifted from
 # the model being validated is worth nothing, and a copy is exactly what drifts. So a change to any of
 # them is made in `oslofjorden.jl` and arrives here by itself — but a bathymetry knob is a *data*
-# change, and needs this file's `prepare_bathymetry`, `add_rivers` and `prepare_boundaries`
+# change, and needs this file's `prepare_bathymetry`, `add_rivers` and `prepare_boundary_data`
 # re-run as much as `oslofjorden.jl`'s.
 #
 # # What is different, and why
 #
 # **The dataset.** `oslofjorden.jl` reads the operational NorKyst-800m archive at
 # `fou-hi/norkyst800m`, which begins 2017-02-20 and so cannot reach this window at all. This reads the
-# Norkyst-v3 hindcast at `romshindcast/norkyst_v3` (`NorKystHindcastBoundariesConfig`), MET's
+# Norkyst-v3 hindcast at `romshindcast/norkyst_v3` (`NorKystHindcastBoundaryDataConfig`), MET's
 # continuous free run from 2012, which carries the same variables on the same grid. It also gains
 # from the change: the hindcast publishes `ubar_eastward`/`vbar_northward` already rotated to geographic axes, where the operational
-# collection publishes ROMS' grid-relative pair and `NorKystBoundariesConfig` has to derotate it.
+# collection publishes ROMS' grid-relative pair and `NorKystBoundaryDataConfig` has to derotate it.
 #
 # **The domain.** 10.00-11.20°E by 58.95-59.93°N against `oslofjorden.jl`'s 10.2-11.02 by 59.0-59.93 —
 # the box FjordOs CL covers, at the same cell size. The three extensions each buy something the
@@ -78,7 +78,7 @@
 #
 # **The boundary tide.** Norkyst-v3's tide is corrected to Viker, constituent by constituent, because
 # its M2 is 40 % too large and its S2 half the observed. The measurement is under "The boundary
-# tide" below. It is applied to the prepared file, so it takes effect only once `prepare_boundaries`
+# tide" below. It is applied to the prepared file, so it takes effect only once `prepare_boundary_data`
 # is re-run.
 #
 # **The initial state.** The previous full run's state of 1 April 2015 rather than Norkyst-v3's of
@@ -340,7 +340,7 @@ const OSLOFJORD_TEMPERATURE_STATIONS = [
 # correction per constituent, applied along the whole edge, fixes the input. FjordOs did the same:
 # METreport 4/2016 §4.3 forced its boundary with a tide corrected to Viker.
 #
-# `TideCorrectedBoundaries` does it after the regrid, inside `prepare_boundaries`. It holds the
+# `TideCorrectedBoundaries` does it after the regrid, inside `prepare_boundary_data`. It holds the
 # Norkyst-v3 boundary config and forwards everything else to it. Specific to this dataset and this
 # box, which is why it lives here and not in `src/`. The gains are measured for the hindcast's
 # 2014-15 tide only. `oslofjorden.jl`'s operational archive would need its own.
@@ -378,7 +378,7 @@ const VIKER_TIDE_GAINS = [
 
 `source`'s open-boundary data with its tide corrected per constituent by `gains`.
 
-`prepare_boundaries` writes the file exactly as `source` would, then corrects it in place
+`prepare_boundary_data` writes the file exactly as `source` would, then corrects it in place
 (`correct_boundary_tide!`). Every other hook is `source`'s: where the file is, which edges are open,
 the download, and how the run reads the file.
 """
@@ -395,15 +395,15 @@ Plotting.plot_path(config::TideCorrectedBoundaries) = Plotting.plot_path(config.
 Grids.open_edges(config::TideCorrectedBoundaries) = Grids.open_edges(config.source)
 BoundaryData.boundary_variable_names(config::TideCorrectedBoundaries) =
     BoundaryData.boundary_variable_names(config.source)
-BoundaryData.download_boundaries(target_grid, config::TideCorrectedBoundaries) =
-    BoundaryData.download_boundaries(target_grid, config.source)
+BoundaryData.download_boundary_data(target_grid, config::TideCorrectedBoundaries) =
+    BoundaryData.download_boundary_data(target_grid, config.source)
 
-function BoundaryData.prepare_boundaries(
+function BoundaryData.prepare_boundary_data(
     target_grid,
     config::TideCorrectedBoundaries;
     coverage = nothing,
 )
-    result = BoundaryData.prepare_boundaries(target_grid, config.source; coverage)
+    result = BoundaryData.prepare_boundary_data(target_grid, config.source; coverage)
     correct_boundary_tide!(result.output_file, Grids.open_edges(config), config.gains)
     return result
 end
@@ -469,7 +469,7 @@ function correct_boundary_tide!(path, edges, gains)
     NCDataset(path, "a") do ds
         haskey(ds.attrib, "tide_correction") && error(
             "$path already has its boundary tide corrected ($(ds.attrib["tide_correction"])). " *
-            "Re-run `prepare_boundaries` to start from the uncorrected data.",
+            "Re-run `prepare_boundary_data` to start from the uncorrected data.",
         )
         times = ds["time"][:]
         design = tidal_design([Dates.value(t - first(times)) / 3_600_000 for t in times])
@@ -575,6 +575,7 @@ atmosphere.data_root = data_root
 atmosphere.years = years
 
 simulation = base.simulation_config
+base_model = base.model_config
 
 # The first physics departure from `oslofjorden.jl`: salinity is advected by bounds-preserving WENO.
 # Plain WENO is not bounded, and this domain adds Numedalslågen at Larvik, a large river entering
@@ -589,7 +590,7 @@ simulation = base.simulation_config
 #
 # Not changed in `oslofjorden.jl` itself, because a NamedTuple there would leave the NPZD example's
 # tracers on `Centered()`.
-scheme = simulation.model.tracer_advection
+scheme = base_model.tracer_advection
 
 # The other departure: CATKE's `minimum_tke` at 7e-7, a tenfold cut in the background diffusivity
 # that sets κ below about 6 m (see `oslofjorden.jl`), with the rest of the closure as it is there.
@@ -607,7 +608,7 @@ scheme = simulation.model.tracer_advection
 # and the stations within 0.05 g/kg; what κ did do is overshoot at fronts, leaving 169 wet cells
 # below 0 g/kg (minimum -0.43) at day 60, against none at κ = 0. The one systematic difference left
 # is 0.04-0.10 °C colder bottom water at D-2, Ep1 and Dk1 at κ = 0, not yet explained.
-sponge = simulation.model.closure
+sponge = base_model.closure
 closure = BoundarySponge(
     base        = (
         CATKEVerticalDiffusivity(base.grid_config.float_type; minimum_tke = 7e-7),
@@ -618,17 +619,16 @@ closure = BoundarySponge(
     diffusivity = sponge.diffusivity,
 )
 
-model = CoupledHydrostaticSimulation(
-    buoyancy           = simulation.model.buoyancy,
+model = CoupledHydrostaticModel(
+    buoyancy           = base_model.buoyancy,
     closure            = closure,
     tracer_advection   = (T = scheme, S = WENO(base.grid_config.float_type; bounds = (0, 40)), e = scheme),
-    momentum_advection = simulation.model.momentum_advection,
-    tracers            = simulation.model.tracers,
-    coriolis           = simulation.model.coriolis,
-    sea_ice            = simulation.model.sea_ice,
-    biogeochemistry    = simulation.model.biogeochemistry,
-    free_surface       = simulation.model.free_surface,
-    extra_kwargs       = simulation.model.extra_kwargs,
+    momentum_advection = base_model.momentum_advection,
+    tracers            = base_model.tracers,
+    coriolis           = base_model.coriolis,
+    sea_ice            = base_model.sea_ice,
+    free_surface       = base_model.free_surface,
+    extra_kwargs       = base_model.extra_kwargs,
 )
 
 FjordConfig(
@@ -678,12 +678,12 @@ FjordConfig(
     bathymetry_config = bathymetry,
     river_config = rivers,
     # The tide in it corrected to Viker; see "The boundary tide" above.
-    boundary_config = TideCorrectedBoundaries(
-        NorKystHindcastBoundariesConfig(
+    boundary_data_config = TideCorrectedBoundaries(
+        NorKystHindcastBoundaryDataConfig(
             data_root        = data_root,
             output_directory = "norkyst_v3_hourly",
-            output_file      = base.boundary_config.output_file,
-            plot_file        = base.boundary_config.plot_file,
+            output_file      = base.boundary_data_config.output_file,
+            plot_file        = base.boundary_data_config.plot_file,
             # Measured from the land mask. The southern wall is 311 wet cells of 351, to 317 m; the
             # northern one is dry. The western one is wet for 14 cells, 2.8 km at 58.95-58.97°N off
             # Nevlunghavn, to 41 m — all of it inside the sixteen-cell `BoundarySponge` of the
@@ -699,8 +699,8 @@ FjordConfig(
             # western or eastern one spans the whole domain — about 110 GB of hourly download over
             # two years against roughly 5 GB for the southern edge alone.
             open_edges       = :south,
-            margin           = base.boundary_config.margin,
-            architecture     = base.boundary_config.architecture,
+            margin           = base.boundary_data_config.margin,
+            architecture     = base.boundary_data_config.architecture,
             # `ubar_eastward`/`vbar_northward`, not the operational collection's `ubar`/`vbar`:
             # these come from the `sdepth` files and are already rotated to geographic axes.
             # `boundary_variable_names` maps them onto the `ubar`/`vbar` the read side expects.
@@ -713,11 +713,11 @@ FjordConfig(
         VIKER_TIDE_GAINS,
     ),
     atmosphere_config = atmosphere,
+    model_config = model,
+    boundary_condition_configs = base.boundary_condition_configs,
     simulation_config = SimulationConfig(
         results_root        = fjord_results_root("oslofjorden_validation"),
         architecture        = simulation.architecture,
-        model               = model,
-        boundary_conditions = simulation.boundary_conditions,
         writers = (
             # Daily, not `oslofjorden.jl`'s three-hourly. One record of five fields on this grid is
             # 155 MB, so three-hourly over 640 days is about 790 GB against 99 GB daily. The full

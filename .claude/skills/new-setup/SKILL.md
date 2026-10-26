@@ -1,6 +1,6 @@
 ---
 name: new-setup
-description: Checklist for writing a new FjordSim simulation setup (a new fjord, domain or experiment config file) or a variant of an existing one — choosing the domain, grid and z_faces, data sources, data roots, and the SimulationConfig coefficients that depend on the grid. Use when asked to set up, create or configure a new fjord simulation, a new domain, or a new experiment based on an existing setup.
+description: Checklist for writing a new FjordSim simulation setup (a new fjord, domain or experiment config file) or a variant of an existing one — choosing the domain, grid and z_faces, data sources, data roots, and the model coefficients that depend on the grid. Use when asked to set up, create or configure a new fjord simulation, a new domain, or a new experiment based on an existing setup.
 ---
 
 # Writing a new FjordSim setup
@@ -16,7 +16,8 @@ This is the order to work through.
    archive starts 2017-02-20; earlier needs the hindcast configs), and the box against Geonorge's
    coverage. A shared download only from a domain that contains the new one.
 3. **Write the file** from the closest example: `fjord_data_root`/`fjord_results_root` with the
-   file's own basename, one `FT` passed everywhere, every `SimulationConfig` field stated. Scale every
+   file's own basename, one `FT` passed everywhere, every `CoupledHydrostaticModel` and
+   `SimulationConfig` field stated, and the `boundary_condition_configs` tuple. Scale every
    grid-spacing-dependent coefficient to the new Δx with the formulas in `docs/setups.md` rather than
    copying it, and state in a comment the number that justifies each value.
 4. **Load it**: `julia --project -e 'using FjordSim; fjord_config("<file>.jl")'` must return a

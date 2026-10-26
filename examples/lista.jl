@@ -9,8 +9,8 @@
 #   julia --project -m FjordSim download_initial_state --config examples/lista.jl
 #   julia --project -m FjordSim prepare_initial_state  --config examples/lista.jl
 #   julia --project -m FjordSim add_rivers             --config examples/lista.jl
-#   julia --project -m FjordSim download_boundaries    --config examples/lista.jl
-#   julia --project -m FjordSim prepare_boundaries     --config examples/lista.jl
+#   julia --project -m FjordSim download_boundary_data --config examples/lista.jl
+#   julia --project -m FjordSim prepare_boundary_data  --config examples/lista.jl
 #   julia --project -m FjordSim download_atmosphere    --config examples/lista.jl
 #   julia --project -m FjordSim prepare_atmosphere     --config examples/lista.jl
 #   julia --project -m FjordSim run_simulation         --config examples/lista.jl   # needs a GPU
@@ -178,7 +178,7 @@ FjordConfig(
             NVERiver(vassdragsnr = "026.4A0", name = "Sokno", temperature_station = "26.53.0"),
         ],
     ),
-    boundary_config = NorKystBoundariesConfig(
+    boundary_data_config = NorKystBoundaryDataConfig(
         data_root        = data_root,
         output_directory = "norkyst_hourly",
         output_file      = "boundaries.nc",
@@ -204,72 +204,71 @@ FjordConfig(
         padding          = 0.1,
         years            = years,
     ),
+    model_config = CoupledHydrostaticModel(
+        buoyancy           = SeawaterBuoyancy(FT, equation_of_state = TEOS10EquationOfState(FT)),
+        closure            = BoundarySponge(
+            base = (
+                # The floor sets a background κ = 0.098·e_min/N wherever CATKE's own `e` is
+                # weaker. On Oslofjord that was 85 % of wet cells. With N measured from NorKyst
+                # columns in the trench here (February and August 2024), 7e-7 gives 4e-6 m² s⁻¹
+                # in the summer pycnocline and 1-3e-5 below 100 m. Oceananigans' default of
+                # 1e-9 gives 1e-8, below molecular heat diffusion, so it means no background
+                # mixing at all.
+                # The open part of the box is flushed by the coastal current within days, so
+                # there the floor hardly matters. It matters in the sill basins of Fedafjorden
+                # and Rosfjorden.
+                #
+                # 7e-7 rather than `oslofjorden.jl`'s 7e-6, as in
+                # `examples/oslofjorden_validation.jl`. There 7e-6 mixed the water columns
+                # towards uniform and freshened the sill basins. Over 640 days at 7e-7 the
+                # salinity RMSE against 216 casts was 1.73 g/kg and the temperature RMSE
+                # 1.22 °C, and summer heat no longer reached too deep. The cost was overheating
+                # in 2-3 m deep cells, which this box has among the skerries at
+                # `minimum_depth = 2.0`.
+                # Unmeasured here: check `e` against the floor in the snapshots.
+                CATKEVerticalDiffusivity(FT; minimum_tke = 7e-7),
+                # Oslofjord's ν = 2e4 m⁴ s⁻¹ scaled by (490/193)⁴. That keeps the same damping
+                # times: about 74 min for the 2Δx mode and about 52 h for an 8Δx (4 km) eddy. The
+                # explicit limit Δt ≤ Δx⁴/32ν₄ is 2200 s.
+                #
+                # κ is 0, as in `examples/oslofjorden_validation.jl`. There κ = 2e3 left the
+                # deep-basin salt budgets and the stations unchanged over 60 days, but
+                # overshot at fronts and left 169 wet cells below 0 g/kg, against none at κ = 0.
+                HorizontalScalarBiharmonicDiffusivity(FT; ν = 8e5, κ = 0),
+            ),
+            # 8 cells, about 4 km, against Oslofjord's 16 cells (3.2 km). Sixteen would cover
+            # a quarter of the domain's width on each side wall.
+            width_cells = 8,
+            # Explicit-diffusion stability Δt ≤ Δx²/4ν is about 600 s at 100 m² s⁻¹ on this
+            # grid, comfortably above `max_time_step`.
+            viscosity   = 100.0,
+            diffusivity = 50.0,
+        ),
+        # Salinity bounded, as in `examples/oslofjorden_validation.jl`. Plain WENO drove
+        # salinity below TEOS10's -32 psu floor beside a large river entering shallow
+        # columns, and Kvina and Lygna enter at the heads of narrow fjords, Sira into a small bay. A
+        # NamedTuple has to name `e`, or CATKE's TKE falls back to `Centered()`.
+        tracer_advection   = (T = WENO(FT), S = WENO(FT; bounds = (0, 40)), e = WENO(FT)),
+        momentum_advection = WENOVectorInvariant(FT),
+        tracers            = (:T, :S),
+        coriolis           = HydrostaticSphericalCoriolis(FT),
+        sea_ice            = FreezingLimitedOceanTemperature(FT),
+        free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),
+        extra_kwargs       = (;),
+    ),
+    boundary_condition_configs = (
+        AirSeaFluxes(),
+        QuadraticBottomDrag(coefficient = 0.003),
+        # Marchesiello et al. (2001): nudge hard on inflow, radiate on outflow. Oslofjord's
+        # timescales, applied to every open edge.
+        OpenLateralBoundaryFromData(
+            inflow_timescale  = 3hours,
+            outflow_timescale = 360days,
+        ),
+    ),
     simulation_config = SimulationConfig(
         results_root       = fjord_results_root("lista"),
         architecture       = :auto,
-        model              = CoupledHydrostaticSimulation(
-            buoyancy           = SeawaterBuoyancy(FT, equation_of_state = TEOS10EquationOfState(FT)),
-            closure            = BoundarySponge(
-                base = (
-                    # The floor sets a background κ = 0.098·e_min/N wherever CATKE's own `e` is
-                    # weaker. On Oslofjord that was 85 % of wet cells. With N measured from NorKyst
-                    # columns in the trench here (February and August 2024), 7e-7 gives 4e-6 m² s⁻¹
-                    # in the summer pycnocline and 1-3e-5 below 100 m. Oceananigans' default of
-                    # 1e-9 gives 1e-8, below molecular heat diffusion, so it means no background
-                    # mixing at all.
-                    # The open part of the box is flushed by the coastal current within days, so
-                    # there the floor hardly matters. It matters in the sill basins of Fedafjorden
-                    # and Rosfjorden.
-                    #
-                    # 7e-7 rather than `oslofjorden.jl`'s 7e-6, as in
-                    # `examples/oslofjorden_validation.jl`. There 7e-6 mixed the water columns
-                    # towards uniform and freshened the sill basins. Over 640 days at 7e-7 the
-                    # salinity RMSE against 216 casts was 1.73 g/kg and the temperature RMSE
-                    # 1.22 °C, and summer heat no longer reached too deep. The cost was overheating
-                    # in 2-3 m deep cells, which this box has among the skerries at
-                    # `minimum_depth = 2.0`.
-                    # Unmeasured here: check `e` against the floor in the snapshots.
-                    CATKEVerticalDiffusivity(FT; minimum_tke = 7e-7),
-                    # Oslofjord's ν = 2e4 m⁴ s⁻¹ scaled by (490/193)⁴. That keeps the same damping
-                    # times: about 74 min for the 2Δx mode and about 52 h for an 8Δx (4 km) eddy. The
-                    # explicit limit Δt ≤ Δx⁴/32ν₄ is 2200 s.
-                    #
-                    # κ is 0, as in `examples/oslofjorden_validation.jl`. There κ = 2e3 left the
-                    # deep-basin salt budgets and the stations unchanged over 60 days, but
-                    # overshot at fronts and left 169 wet cells below 0 g/kg, against none at κ = 0.
-                    HorizontalScalarBiharmonicDiffusivity(FT; ν = 8e5, κ = 0),
-                ),
-                # 8 cells, about 4 km, against Oslofjord's 16 cells (3.2 km). Sixteen would cover
-                # a quarter of the domain's width on each side wall.
-                width_cells = 8,
-                # Explicit-diffusion stability Δt ≤ Δx²/4ν is about 600 s at 100 m² s⁻¹ on this
-                # grid, comfortably above `max_time_step`.
-                viscosity   = 100.0,
-                diffusivity = 50.0,
-            ),
-            # Salinity bounded, as in `examples/oslofjorden_validation.jl`. Plain WENO drove
-            # salinity below TEOS10's -32 psu floor beside a large river entering shallow
-            # columns, and Kvina and Lygna enter at the heads of narrow fjords, Sira into a small bay. A
-            # NamedTuple has to name `e`, or CATKE's TKE falls back to `Centered()`.
-            tracer_advection   = (T = WENO(FT), S = WENO(FT; bounds = (0, 40)), e = WENO(FT)),
-            momentum_advection = WENOVectorInvariant(FT),
-            tracers            = (:T, :S),
-            coriolis           = HydrostaticSphericalCoriolis(FT),
-            sea_ice            = FreezingLimitedOceanTemperature(FT),
-            biogeochemistry    = nothing,
-            free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),
-            extra_kwargs       = (;),
-        ),
-        boundary_conditions = MergedBoundaryConditions(
-            AirSeaFluxes(),
-            QuadraticBottomDrag(coefficient = 0.003),
-            # Marchesiello et al. (2001): nudge hard on inflow, radiate on outflow. Oslofjord's
-            # timescales, applied to every open edge.
-            OpenLateralBoundaryFromData(
-                inflow_timescale  = 3hours,
-                outflow_timescale = 360days,
-            ),
-        ),
         writers = (
             # Daily. One record of these five fields is 5.9 MB, so 639 days is 3.8 GB, against
             # 30 GB at three-hourly.

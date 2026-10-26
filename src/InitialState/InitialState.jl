@@ -14,9 +14,14 @@ using NCDatasets
 using ..Configs:
     AbstractInitialStateConfig,
     AbstractSimulationConfig,
-    FjordConfig
+    AbstractFjordConfig,
+    grid_config,
+    bathymetry_config,
+    initial_state_config,
+    boundary_data_config,
+    simulation_config
 using ..Grids: domain_grid, open_edges, simulation_grid
-using ..Bathymetry: bathymetry_path
+using ..Bathymetry: resolve_bathymetry_file
 using ..Regridding:
     FORCING_DEFLATE_LEVEL,
     SourceRecord,
@@ -86,15 +91,16 @@ A new initial-state dataset implements this on its `AbstractInitialStateConfig` 
 function initial_state_variable_names end
 
 """
-    initial_state_date(simulation_config)
+    initial_state_date(initial_state_config, simulation_config)
 
-The instant the initial state is for: the simulation config's `start_date`. A setup naming no
-simulation config has no such instant, which is an error rather than a no-op, since it does name an
-initial state.
+The instant the initial state is for: the simulation config's `start_date`. `nothing` for a
+`nothing` initial state, which needs no date. A setup naming an initial state but no simulation
+config has no such instant, which is an error rather than a no-op.
 """
-initial_state_date(config::AbstractSimulationConfig) = config.start_date
+initial_state_date(::Nothing, simulation_config) = nothing
+initial_state_date(::AbstractInitialStateConfig, config::AbstractSimulationConfig) = config.start_date
 
-initial_state_date(::Nothing) = error(
+initial_state_date(::AbstractInitialStateConfig, ::Nothing) = error(
     "The initial state is read at the simulation config's `start_date`, and this setup names no " *
     "`simulation_config`.",
 )
@@ -102,57 +108,66 @@ initial_state_date(::Nothing) = error(
 # --- Drivers ---
 
 """
-    download_initial_state(config::FjordConfig)
-    download_initial_state(target_grid, config::AbstractInitialStateConfig, date)
+    download_initial_state(config)
+    download_initial_state(target_grid, initial_state_config, date)
 
 Fetch the source record a later `prepare_initial_state` reads, into `initial_state_directory`.
-Returns `nothing` when the setup names no `initial_state_config`.
+Returns `nothing` for a `nothing` initial-state config.
 
-The `FjordConfig` form is the generic driver: it builds the bare domain grid on the CPU and takes
-`date` from the simulation config's `start_date`, so a new dataset only implements the second.
+The setup form builds the bare domain grid on the CPU and takes `date` from the simulation config's
+`start_date`, so a new dataset only implements the second.
 """
-function download_initial_state(config::FjordConfig)
-    isnothing(config.initial_state_config) && return nothing
+download_initial_state(config::AbstractFjordConfig) = download_initial_state(
+    domain_grid(grid_config(config), CPU()),
+    initial_state_config(config),
+    initial_state_date(initial_state_config(config), simulation_config(config)),
+)
 
-    return download_initial_state(
-        domain_grid(config.grid_config, CPU()),
-        config.initial_state_config,
-        initial_state_date(config.simulation_config),
-    )
-end
+download_initial_state(target_grid, ::Nothing, date) = nothing
 
 """
-    prepare_initial_state(config::FjordConfig)
-    prepare_initial_state(target_grid, config::AbstractInitialStateConfig, date; edges = nothing)
+    prepare_initial_state(config)
+    prepare_initial_state(grid_config, bathymetry_config, initial_state_config, boundary_data_config, simulation_config)
+    prepare_initial_state(target_grid, initial_state_config, date; edges = nothing)
 
 Regrid the downloaded record for `date` onto `target_grid` and write it, with `date` as its
-`$INITIAL_STATE_DATE_ATTRIBUTE` attribute, at `initial_state_path(config)`. Returns `nothing` when
-the setup names no `initial_state_config`.
+`$INITIAL_STATE_DATE_ATTRIBUTE` attribute, at `initial_state_path(config)`. Returns `nothing` for a
+`nothing` initial-state config.
 
 The file has the layout of the prepared forcing file with one record and no `_lambda` twins. As
 there, `target_grid` is the immersed grid the simulation runs on, cells the model treats as land are
 `NaN`, and `edges` are the open lateral boundaries whose velocity face rows are kept. The
-`FjordConfig` form reads the grid from the processed bathymetry, the date from the simulation config
-and the edges from the boundary config. Interpolation runs on the CPU: it is one record.
+component form reads the grid from the processed bathymetry, the date from the simulation config and
+the edges from the boundary data config; the setup form only picks those components out.
+Interpolation runs on the CPU: it is one record.
 
 # Returns
 A named tuple with `output_file`, `date` (the source record's own) and `variables`.
 """
-function prepare_initial_state(config::FjordConfig)
-    isnothing(config.initial_state_config) && return nothing
+prepare_initial_state(config::AbstractFjordConfig) = prepare_initial_state(
+    grid_config(config),
+    bathymetry_config(config),
+    initial_state_config(config),
+    boundary_data_config(config),
+    simulation_config(config),
+)
 
-    bathymetry_file = bathymetry_path(config.bathymetry_config)
-    isfile(bathymetry_file) || error(
-        "Processed bathymetry $bathymetry_file does not exist. " *
-        "Run `julia --project -m FjordSim prepare_bathymetry` for this setup first.",
-    )
+prepare_initial_state(grid_config, bathymetry_config, ::Nothing, boundary_data_config, simulation_config) =
+    nothing
 
-    grid = simulation_grid(config.grid_config, bathymetry_file, CPU())
+function prepare_initial_state(
+    grid_config,
+    bathymetry_config,
+    initial_state_config::AbstractInitialStateConfig,
+    boundary_data_config,
+    simulation_config,
+)
+    grid = simulation_grid(grid_config, resolve_bathymetry_file(bathymetry_config), CPU())
     result = prepare_initial_state(
         grid,
-        config.initial_state_config,
-        initial_state_date(config.simulation_config);
-        edges = open_edges(config.boundary_config),
+        initial_state_config,
+        initial_state_date(initial_state_config, simulation_config);
+        edges = open_edges(boundary_data_config),
     )
 
     @info "Prepared variables: $(join(result.variables, ", "))"

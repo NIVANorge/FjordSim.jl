@@ -14,7 +14,7 @@ using FjordSim.CLI: log_path, show_compact_error, tee_output
 length(ARGS) == 1 || error("usage: julia --project gcp/resume.jl <config.jl>")
 
 config = fjord_config(ARGS[1])
-simulation_config = config.simulation_config
+simulation_config = FjordSim.Configs.simulation_config(config)
 
 isnothing(simulation_config) && error(
     "$(ARGS[1]) names no simulation config, so there is no run to resume.",

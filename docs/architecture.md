@@ -7,7 +7,7 @@
 
 ## What a run is assembled from
 
-`build_simulation(config::FjordConfig)` reads only prepared files, each written by one pipeline step
+`build_simulation(config)` reads only prepared files, each written by one pipeline step
 onto (or along) the model grid. Only the bathymetry is required; every other input belongs to a
 `FjordConfig` field defaulting to `nothing`, and a setup naming none skips its steps and its read:
 
@@ -15,7 +15,7 @@ onto (or along) the model grid. Only the bathymetry is required; every other inp
 |---|---|---|
 | `bathymetry.nc` | `prepare_bathymetry` | the `ImmersedBoundaryGrid` itself, via `simulation_grid` |
 | atmosphere file | `prepare_atmosphere` | `PrescribedAtmosphere`/`PrescribedRadiation` (NumericalEarth) |
-| boundary file | `prepare_boundaries` | the exterior state on every open edge, hourly, tide included |
+| boundary file | `prepare_boundary_data` | the exterior state on every open edge, hourly, tide included |
 | river file | `add_rivers` | volume sources `η` and top-cell tracer sources |
 | forcing file | `prepare_forcing` | the `FromForcing` initial state — and little else (below) |
 | initial-state file | `prepare_initial_state` | the `FromInitialState` initial state: one record at `start_date` |
@@ -32,16 +32,32 @@ methods (`docs/adding-a-source.md`).
 
 ## 1. Configs (`src/Configs.jl`)
 
-The abstract supertypes a setup subtypes, and `FjordConfig`. Nothing else: each pipeline module
+The abstract supertypes a setup subtypes, `AbstractFjordConfig` and its accessors, and `FjordConfig`.
+Nothing else: each pipeline module
 defines the path helpers for its own supertype (`bathymetry_path` in `Bathymetry`, `forcing_path` in
 `Forcing`, …), with a default that resolves the `data_root`/`output_file` fields, so a new source
 inherits them and one without those fields overloads them.
 
 Rivers and open-boundary data are `FjordConfig` fields of their own (`river_config`,
-`boundary_config`), not parts of the forcing config: each is a separate file written by a separate
+`boundary_data_config`), not parts of the forcing config: each is a separate file written by a separate
 pipeline, and a setup can have either with no interior forcing. `AbstractBoundaryDataConfig` (the exterior *values*) and
 `AbstractBoundaryConditionConfig` (the *scheme* acting on them) are configured separately for the
 same reason.
+
+**The setup is flat.** Every component — the data pipelines, the model, its biogeochemistry, its
+boundary conditions and the run — is a field of `FjordConfig` side by side, and no step reads a
+field: each takes an `AbstractFjordConfig`, picks out the components it reads through the accessors
+(`grid_config(config)`, …), and calls a method dispatched on those alone, which is where the logic
+lives. A missing optional component is a `::Nothing` method at that level rather than an `isnothing`
+branch. Those methods type only their own component and leave the rest untyped, so a setup that
+overloads one on a type of its own does not collide with the built-in method. The download steps are
+the exception: their component level *is* the source's own hook (`download_forcing(target_grid,
+config)`), and a second method on `(grid_config, forcing_config)` would be ambiguous with every
+source's, so the setup form builds the bare grid itself.
+
+The model and the run are separate components: `model_config` is what is built
+(`AbstractModelConfig`, `coupled_model`), `simulation_config` how it is run (writers, callbacks, time
+stepping, the window). The biogeochemistry is a third, swapped independently of the physics.
 
 ## 2. Utils (`src/Utils.jl`)
 
@@ -146,7 +162,7 @@ Vestfjorden at Fl1; 0.5 takes 8 m.
 Floods land within `open_boundary_land_cells` rows of an open edge, so the boundary scheme sees the
 clean channel it is derived for rather than a headland splitting the prescribed inflow.
 
-- **The edges come from `open_edges(boundary_config)`**, passed as `prepare_bathymetry`'s `edges`
+- **The edges come from `open_edges(boundary_data_config)`**, passed as `prepare_bathymetry`'s `edges`
   keyword — not a bathymetry field, which could disagree.
 - **Depths come by repeated relaxation**, each round computed in full before it is written, so a
   cleared headland ramps from the coast rather than stepping and the result does not depend on walk
@@ -405,14 +421,18 @@ western arm missing.
 
 A separate module from the open-boundary data pipeline beside it in `src/Boundaries/`, and
 independent of it: this one says what a condition *is*, `BoundaryData` prepares and reads the
-exterior state, and the only link is `build_simulation` handing `boundary_series`'s result to
-`field_boundary_conditions`.
+exterior state, and the only link is `model_inputs` handing `boundary_series`'s result to
+`model_boundary_conditions`.
 
 A piece (`AbstractBoundaryConditionConfig`, hook `boundary_condition_sides`) says what one part of
-the boundary is; a set (`AbstractBoundaryConditionSetConfig`, hook `field_boundary_conditions`) says
-how pieces combine. `MergedBoundaryConditions` merges with `recursive_merge`, last wins. The two
-hooks have different names because they return different shapes, and the per-piece hook is not
-`boundary_conditions` because that collides with `Oceananigans.Fields.boundary_conditions`.
+the boundary is; the setup names them as a tuple, `boundary_condition_configs`. How they combine is
+the model's: `model_boundary_conditions(model, pieces, …)` dispatches on the model config, and its
+default merges with `recursive_merge`, last wins, into `FieldBoundaryConditions`. Not a supertype of
+its own, because the only thing a set could vary — the merge and the result's shape — depends on the
+model consuming it. The two hooks have different names because they return different shapes, and
+the per-piece hook is not `boundary_conditions` because that collides with
+`Oceananigans.Fields.boundary_conditions` — which is also why the setup field is
+`boundary_condition_configs`.
 
 The six-argument `boundary_condition_sides` (with the prepared `boundaries`) forwards to the
 five-argument form, so a piece that carries no exterior state implements the shorter signature.
@@ -423,7 +443,7 @@ A `bottom` condition acts at the underlying grid's `k = 1`, which is immersed ev
 `z_faces` reaches below the deepest sounding — so the flux is discarded. The fjord's real seabed is
 the *immersed* boundary, free-slip by default. With no immersed drag there was no momentum sink below
 the surface: a circulation near Horten ratcheted to a 2.84 m/s jet over four days and kept
-accelerating after the wind dropped. `coupled_simulation` builds `HydrostaticFreeSurfaceModel`
+accelerating after the wind dropped. `coupled_model` builds `HydrostaticFreeSurfaceModel`
 directly, so it inherits neither half from NumericalEarth's `ocean_simulation`. Immersed side walls
 stay free-slip.
 
@@ -489,13 +509,22 @@ a few hundred MB where an hourly interior file would be hundreds of GB.
   before interpolation** (afterwards the components sit on different rows under different masks).
   It is a hook because the pipeline prepares one variable at a time and a rotation needs both. The
   hindcast's `ubar_eastward`/`vbar_northward` are already rotated, so
-  `norkyst_hindcast_boundaries.jl` needs no such method; it reads the barotropic pair from the
+  `norkyst_hindcast_boundary_data.jl` needs no such method; it reads the barotropic pair from the
   `sdepth` files and everything else from `zdepth`.
 
 ## 14. Simulations (`src/Simulations.jl`)
 
-`coupled_simulation` lives here, not in `src/FjordSim.jl`, because a function defined after the
+`coupled_model` lives here, not in `src/FjordSim.jl`, because a function defined after the
 `include` block cannot be imported by a module inside it.
+
+**`build_simulation` runs in stages**, each its own function: `validate_model_inputs` (every prepared
+file exists and spans the window, before the grid is built), `simulation_grid`, `model_inputs` (the
+keywords `coupled_model` receives, each read from one component), `coupled_model` on the model config,
+then `Simulation` and the outputs. `model_inputs` dispatches on the whole setup because it is where
+the components meet, which makes it the one place a setup type with an input of a new kind extends.
+`build_simulation` and `run_simulation` dispatch on the simulation config, so a different way of
+running is a new `AbstractSimulationConfig` subtype. `OceanSeaIceModel` takes the ocean as a
+`Simulation` of its own, so `coupled_model` still needs `stop_time` and the initial `Δt`.
 
 **The run tag is the wall-clock launch instant** (`yyyymmddTHHMMSS`, `Simulations.LAUNCH_TAG`,
 filled by `__init__` — a `const` initialized with `now()` would freeze the precompilation instant).
@@ -523,21 +552,21 @@ forcing terms, the open tracer boundaries and the initial conditions each build 
 
 ### `extra_kwargs`
 
-`CoupledHydrostaticSimulation` stores nine grid-independent model components plus `extra_kwargs`:
-one `NamedTuple` per constructor `coupled_simulation` calls (`ocean_model`, `ocean_simulation`,
-`coupled_simulation`, `coupled_model`), splatted after the explicit keywords. Ten fields is the
-ceiling; anything further goes in `extra_kwargs`. Because a duplicate key would silently win,
-`validate_extra_kwargs` rejects a key `coupled_simulation` already passes (`EXTRA_KWARG_SLOTS`), at
-construction, where the error still points at the setup file.
+`CoupledHydrostaticModel` stores eight grid-independent model components plus `extra_kwargs`:
+one `NamedTuple` per constructor `coupled_model` calls (`ocean_model`, `ocean_simulation`,
+`coupled_model`), splatted after the explicit keywords. Nine fields is the ceiling; anything further
+goes in `extra_kwargs`. Because a duplicate key would silently win, `validate_extra_kwargs` rejects a
+key `coupled_model` already passes (`EXTRA_KWARG_SLOTS`), at construction, where the error still
+points at the setup file.
 
 `free_surface` is a config with its own hook because `SplitExplicitFreeSurface` needs the grid.
 
 ### `closure` and `BoundarySponge`
 
 `closure` holds a built Oceananigans closure or an `AbstractClosureConfig`, resolved by
-`model_closure(closure, grid, boundary_config, …)` whose fallback is the identity.
-`biogeochemistry` is resolved the same way, by `model_biogeochemistry(biogeochemistry, grid)`,
-for biogeochemical models that need the grid.
+`model_closure(closure, grid, boundary_data_config, …)` whose fallback is the identity.
+The setup's `biogeochemistry_config` is resolved the same way, by
+`model_biogeochemistry(biogeochemistry, grid)`, for biogeochemical models that need the grid.
 
 `BoundarySponge` appends a `HorizontalScalarDiffusivity` ramping to zero over `width_cells` from every
 open edge. It exists because an open boundary radiates and nothing absorbed it: on the 2020
@@ -546,7 +575,7 @@ near-boundary bottom salinity ran away (54 → 192 psu) while the domain mean mo
 boundary file asked for 24–34.
 
 - **Viscous, not a tracer band**: viscosity names no target and cannot fight the boundary nudging.
-- **The edges come from `open_edges(boundary_config)`**; a setup naming none gets `base` back.
+- **The edges come from `open_edges(boundary_data_config)`**; a setup naming none gets `base` back.
 - **Stability bounds the coefficient**: `Δt ≤ Δx²/4ν` is 310 s at `ν = 30` and 155 s at `ν = 60` on
   a 193 m cell. Raise `ν` and check `max_time_step`.
 - **The ramp is `max(0, 1 − d/w)²`**, smooth at its inner end and compactly supported.

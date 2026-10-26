@@ -42,7 +42,8 @@ takes the basename as the fjord whose data and results directories it stages.
 ## What it must and may contain
 
 Only the grid and the bathymetry are required. Every other field defaults to `nothing`, and every
-step whose config is `nothing` is a no-op:
+step whose config is `nothing` is a no-op. A setup naming a `simulation_config` must also name a
+`model_config` and its `boundary_condition_configs`:
 
 | Field | Built-in config | Steps | Prepared file | Needed for |
 |---|---|---|---|---|
@@ -51,12 +52,15 @@ step whose config is `nothing` is a no-op:
 | `forcing_config` | `NorKystConfig`, `NorKystHindcastConfig` | `download_forcing`, `prepare_forcing` | `forcing.nc` | `FromForcing` initial conditions |
 | `initial_state_config` | `NorKystInitialStateConfig` | `download_initial_state`, `prepare_initial_state` | `initial_state.nc` | `FromInitialState` initial conditions |
 | `river_config` | `NVERiversConfig` | `add_rivers` | `rivers_nve.nc` | river inflow; `RiverMouthMixing` |
-| `boundary_config` | `NorKystBoundariesConfig`, `NorKystHindcastBoundariesConfig` | `download_boundaries`, `prepare_boundaries` | `boundaries.nc` | any open edge; `OpenLateralBoundaryFromData` |
+| `boundary_data_config` | `NorKystBoundaryDataConfig`, `NorKystHindcastBoundaryDataConfig` | `download_boundary_data`, `prepare_boundary_data` | `boundaries.nc` | any open edge; `OpenLateralBoundaryFromData` |
 | `atmosphere_config` | `NORA3Config` | `download_atmosphere`, `prepare_atmosphere` | `atmosphere.nc` | the prescribed atmosphere and radiation the surface fluxes are computed from |
-| `simulation_config` | `SimulationConfig` | `run_simulation`, `validate_simulation` | results | running at all |
+| `model_config` | `CoupledHydrostaticModel` | `run_simulation` | — | running at all: what the model is |
+| `biogeochemistry_config` | none (`examples/oslofjorden_npzd.jl` has one) | `run_simulation` | — | a biogeochemical model |
+| `boundary_condition_configs` | a tuple of `AirSeaFluxes`, `QuadraticBottomDrag`, `OpenLateralBoundaryFromData` | `run_simulation` | — | running at all; `()` for the model's defaults |
+| `simulation_config` | `SimulationConfig` | `run_simulation`, `validate_simulation` | results | running at all: how the model is run |
 
 NorKyst's operational archive (`NorKystConfig`, `NorKystInitialStateConfig`,
-`NorKystBoundariesConfig`) begins on 2017-02-20; a window before that needs the hindcast configs,
+`NorKystBoundaryDataConfig`) begins on 2017-02-20; a window before that needs the hindcast configs,
 which cover 2012 onwards (there is no hindcast initial-state config). Each field is a type
 parameter of `FjordConfig`, so it is chosen when the config is built and cannot be set to `nothing`
 on an existing instance afterwards.
@@ -92,7 +96,7 @@ A new data source is a new config type, not an edit to the pipeline: `docs/addin
   `HydrostaticSphericalCoriolis(FT)`, `FreezingLimitedOceanTemperature(FT)`. Never set
   `Oceananigans.defaults.FloatType`: it is process-wide.
 - **Box.** A closed edge should be land along its whole length; an edge cutting open water must be
-  opened (`boundary_config.open_edges`) or the domain moved. Check the plotted bathymetry after the
+  opened (`boundary_data_config.open_edges`) or the domain moved. Check the plotted bathymetry after the
   first `prepare_bathymetry`.
 - **`z_faces`** run bottom to top, end at `0.0`, and number `size[3] + 1`.
   - Fit the deepest face to the deepest cell `prepare_bathymetry` writes (read it from
@@ -134,9 +138,10 @@ optional smoothing stage off:
 (Bathymetry) why their order is fixed. Check that `max_island_cells` stays below the smallest real
 island, and that a known sill comes out at its real depth.
 
-## The simulation config
+## The model and simulation configs
 
-`SimulationConfig` and every config it nests have **no defaults**: each field is a scientific choice
+`CoupledHydrostaticModel`, `SimulationConfig` and every config they nest have **no defaults**: each
+field is a scientific choice
 about one fjord, stated in the setup, so a field added later breaks every setup until each names it.
 `README.md` lists the fields; the examples state all of them. Coefficients that depend on the grid
 spacing have to be worked out for the new grid rather than copied:

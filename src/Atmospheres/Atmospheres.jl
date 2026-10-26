@@ -14,7 +14,10 @@ using NumericalEarth.DataWrangling: first_date, last_date
 
 using ..Configs:
     AbstractAtmosphereConfig,
-    FjordConfig
+    AbstractFjordConfig,
+    grid_config,
+    atmosphere_config,
+    simulation_config
 using ..Utils: coverage_window, with_retries
 using ..Grids: domain_grid
 using ..Plotting: Plotting, plot_atmosphere
@@ -146,12 +149,12 @@ Required for every `AbstractAtmosphereConfig`. See the `NORA3Config` method in
 function atmosphere_variable_names end
 
 """
-    download_atmosphere(config::FjordConfig)
-    download_atmosphere(target_grid, config)
+    download_atmosphere(config)
+    download_atmosphere(target_grid, atmosphere_config)
 
 Fetch and subset the atmosphere dataset a setup names, into `atmosphere_directory(config)`.
 
-The `FjordConfig` method builds the setup's grid on the CPU and dispatches on the atmosphere
+The setup form builds the bare domain grid on the CPU and dispatches on the atmosphere
 config, so a dataset only implements `download_atmosphere(target_grid, config)`. The grid rather
 than the grid config is passed on, because a dataset needs the domain bounds and `x_domain` and
 `y_domain` give those for any `AbstractGridConfig`.
@@ -162,8 +165,8 @@ domain alone would leave the outer prepared cells with nothing to interpolate fr
 
 A setup naming no atmosphere config is a no-op.
 """
-download_atmosphere(config::FjordConfig) =
-    download_atmosphere(domain_grid(config.grid_config, CPU()), config.atmosphere_config)
+download_atmosphere(config::AbstractFjordConfig) =
+    download_atmosphere(domain_grid(grid_config(config), CPU()), atmosphere_config(config))
 
 download_atmosphere(target_grid, ::Nothing) = nothing
 
@@ -172,7 +175,7 @@ download_atmosphere(target_grid, ::Nothing) = nothing
     prescribed_radiation(config, architecture; reference_date = nothing)
 
 Read the prepared atmosphere file back at simulation time, as the NumericalEarth
-`PrescribedAtmosphere` and `PrescribedRadiation` that `coupled_simulation` consumes.
+`PrescribedAtmosphere` and `PrescribedRadiation` that `coupled_model` consumes.
 
 These are the only atmosphere hooks the simulation side needs, and they are what keeps
 `FjordSim.Simulations` from naming a dataset: which reader, which file and which backend are all
@@ -410,38 +413,40 @@ end
 prepare_atmosphere(target_grid, ::Nothing; coverage = nothing) = nothing
 
 """
-    prepare_atmosphere(config::FjordConfig)
+    prepare_atmosphere(config)
+    prepare_atmosphere(grid_config, atmosphere_config, simulation_config)
 
-Regrid the atmosphere a whole setup names onto a regular longitude/latitude grid, and write the
-diagnostic plot. Returns `nothing` when the setup names no atmosphere.
+Regrid the atmosphere a setup names onto a regular longitude/latitude grid, and write the diagnostic
+plot. Returns `nothing` for a `nothing` atmosphere config.
 
-This is the setup-level driver, the same shape as `download_atmosphere(config::FjordConfig)`. It
-needs no bathymetry: the prepared grid is derived from the setup's longitude/latitude domain
+It needs no bathymetry: the prepared grid is derived from the setup's longitude/latitude domain
 rather than from the ocean grid's land mask, so unlike `prepare_forcing` it does not depend on
-`prepare_bathymetry`. It does read the files `download_atmosphere` wrote.
-
-The coverage window comes from the setup's simulation config, so the prepared file spans the run the
-setup describes; a setup naming no simulation config gets `nothing` and the downloaded range.
+`prepare_bathymetry`. It does read the files `download_atmosphere` wrote. The coverage window comes
+from the simulation config, so the prepared file spans the run the setup describes; a `nothing`
+simulation config gives the downloaded range. The setup form only picks out the three components
+this step reads.
 
 # Returns
 The `prepare_atmosphere(target_grid, config)` named tuple with `plot_file` added.
 """
-function prepare_atmosphere(config::FjordConfig)
-    atmosphere_config = config.atmosphere_config
-    isnothing(atmosphere_config) && return nothing
+prepare_atmosphere(config::AbstractFjordConfig) =
+    prepare_atmosphere(grid_config(config), atmosphere_config(config), simulation_config(config))
 
+prepare_atmosphere(grid_config, ::Nothing, simulation_config) = nothing
+
+function prepare_atmosphere(
+    grid_config,
+    atmosphere_config::AbstractAtmosphereConfig,
+    simulation_config,
+)
     source_directory = atmosphere_directory(atmosphere_config)
     isdir(source_directory) || error(
         "Atmosphere source directory $source_directory does not exist. " *
         "Run `julia --project -m FjordSim download_atmosphere` for this setup first.",
     )
 
-    grid = domain_grid(config.grid_config, CPU())
-    result = prepare_atmosphere(
-        grid,
-        atmosphere_config;
-        coverage = coverage_window(config.simulation_config),
-    )
+    grid = domain_grid(grid_config, CPU())
+    result = prepare_atmosphere(grid, atmosphere_config; coverage = coverage_window(simulation_config))
     plot_file = plot_atmosphere(atmosphere_config, atmosphere_path(atmosphere_config))
 
     @info "Prepared variables: $(join(result.variables, ", "))"

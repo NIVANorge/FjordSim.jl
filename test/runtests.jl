@@ -1,12 +1,12 @@
 using FjordSim
 using FjordSim.Configs: AbstractAtmosphereConfig, AbstractBathymetryConfig,
-    AbstractBoundaryConditionConfig, AbstractBoundaryConditionSetConfig, AbstractBoundaryDataConfig,
-    AbstractCallbackConfig, AbstractClosureConfig, AbstractCoupledSimulationConfig,
+    AbstractBoundaryConditionConfig, AbstractBoundaryDataConfig, AbstractFjordConfig,
+    AbstractCallbackConfig, AbstractClosureConfig, AbstractModelConfig,
     AbstractForcingConfig, AbstractFreeSurfaceConfig, AbstractGridConfig, AbstractRiverConfig,
     AbstractSimulationConfig, AbstractTimeSteppingConfig, AbstractWriterConfig
 using FjordSim.Utils: coverage_window
 using FjordSim.Grids: domain_grid, open_edges, simulation_grid
-using FjordSim.Plotting: plot_boundaries, plot_path
+using FjordSim.Plotting: plot_boundary_data, plot_path
 using FjordSim.Bathymetry: bathymetry_dataset, bathymetry_path, geodatabase_path, regrid_options,
     write_bathymetry_file
 using FjordSim.Regridding: interpolation_architecture, ProjectedSourceGrid
@@ -20,12 +20,12 @@ using FjordSim.Forcing: forcing_date_range, forcing_directory, forcing_from_file
 using FjordSim.InitialState: initial_state_directory, initial_state_path
 using FjordSim.Rivers: river_discharge, river_forcing_path, river_locations,
     river_maximum_inflow_velocity, river_search_radius, river_series
-using FjordSim.BoundaryConditions: boundary_condition_sides, field_boundary_conditions,
+using FjordSim.BoundaryConditions: boundary_condition_sides, model_boundary_conditions,
     top_bottom_boundary_conditions
 using FjordSim.BoundaryData: boundary_data_directory, boundary_data_path, boundary_variable_name,
     boundary_variable_names
 using FjordSim.Simulations: attach_callback!, attach_time_stepping!, attach_writer!,
-    coupled_simulation, free_surface, initial_time_step, model_biogeochemistry, model_closure,
+    coupled_model, free_surface, initial_time_step, model_biogeochemistry, model_closure,
     model_tracers, results_path, run_tag, simulation_architecture
 using FjordSim.Validation: baroclinic_deviation, CsvObservations, depth_average,
     direction_statistics, harmonic_fit, KartverketSeaLevel, monthly_statistics, observation_series,
@@ -62,8 +62,8 @@ include("utilities.jl")
             :download_initial_state,
             :prepare_initial_state,
             :add_rivers,
-            :download_boundaries,
-            :prepare_boundaries,
+            :download_boundary_data,
+            :prepare_boundary_data,
             :download_atmosphere,
             :prepare_atmosphere,
             :build_simulation,
@@ -76,11 +76,11 @@ include("utilities.jl")
             :NorKystInitialStateConfig,
             :NVERiversConfig,
             :NVERiver,
-            :NorKystBoundariesConfig,
-            :NorKystHindcastBoundariesConfig,
+            :NorKystBoundaryDataConfig,
+            :NorKystHindcastBoundaryDataConfig,
             :NORA3Config,
             :SimulationConfig,
-            :CoupledHydrostaticSimulation,
+            :CoupledHydrostaticModel,
             :SplitExplicitFreeSurfaceConfig,
             :BoundarySponge,
             :RiverMouthMixing,
@@ -97,7 +97,6 @@ include("utilities.jl")
             :FromForcing,
             :FromInitialState,
             :FromResults,
-            :MergedBoundaryConditions,
             :AirSeaFluxes,
             :QuadraticBottomDrag,
             :OpenLateralBoundaryFromData,
@@ -117,7 +116,7 @@ include("utilities.jl")
             @test exported(getfield(FjordSim, sym)) ⊆ setup_symbols
         end
 
-        @test parentmodule(FjordSim.Simulations.coupled_simulation) === FjordSim.Simulations
+        @test parentmodule(FjordSim.Simulations.coupled_model) === FjordSim.Simulations
         # The per-piece boundary hook used to be called `boundary_conditions`, which collided with
         # `Oceananigans.Fields.boundary_conditions`. Renamed to `boundary_condition_sides`, and the
         # old name is gone rather than deprecated.
@@ -510,11 +509,12 @@ include("utilities.jl")
                 AirSeaFluxes(), grid, forcing, boundaries_config, (:T, :S), boundaries,
             ) |> keys |> Set == Set((:u, :v, :T, :S))
 
-            # The set config materializes every piece into `FieldBoundaryConditions`, which is what
-            # a `HydrostaticFreeSurfaceModel` consumes. `v` gets its top, bottom *and* south, so the
-            # merge is a merge rather than a last-wins overwrite of whole variables.
-            materialized = field_boundary_conditions(
-                MergedBoundaryConditions(
+            # The model config materializes every piece into `FieldBoundaryConditions`, which is
+            # what a `HydrostaticFreeSurfaceModel` consumes. `v` gets its top, bottom *and* south, so
+            # the merge is a merge rather than a last-wins overwrite of whole variables.
+            materialized = model_boundary_conditions(
+                test_model_config(),
+                (
                     AirSeaFluxes(),
                     QuadraticBottomDrag(coefficient = 0.003),
                     OpenLateralBoundaryFromData(
@@ -537,14 +537,13 @@ include("utilities.jl")
                   Oceananigans.BoundaryConditions.GravityWaveRadiation
 
             # Naming no pieces is a valid statement — the model's own defaults everywhere — rather
-            # than an error, so a setup can opt out of every piece.
-            @test field_boundary_conditions(
-                MergedBoundaryConditions(), grid, forcing, boundaries_config, (:T, :S),
+            # than an error, so a setup can opt out of every piece. Naming nothing at all is not.
+            @test model_boundary_conditions(
+                test_model_config(), (), grid, forcing, boundaries_config, (:T, :S), nothing,
             ) == (;)
-
-            # The set is a struct rather than a bare `Tuple`, which is what makes an alternative
-            # merge strategy expressible at all.
-            @test MergedBoundaryConditions(AirSeaFluxes()) isa AbstractBoundaryConditionSetConfig
+            @test_throws "boundary_condition_configs" model_boundary_conditions(
+                test_model_config(), nothing, grid, forcing, boundaries_config, (:T, :S), nothing,
+            )
         end
     end
 
@@ -713,7 +712,7 @@ end
         @test open_edges(boundaries_config) == [:south]
         @test open_edges(test_boundaries_config(; data_root, open_edges = :west)) == [:west]
         # No default, so every setup states which edge it opens rather than inheriting a side.
-        @test_throws UndefKeywordError NorKystBoundariesConfig(
+        @test_throws UndefKeywordError NorKystBoundaryDataConfig(
             data_root = data_root,
             output_directory = "norkyst_hourly",
             parameters = ["temperature"],
@@ -780,17 +779,17 @@ end
             z_faces = [-20.0, -10.0, 0.0],
         )
 
-        boundary_config = test_boundaries_config(; data_root)
+        boundary_data_config = test_boundaries_config(; data_root)
         config = FjordConfig(;
-            grid_config, bathymetry_config, forcing_config, boundary_config, atmosphere_config,
+            grid_config, bathymetry_config, forcing_config, boundary_data_config, atmosphere_config,
         )
         grid = domain_grid(config.grid_config, CPU())
 
         # The open-boundary config is a `FjordConfig` field of its own, independent of the forcing
         # one: either is nameable without the other, which is what lets a setup run with no interior
         # forcing but a data-driven open boundary, or the reverse.
-        @test config.boundary_config === boundary_config
-        @test isnothing(FjordConfig(; grid_config, bathymetry_config).boundary_config)
+        @test config.boundary_data_config === boundary_data_config
+        @test isnothing(FjordConfig(; grid_config, bathymetry_config).boundary_data_config)
 
         # `native_region!` derives the padded native region from the target grid: 4 cells of
         # 1 degree either side, refined by the default raw_resolution_factor of 4.
@@ -888,7 +887,7 @@ end
         @test fieldtype(typeof(config), :atmosphere_config) === MinimalAtmosphere
         @test fieldtype(typeof(config), :simulation_config) === MinimalSimulation
         # Unnamed, so its own type parameter resolves to `Nothing` — concrete, like the rest.
-        @test fieldtype(typeof(config), :boundary_config) === Nothing
+        @test fieldtype(typeof(config), :boundary_data_config) === Nothing
 
         # ...and the built-in types remain valid, i.e. FjordConfig is genuinely generic.
         @test FjordConfig(
@@ -976,24 +975,23 @@ end
 
         # The supertypes `SimulationConfig` nests own one hook contract each, and each is
         # missing the same discoverable way.
-        @test MinimalModel() isa AbstractCoupledSimulationConfig
+        @test MinimalModel() isa AbstractModelConfig
         @test MinimalFreeSurface() isa AbstractFreeSurfaceConfig
         @test MinimalBoundary() isa AbstractBoundaryConditionConfig
-        @test MinimalBoundarySet() isa AbstractBoundaryConditionSetConfig
         @test MinimalWriter() isa AbstractWriterConfig
         @test MinimalCallback() isa AbstractCallbackConfig
         @test MinimalTimeStepping() isa AbstractTimeSteppingConfig
 
         @test_throws MethodError model_tracers(MinimalModel())
-        @test_throws MethodError coupled_simulation(MinimalModel(), grid)
+        @test_throws MethodError coupled_model(MinimalModel(), grid)
         @test_throws MethodError free_surface(MinimalFreeSurface(), grid)
         @test_throws MethodError boundary_condition_sides(
-            MinimalBoundary(), grid, (;), config.boundary_config, (:T,),
+            MinimalBoundary(), grid, (;), config.boundary_data_config, (:T,),
         )
-        # The set level is its own contract, so a set config that does not materialize its pieces
-        # is missing a method rather than falling back to `MergedBoundaryConditions`' merge.
-        @test_throws MethodError field_boundary_conditions(
-            MinimalBoundarySet(), grid, (;), config.boundary_config, (:T,),
+        # Materializing the pieces falls back to the merge every `AbstractModelConfig` inherits,
+        # and that merge reaches the piece's own missing hook.
+        @test_throws MethodError model_boundary_conditions(
+            MinimalModel(), (MinimalBoundary(),), grid, (;), config.boundary_data_config, (:T,), nothing,
         )
         @test_throws MethodError attach_writer!(
             nothing, MinimalWriter(), config.simulation_config, 1,
@@ -1030,6 +1028,31 @@ end
         @test isnothing(bare.simulation_config)
         @test isnothing(build_simulation(bare))
         @test isnothing(run_simulation(bare))
+
+        # A setup type of its own reuses every step by implementing the accessors alone: no step
+        # reads a `FjordConfig` field.
+        delegating = DelegatingFjord(bare)
+        @test delegating isa AbstractFjordConfig
+        @test isnothing(download_atmosphere(delegating))
+        @test isnothing(prepare_atmosphere(delegating))
+        @test isnothing(add_rivers(delegating))
+        @test isnothing(download_initial_state(delegating))
+        @test isnothing(prepare_initial_state(delegating))
+        @test isnothing(download_boundary_data(delegating))
+        @test isnothing(prepare_boundary_data(delegating))
+        @test isnothing(build_simulation(delegating))
+        @test isnothing(run_simulation(delegating))
+        @test isnothing(validate_simulation(delegating))
+
+        # Each step dispatches on the components it reads, so a missing one is a no-op at that
+        # level too, with no setup in sight.
+        @test isnothing(prepare_atmosphere(bare.grid_config, nothing, nothing))
+        @test isnothing(prepare_forcing(bare.grid_config, bare.bathymetry_config, nothing, nothing, nothing))
+        @test isnothing(add_rivers(bare.grid_config, bare.bathymetry_config, nothing, nothing, nothing))
+        @test isnothing(prepare_boundary_data(bare.grid_config, bare.bathymetry_config, nothing, nothing))
+
+        # `download_rivers` is optional: a river dataset that states its outlets downloads nothing.
+        @test isnothing(FjordSim.Rivers.download_rivers(grid, rivers))
 
         # `atmosphere_target_axes` is generic over the grid config: it reads the domain through
         # `x_domain`/`y_domain`, so the stub grid works, and both axes must come out uniformly spaced
@@ -1087,6 +1110,20 @@ end
         not_a_config = joinpath(tmp, "not_a_config.jl")
         write(not_a_config, "42\n")
         @test_throws ArgumentError fjord_config(not_a_config)
+
+        # Any `AbstractFjordConfig` is a setup, not only the built-in one. Evaluated in `Main`, so it
+        # can name the test suite's own setup type.
+        delegating = joinpath(tmp, "delegating.jl")
+        write(
+            delegating,
+            """
+            DelegatingFjord(FjordConfig(
+                grid_config = test_grid_config(),
+                bathymetry_config = test_bathymetry_config(data_root = raw"$tmp"),
+            ))
+            """,
+        )
+        @test fjord_config(delegating) isa DelegatingFjord
     end
 end
 
@@ -1125,8 +1162,8 @@ end
             "download_initial_state",
             "prepare_initial_state",
             "add_rivers",
-            "download_boundaries",
-            "prepare_boundaries",
+            "download_boundary_data",
+            "prepare_boundary_data",
             "download_atmosphere",
             "prepare_atmosphere",
             "run_simulation",
@@ -1142,13 +1179,20 @@ end
             grid_config = test_grid_config(),
             bathymetry_config = test_bathymetry_config(),
             forcing_config = test_forcing_config(),
-            boundary_config = test_boundaries_config(),
+            boundary_data_config = test_boundaries_config(),
             atmosphere_config = test_atmosphere_config(),
             simulation_config = test_simulation_config(),
         )
         for name in subcommands
             @test hasmethod(FjordSim.CLI.subcommand_driver(name), Tuple{typeof(config)})
         end
+
+        # The steps a setup offers come from its type, so a setup type with an input of a new kind
+        # adds its own step by overloading `pipeline_steps` rather than editing the table.
+        @test FjordSim.CLI.pipeline_steps(config) === FjordSim.CLI.SUBCOMMANDS
+        extra_step = ["prepare_extra" => identity]
+        @test FjordSim.CLI.subcommand_driver("prepare_extra", extra_step) === identity
+        @test_throws ArgumentError FjordSim.CLI.subcommand_driver("prepare_forcing", extra_step)
     end
 
     @testset "main exit codes" begin
@@ -1178,8 +1222,8 @@ end
             @test isnothing(download_initial_state(config))
             @test isnothing(prepare_initial_state(config))
             @test isnothing(add_rivers(config))
-            @test isnothing(download_boundaries(config))
-            @test isnothing(prepare_boundaries(config))
+            @test isnothing(download_boundary_data(config))
+            @test isnothing(prepare_boundary_data(config))
             @test isnothing(prepare_atmosphere(config))
             @test isnothing(download_atmosphere(config))
             # Both return on the `nothing` simulation config, before any prerequisite is checked, so
@@ -2165,7 +2209,7 @@ end
             @test !u[5, 1, 1]     # closed east wall
 
             # ...but an open boundary the config names must survive, because that is where the
-            # setup puts its radiating NormalFlowBoundaryCondition and where `prepare_boundaries`
+            # setup puts its radiating NormalFlowBoundaryCondition and where `prepare_boundary_data`
             # samples the exterior velocity. peripheral_node alone marks it land, since the tracer
             # cell outside the domain is an inactive halo cell.
             v_south = water_mask(grid, Center, Face, :south)
@@ -3595,7 +3639,7 @@ end
                 latitude = (latitude[1] - 0.2, latitude[2] + 0.2),
             )
 
-            result = prepare_boundaries(grid, boundaries_config)
+            result = prepare_boundary_data(grid, boundaries_config)
             @test result.output_file == boundary_data_path(boundaries_config)
             @test result.times == dates
             @test Set(result.variables) == Set(
@@ -3659,7 +3703,7 @@ end
             )
 
             # The plot reads both panel shapes out of the same file, taking the side from the config.
-            @test isfile(plot_boundaries(boundaries_config, boundary_data_path(boundaries_config)))
+            @test isfile(plot_boundary_data(boundaries_config, boundary_data_path(boundaries_config)))
         end
     end
 
@@ -3690,7 +3734,7 @@ end
                 longitude = (longitude[1] - 0.2, longitude[2] + 0.2),
                 latitude = (latitude[1] - 0.2, latitude[2] + 0.2),
             )
-            prepare_boundaries(grid, boundaries_config)
+            prepare_boundary_data(grid, boundaries_config)
 
             eta = FjordSim.BoundaryData.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1)).south.eta
             stored = NCDataset(ds -> Float64.(ds["south_eta"][1, :]), boundary_data_path(boundaries_config))
@@ -3747,7 +3791,7 @@ end
             @test box_longitude == (longitude[1] - 0.05, longitude[2] + 0.05)
             @test box_latitude == (latitude[1] - 0.05, latitude[2] + 0.05)
 
-            result = prepare_boundaries(grid, config)
+            result = prepare_boundary_data(grid, config)
             @test length(result.variables) == 4 * 7
             @test Set(result.variables) ==
                   Set("$(edge)_$name" for edge in edges
@@ -3789,7 +3833,7 @@ end
             @test any(v_mask[:, 1, :]) && any(v_mask[:, 4, :])
 
             # One plot, one block of rows per edge.
-            @test isfile(plot_boundaries(config, boundary_data_path(config)))
+            @test isfile(plot_boundary_data(config, boundary_data_path(config)))
         end
     end
 end
@@ -4243,9 +4287,9 @@ end
         # is where the scientific choices live, so a default there would be one fjord's physics
         # silently applied to another's.
         model_fields = test_model_fields()
-        @test Set(keys(model_fields)) == Set(fieldnames(CoupledHydrostaticSimulation))
-        for name in fieldnames(CoupledHydrostaticSimulation)
-            @test_throws UndefKeywordError CoupledHydrostaticSimulation(;
+        @test Set(keys(model_fields)) == Set(fieldnames(CoupledHydrostaticModel))
+        for name in fieldnames(CoupledHydrostaticModel)
+            @test_throws UndefKeywordError CoupledHydrostaticModel(;
                 delete!(copy(model_fields), name)...
             )
         end
@@ -4273,8 +4317,8 @@ end
         @test_throws ArgumentError test_progress_callback(interval = 0.0)
 
         # `extra_kwargs` is the escape hatch, and it can only *add*. A slot that reaches no
-        # constructor, and a key that would win the splat over a keyword `coupled_simulation`
-        # already passes, are both rejected at construction — where the setup file that made the
+        # constructor, and a key that would win the splat over a keyword `coupled_model` already
+        # passes, are both rejected at construction — where the setup file that made the
         # mistake is still what the error is about. Without the second check, a stray `tracers`
         # would silently disagree with `model_tracers`, which `build_simulation` already used to
         # pick the forcing terms and the open tracer boundaries before the model existed.
@@ -4288,9 +4332,9 @@ end
         @test_throws ArgumentError test_model_config(extra_kwargs = (coupled_model = (radiation = nothing,),))
         @test_throws ArgumentError test_model_config(extra_kwargs = (ocean_simulation = (Δt = 1.0,),))
         # A slot holding something that is not a keyword set says so, rather than failing at the
-        # splat inside `coupled_simulation` after the grid has been built.
+        # splat inside `coupled_model` after the grid has been built.
         @test_throws ArgumentError test_model_config(extra_kwargs = (ocean_model = 1,))
-        # An omitted slot is empty rather than missing, so `coupled_simulation` splats all four
+        # An omitted slot is empty rather than missing, so `coupled_model` splats all three
         # unconditionally.
         empty_slots = test_model_config()
         for slot in keys(FjordSim.Simulations.EXTRA_KWARG_SLOTS)
@@ -4320,24 +4364,25 @@ end
         @test all(isconcretetype, fieldtypes(typeof(test_snapshot_writer())))
         @test all(isconcretetype, fieldtypes(CheckpointWriter))
         @test all(isconcretetype, fieldtypes(AdaptiveTimeStep))
-        # Six structural parameters, one per nested config. They grow only when a genuinely new
-        # *kind* of nested config appears — `callbacks` was the sixth, replacing a bare
-        # `progress_interval::Float64` that could only change how often the one hardcoded report
-        # fired. A new subtype of an existing supertype is never a new field.
-        @test length(typeof(config).parameters) == 6
-        # Nine components plus `extra_kwargs`, which *is* the collapse the ninth was headed for:
-        # rather than a field per remaining constructor keyword, one `NamedTuple` carries all of
-        # them. Ten is the ceiling — anything further goes inside `extra_kwargs`.
-        # `free_surface` counts here too: it is itself a config, not a bare `Float64`, dispatched
-        # by its own `free_surface(config, grid)` hook.
-        @test length(typeof(test_model_config()).parameters) == 10
+        # Four structural parameters, one per nested config: writers, callbacks, time stepping and
+        # initial conditions. They grow only when a genuinely new *kind* of nested config appears; a
+        # new subtype of an existing supertype is never a new field. The model and its boundary
+        # conditions are the setup's own components, not nested here.
+        @test length(typeof(config).parameters) == 4
+        # Eight components plus `extra_kwargs`: rather than a field per remaining constructor
+        # keyword, one `NamedTuple` carries all of them. Nine is the ceiling — anything further goes
+        # inside `extra_kwargs`. `free_surface` counts here too: it is itself a config, not a bare
+        # `Float64`, dispatched by its own `free_surface(config, grid)` hook.
+        @test length(typeof(test_model_config()).parameters) == 9
 
         # The tracer list reaches `build_simulation` through a hook rather than a field read, so a
         # model config that names its tracers differently still composes.
         @test model_tracers(test_model_config()) == (:T, :S)
+        # A simulated setup with no model config is told to name one, at the first thing that needs it.
+        @test_throws "model_config" model_tracers(nothing)
 
         # `free_surface` is dispatched, not a plain scalar: a fixture grid is enough to build the
-        # object `coupled_simulation` would hand `HydrostaticFreeSurfaceModel`.
+        # object `coupled_model` would hand `HydrostaticFreeSurfaceModel`.
         free_surface_grid = LatitudeLongitudeGrid(CPU(), test_grid_config())
         @test free_surface(SplitExplicitFreeSurfaceConfig(cfl = 0.7), free_surface_grid) isa
               SplitExplicitFreeSurface
@@ -4430,7 +4475,7 @@ end
         # Which edge the domain is open on is stated once, on the open-boundary data config, and read
         # from there by everything that acts on it — see the "open lateral boundary" testset for the
         # per-edge dispatch. It is a `Grids` accessor rather than a pair of one-liners reaching
-        # through the forcing config, which is what a `boundary_config` independent of forcing needs.
+        # through the forcing config, which is what a `boundary_data_config` independent of forcing needs.
         @test open_edges(test_boundaries_config(open_edges = :west)) == [:west]
         @test isempty(open_edges(nothing))
 
@@ -4459,12 +4504,12 @@ end
 
             touch(bathymetry_path(bathymetry_config))
             # A setup naming forcing is told to prepare it next, since the rivers are not in it...
-            @test simulation_forcing_path(without_rivers) == forcing_path(forcing_config)
+            @test simulation_forcing_path(without_rivers.forcing_config) == forcing_path(forcing_config)
             @test_throws "prepare_forcing" build_simulation(without_rivers)
             @test_throws "prepare_forcing" build_simulation(with_rivers)
 
             # ...one naming none is asked for no forcing at all, rivers or not...
-            @test isnothing(simulation_forcing_path(rivers_only))
+            @test isnothing(simulation_forcing_path(rivers_only.forcing_config))
             @test_throws "add_rivers" build_simulation(rivers_only)
 
             # ...and a config naming rivers is then told to run add_rivers, which writes their file.
@@ -4607,7 +4652,7 @@ end
         # A literal NamedTuple is already what `set!` wants, so it passes through by identity — the
         # behaviour every setup had before the other two shapes existed.
         constants = (T = 5.0, S = 33.0)
-        @test resolve_initial_conditions(constants, nothing, "unused.nc", nothing, nothing) === constants
+        @test resolve_initial_conditions(constants, nothing, "unused.nc", nothing, nothing, (:T, :S)) === constants
 
         Nx, Ny, Nz = 6, 5, 4
 
@@ -4721,6 +4766,7 @@ end
                 forcing_file,
                 nothing,
                 simulation_config,
+                (:T, :S),
             ).T[1, 1, 1] == 30
             @test_throws ErrorException resolve_initial_conditions(
                 FromResults("absent.nc"),
@@ -4728,6 +4774,7 @@ end
                 forcing_file,
                 nothing,
                 simulation_config,
+                (:T, :S),
             )
 
             # And `FromForcing` with no date reads the run's own start_date, which the fixture puts at
@@ -4738,6 +4785,7 @@ end
                 forcing_file,
                 nothing,
                 simulation_config,
+                (:T, :S),
             ).T[2, 2, 2] == 1
         end
     end
@@ -4793,6 +4841,7 @@ end
             simulation_config = test_simulation_config(results_root = tmp, start_date = start_date)
             state = resolve_initial_conditions(
                 FromInitialState(), grid, nothing, result.output_file, simulation_config,
+                (:T, :S),
             )
             @test keys(state) == (:T, :S, :u, :v)
             @test size(state.u) == (Nx + 1, Ny, Nz)
@@ -4805,12 +4854,15 @@ end
             later = test_simulation_config(results_root = tmp, start_date = DateTime(2020, 1, 2))
             @test_throws "prepared for start_date" resolve_initial_conditions(
                 FromInitialState(), grid, nothing, result.output_file, later,
+                (:T, :S),
             )
             @test_throws "prepare_initial_state" resolve_initial_conditions(
                 FromInitialState(), grid, nothing, joinpath(tmp, "absent.nc"), simulation_config,
+                (:T, :S),
             )
             @test_throws "initial_state_config" resolve_initial_conditions(
                 FromInitialState(), grid, nothing, nothing, simulation_config,
+                (:T, :S),
             )
 
             # The setup-level drivers take the date from the simulation config. A day already
@@ -4899,13 +4951,15 @@ end
             #
             # Every build below varies only String/Float64/Int/Bool fields, so all of them share one
             # `SimulationConfig` instantiation and one `build_simulation` specialization. Overriding
-            # any of the five nested-config fields here — `writers` above all — would change the
-            # config's type and recompile the whole coupled model.
-            fjord(; kwargs...) = FjordConfig(;
+            # any of the nested-config fields here — `writers` above all — or the model config would
+            # change a type and recompile the whole coupled model.
+            fjord(; model_config = test_model_config(), kwargs...) = FjordConfig(;
                 grid_config,
                 bathymetry_config,
                 forcing_config,
-                boundary_config = boundaries_config,
+                boundary_data_config = boundaries_config,
+                model_config,
+                boundary_condition_configs = test_boundary_conditions(),
                 simulation_config = test_simulation_config(; results_root = tmp, kwargs...),
             )
 
@@ -4939,25 +4993,21 @@ end
 
             # `extra_kwargs` reaches the constructors it names. `verbose` is a stored `Simulation`
             # field and compiles no kernels, so this proves the splat arrives without paying for a
-            # second time-stepper specialization. Only one such case: overriding `model` changes
-            # `SimulationConfig`'s type and forces a fresh `build_simulation` specialization.
+            # second time-stepper specialization. Only one such case: overriding the model config
+            # changes its type and forces a fresh `coupled_model` specialization.
             passthrough = build_simulation(
                 fjord(
-                    model = test_model_config(
-                        extra_kwargs = (
-                            ocean_simulation = (verbose = false,),
-                            coupled_simulation = (verbose = false,),
-                        ),
+                    model_config = test_model_config(
+                        extra_kwargs = (ocean_simulation = (verbose = false,),),
                     ),
                 ),
             )
-            @test passthrough.verbose == false
             @test passthrough.model.ocean.verbose == false
 
             # The open boundary landed on the velocity normal to the boundary config's open edge, and
             # it radiates rather than being a wall — the whole point of the change, and something
             # only a real model build can show.
-            edge = only(open_edges(config.boundary_config))
+            edge = only(open_edges(config.boundary_data_config))
             normal_velocity = edge in (:south, :north) ? :v : :u
             edge_bc = getproperty(
                 getproperty(ocean_model.velocities, normal_velocity).boundary_conditions, edge,
@@ -5074,7 +5124,7 @@ end
             # Building into a `results_root` that does not exist yet creates it. Nothing else would:
             # `NetCDFWriter` creates only the `dir` keyword it is not given, and a setup naming no
             # `CheckpointWriter` has nothing else that mkpaths. The old model-assembly function
-            # did it; `coupled_simulation` is about assembling a model, so `build_simulation` does.
+            # did it; `coupled_model` is about assembling a model, so `build_simulation` does.
             fresh_root = joinpath(tmp, "not_created_yet", "nested")
             @test !isdir(fresh_root)
             @test build_simulation(fjord(results_root = fresh_root)) isa Simulation
@@ -5109,7 +5159,9 @@ end
             config = FjordConfig(;
                 grid_config,
                 bathymetry_config,
-                boundary_config = boundaries_config,
+                boundary_data_config = boundaries_config,
+                model_config = test_model_config(),
+                boundary_condition_configs = test_boundary_conditions(),
                 simulation_config = test_simulation_config(results_root = tmp),
             )
 
@@ -5190,14 +5242,16 @@ end
             config = FjordConfig(;
                 grid_config,
                 bathymetry_config,
-                boundary_config = boundaries_config,
+                boundary_data_config = boundaries_config,
+                model_config = test_model_config(),
+                boundary_condition_configs = test_boundary_conditions(),
                 simulation_config = test_simulation_config(results_root = tmp),
             )
             @test isnothing(config.forcing_config)
 
             # No prepared forcing is looked for, so no prerequisite error fires and no forcing terms
             # are built — the model gets Oceananigans' own empty forcing.
-            @test isnothing(FjordSim.Simulations.resolve_forcing_file(config))
+            @test isnothing(FjordSim.Simulations.resolve_forcing_file(config.forcing_config))
             @test simulation_forcing(config.forcing_config, nothing, nothing, (:T, :S), nothing) ==
                   NamedTuple()
 
@@ -5215,6 +5269,7 @@ end
             # failure inside `NCDataset(nothing)` after the grid has been built.
             @test_throws ErrorException FjordSim.Simulations.resolve_initial_conditions(
                 FromForcing(), nothing, nothing, nothing, config.simulation_config,
+                (:T, :S),
             )
         end
     end
@@ -5247,7 +5302,9 @@ end
                 grid_config,
                 bathymetry_config,
                 forcing_config,
-                boundary_config = boundaries_config,
+                boundary_data_config = boundaries_config,
+                model_config = test_model_config(),
+                boundary_condition_configs = test_boundary_conditions(),
                 simulation_config = test_simulation_config(results_root = tmp),
             )
 
@@ -5310,7 +5367,9 @@ end
                 grid_config,
                 bathymetry_config,
                 river_config = rivers,
-                boundary_config = boundaries_config,
+                boundary_data_config = boundaries_config,
+                model_config = test_model_config(),
+                boundary_condition_configs = test_boundary_conditions(),
                 simulation_config,
             )
             @test isnothing(config.forcing_config)
@@ -5985,7 +6044,7 @@ end
     end
 
     @testset "boundary config" begin
-        config = NorKystHindcastBoundariesConfig(
+        config = NorKystHindcastBoundaryDataConfig(
             data_root = "/tmp/fjordsim-test",
             output_directory = "norkyst_v3_hourly",
             open_edges = :south,
@@ -5994,10 +6053,10 @@ end
         )
 
         @test config isa FjordSim.Configs.AbstractBoundaryDataConfig
-        @test config isa FjordSim.BoundaryData.AbstractNorKystBoundariesConfig
-        @test NorKystBoundariesConfig(data_root = "/x", output_directory = "y",
+        @test config isa FjordSim.BoundaryData.AbstractNorKystBoundaryDataConfig
+        @test NorKystBoundaryDataConfig(data_root = "/x", output_directory = "y",
                                       open_edges = :south, parameters = String[], years = Int[]) isa
-              FjordSim.BoundaryData.AbstractNorKystBoundariesConfig
+              FjordSim.BoundaryData.AbstractNorKystBoundaryDataConfig
 
         @test open_edges(config) == [:south]
         # Not exported, unlike its forcing counterpart; reached through the module.
@@ -6021,7 +6080,7 @@ end
         @test FjordSim.BoundaryData.NORKYST_HINDCAST_BAROTROPIC_VARIABLES ==
               ("ubar_eastward", "vbar_northward")
 
-        @test_throws ArgumentError NorKystHindcastBoundariesConfig(
+        @test_throws ArgumentError NorKystHindcastBoundaryDataConfig(
             data_root = "/x", output_directory = "y", open_edges = Symbol[],
             parameters = String[], years = Int[],
         )

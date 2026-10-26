@@ -363,7 +363,7 @@ function plot_rivers(grid, config::AbstractRiverConfig, river_file, mouths)
 end
 
 """
-    plot_boundaries(config::AbstractBoundaryDataConfig, boundary_file)
+    plot_boundary_data(config::AbstractBoundaryDataConfig, boundary_file)
 
 Write a diagnostic plot of the prepared boundary file at `boundary_file` to
 `plot_path(config)`: one panel per `BOUNDARY_PLOT_PANELS` entry present in the file, for each edge in
@@ -377,7 +377,7 @@ runs, and the index is what a `NaN` in a section can be traced back to.
 The variables are named for their side, so the plot has to know which boundaries it is looking at; it
 reads them from the config, which is where the edges are stated.
 """
-function plot_boundaries(config::AbstractBoundaryDataConfig, boundary_file)
+function plot_boundary_data(config::AbstractBoundaryDataConfig, boundary_file)
     edges = open_edges(config)
     plot_file = prepare_plot_file(config)
 

@@ -30,11 +30,16 @@ import Oceananigans.OutputReaders: new_backend
 using ..Configs:
     AbstractForcingConfig,
     AbstractRiverConfig,
-    FjordConfig
+    AbstractFjordConfig,
+    grid_config,
+    bathymetry_config,
+    river_config,
+    forcing_config,
+    simulation_config
 using ..Utils: coverage_window
 using ..Grids: domain_grid, simulation_grid
 using ..Plotting: Plotting, plot_rivers
-using ..Bathymetry: bathymetry_path
+using ..Bathymetry: resolve_bathymetry_file
 using ..Forcing: forcing_path
 using ..Regridding:
     native_times_to_seconds,
@@ -134,14 +139,15 @@ function river_discharge end
 """
     download_rivers(target_grid, config)
 
-Fetch the source data of a river dataset. Only needed by a dataset that downloads.
+Fetch the source data of a river dataset. Only needed by a dataset that downloads: the fallback
+does nothing, since `add_rivers` calls this for every dataset.
 
 `target_grid` is the bare domain grid, and is there for the same reason `download_forcing` and
-`download_boundaries` take one: a dataset that has to *find* its rivers rather than being told
+`download_boundary_data` take one: a dataset that has to *find* its rivers rather than being told
 where they are needs the domain bounds, which `x_domain`/`y_domain` give for any grid. A dataset
 whose outlets are stated in the config ignores it.
 """
-function download_rivers end
+download_rivers(target_grid, config::AbstractRiverConfig) = nothing
 
 """
     river_search_radius(config)
@@ -445,11 +451,12 @@ function river_mouths(target_grid, locations, radius, peak_discharges, maximum_v
 end
 
 """
-    add_rivers(config::FjordConfig)
+    add_rivers(config)
+    add_rivers(grid_config, bathymetry_config, river_config, forcing_config, simulation_config)
     add_rivers(target_grid, rivers::AbstractRiverConfig; coverage = nothing)
 
-Write the river inflow file at `river_forcing_path(rivers)`. Returns `nothing` when the setup names
-no `river_config`.
+Write the river inflow file at `river_forcing_path(rivers)`. Returns `nothing` for a `nothing`
+river config.
 
 Each river is a volume of water — `river_discharge` m³/s carrying the `river_series` values — that
 enters through the surface of the columns `river_mouths` gives it. The file stores that already on
@@ -462,30 +469,40 @@ bathymetry and works with no forcing config at all, a change to the forcing need
 and `FromForcing` initial conditions read a forcing file no river has touched. Its time axis comes from the run window, so it needs
 `coverage` — a change of `start_date` or `stop_time` means re-running this step.
 
-The `FjordConfig` method is the setup-level driver: it reads the grid from the processed bathymetry,
-so the rivers are placed against the same land mask the model sees, downloads the river data first,
-and takes `coverage` from the simulation config.
+The component form reads the grid from the processed bathymetry, so the rivers are placed against
+the same land mask the model sees, downloads the river data first, and takes `coverage` from the
+simulation config; the forcing config is read only to refuse a river file that would overwrite the
+prepared forcing. The setup form only picks those five components out.
 """
-function add_rivers(config::FjordConfig)
-    rivers = config.river_config
-    isnothing(rivers) && return nothing
-    validate_river_output(rivers, config.forcing_config)
+add_rivers(config::AbstractFjordConfig) = add_rivers(
+    grid_config(config),
+    bathymetry_config(config),
+    river_config(config),
+    forcing_config(config),
+    simulation_config(config),
+)
 
-    bathymetry_file = bathymetry_path(config.bathymetry_config)
-    isfile(bathymetry_file) || error(
-        "Processed bathymetry $bathymetry_file does not exist. " *
-        "Run `julia --project -m FjordSim prepare_bathymetry` for this setup first.",
-    )
+add_rivers(grid_config, bathymetry_config, ::Nothing, forcing_config, simulation_config) = nothing
+
+function add_rivers(
+    grid_config,
+    bathymetry_config,
+    rivers::AbstractRiverConfig,
+    forcing_config,
+    simulation_config,
+)
+    validate_river_output(rivers, forcing_config)
+    bathymetry_file = resolve_bathymetry_file(bathymetry_config)
 
     # The bare domain grid, which is all a download needs: a dataset that discovers its outlets is
     # asking where the domain is, not where the coastline is — the coastline decides where an outlet
     # is *placed*, and that happens below against the immersed grid. Same grid `download_forcing`
-    # and `download_boundaries` hand their own datasets, for the same reason.
-    download_rivers(domain_grid(config.grid_config, CPU()), rivers)
+    # and `download_boundary_data` hand their own datasets, for the same reason.
+    download_rivers(domain_grid(grid_config, CPU()), rivers)
 
     # The grid stays on the CPU: building the land masks walks `peripheral_node` cell by cell.
-    grid = simulation_grid(config.grid_config, bathymetry_file, CPU())
-    result = add_rivers(grid, rivers; coverage = coverage_window(config.simulation_config))
+    grid = simulation_grid(grid_config, bathymetry_file, CPU())
+    result = add_rivers(grid, rivers; coverage = coverage_window(simulation_config))
 
     plot_file = plot_rivers(grid, rivers, river_forcing_path(rivers), result.mouths)
 

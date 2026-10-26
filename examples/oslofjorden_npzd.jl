@@ -12,7 +12,7 @@
 #      or two they mean to change; `NPZDBiogeochemistry` implements `AbstractBiogeochemistryConfig`'s
 #      one hook. That is the documented way to add a source (`docs/adding-a-source.md`) and it is all
 #      rivers and the model need.
-#   3. **A new method on a *pipeline* generic.** `prepare_boundaries` is a generic function
+#   3. **A new method on a *pipeline* generic.** `prepare_boundary_data` is a generic function
 #      dispatching on the config type, so `NPZDBoundaries` adds a method that runs the built-in
 #      pipeline and then *appends* the biogeochemical variables to the file it wrote.
 #
@@ -34,11 +34,11 @@
 # `oslofjorden.jl`'s own `rivers_nve.nc` and `boundaries.nc` are left untouched:
 #
 #   julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden.jl   # shared, if not run
-#   julia --project -m FjordSim download_boundaries --config examples/oslofjorden.jl   # shared
+#   julia --project -m FjordSim download_boundary_data --config examples/oslofjorden.jl   # shared
 #   julia --project -m FjordSim download_atmosphere --config examples/oslofjorden.jl   # shared
 #   julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden.jl   # shared
 #   julia --project -m FjordSim add_rivers          --config examples/oslofjorden_npzd.jl
-#   julia --project -m FjordSim prepare_boundaries  --config examples/oslofjorden_npzd.jl
+#   julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden_npzd.jl
 #   julia --project -m FjordSim run_simulation      --config examples/oslofjorden_npzd.jl
 #
 # `add_rivers` needs `NVE_API_KEY`, exactly as `oslofjorden.jl` does.
@@ -294,14 +294,14 @@ end
 # --- Writing the profiles into the prepared files -----------------------------------------------
 
 # Matches FjordSim's own writer settings, so the appended variables compress like the ones
-# `prepare_boundaries` wrote beside them.
+# `prepare_boundary_data` wrote beside them.
 const NPZD_DEFLATE_LEVEL = 5
 
 """
     append_boundary_variables!(filepath, edges, profiles)
 
 Add one `<edge>_<name>` variable per entry of `profiles` and per edge to the prepared boundary file
-at `filepath`, on the layout `prepare_boundaries` writes: the along-edge axis, then depth, then time.
+at `filepath`, on the layout `prepare_boundary_data` writes: the along-edge axis, then depth, then time.
 
 Uniform along the edge and finite everywhere, including under land. The boundary reader fills
 non-finite cells from their nearest finite neighbour anyway (`fill_boundary_gaps!`), so a mask here
@@ -349,7 +349,7 @@ OceanBioME's NPZD, as the knobs `model_biogeochemistry` builds it from.
 
 A config rather than `NPZD(grid; ...)` itself, because `NPZD` needs the grid and this file is
 evaluated before there is one — `build_simulation` reads the grid out of the processed bathymetry
-and only then calls `coupled_simulation`, which hands it to `model_biogeochemistry`.
+and only then calls `model_biogeochemistry`, handing the result to `coupled_model`.
 """
 struct NPZDBiogeochemistry{P} <: AbstractBiogeochemistryConfig
     surface_PAR::P
@@ -493,11 +493,11 @@ file has no series for one — naming an open edge is a statement that the bound
 whole exterior state there. So `OpenLateralBoundaryFromData` below is `oslofjorden.jl`'s, unchanged,
 and this is what makes it work.
 
-`boundary_variable_names` is extended as well as `prepare_boundaries`: the map is what
+`boundary_variable_names` is extended as well as `prepare_boundary_data`: the map is what
 `boundary_edge_series` reads the file back through, so a variable missing from it would be written
 and then ignored. The four new entries are keyed by themselves rather than by a NorKyst variable —
 nothing in the download corresponds to them, and nothing looks for them there, because
-`prepare_boundaries` only ever considers the source names listed in `parameters`.
+`prepare_boundary_data` only ever considers the source names listed in `parameters`.
 """
 struct NPZDBoundaries{B} <: AbstractBoundaryDataConfig
     base::B
@@ -515,11 +515,11 @@ BoundaryData.boundary_variable_names(config::NPZDBoundaries) = merge(
     Dict(String(name) => String(name) for name in keys(NPZD_PROFILES)),
 )
 
-BoundaryData.download_boundaries(target_grid, config::NPZDBoundaries) =
-    download_boundaries(target_grid, config.base)
+BoundaryData.download_boundary_data(target_grid, config::NPZDBoundaries) =
+    download_boundary_data(target_grid, config.base)
 
 """
-    prepare_boundaries(target_grid, config::NPZDBoundaries; coverage)
+    prepare_boundary_data(target_grid, config::NPZDBoundaries; coverage)
 
 Regrid `base`'s exterior state, then append the biogeochemical variables to the file it wrote.
 
@@ -527,8 +527,8 @@ Appended after the pipeline rather than inside it: `boundary_source_slab` can *d
 from others in the download, but `prepared_boundary_variable` still validates the source name
 against the downloaded file, so a variable with no source at all has no place there.
 """
-function BoundaryData.prepare_boundaries(target_grid, config::NPZDBoundaries; coverage = nothing)
-    result = prepare_boundaries(target_grid, config.base; coverage)
+function BoundaryData.prepare_boundary_data(target_grid, config::NPZDBoundaries; coverage = nothing)
+    result = prepare_boundary_data(target_grid, config.base; coverage)
     edges = config.open_edges
     append_boundary_variables!(result.output_file, edges, NPZD_PROFILES)
 
@@ -556,60 +556,61 @@ rivers = NPZDRivers(
 )
 
 boundaries = NPZDBoundaries(
-    NorKystBoundariesConfig(
-        data_root = base.boundary_config.data_root,
-        output_directory = base.boundary_config.output_directory,
+    NorKystBoundaryDataConfig(
+        data_root = base.boundary_data_config.data_root,
+        output_directory = base.boundary_data_config.output_directory,
         output_file = "boundaries_npzd.nc",
         plot_file = "boundaries_npzd.png",
-        open_edges = base.boundary_config.open_edges,
-        margin = base.boundary_config.margin,
-        architecture = base.boundary_config.architecture,
-        parameters = base.boundary_config.parameters,
-        years = base.boundary_config.years,
+        open_edges = base.boundary_data_config.open_edges,
+        margin = base.boundary_data_config.margin,
+        architecture = base.boundary_data_config.architecture,
+        parameters = base.boundary_data_config.parameters,
+        years = base.boundary_data_config.years,
     ),
 )
 
 simulation = base.simulation_config
-base_model = simulation.model
+base_model = base.model_config
 
 FjordConfig(
     grid_config = base.grid_config,
     bathymetry_config = base.bathymetry_config,
     river_config = rivers,
-    boundary_config = boundaries,
+    boundary_data_config = boundaries,
     atmosphere_config = base.atmosphere_config,
+    # `oslofjorden.jl`'s model with the four tracers added.
+    model_config = CoupledHydrostaticModel(
+        buoyancy = base_model.buoyancy,
+        closure = base_model.closure,
+        # `oslofjorden.jl`'s scalar `WENO()`, which was already chosen so that a tracer the setup
+        # does not enumerate — CATKE's `e` then, these four now — does not silently fall back to
+        # an unbounded centered scheme.
+        tracer_advection = base_model.tracer_advection,
+        momentum_advection = base_model.momentum_advection,
+        # Spelled out in full. Oceananigans merges a biogeochemical model's required tracers into
+        # the model's own only when *none* of them is named already (`has_biogeochemical_tracers`),
+        # and NPZD requires `:T` — its growth rate carries a Q₁₀ — which every FjordSim setup
+        # names. All-but-one present is an `ArgumentError`, so the list must be complete. It is
+        # also what `model_tracers` reports, which decides the forcing terms, the open boundary
+        # conditions and the initial conditions, all resolved before the model exists.
+        tracers = (:T, :S, :N, :P, :Z, :D),
+        coriolis = base_model.coriolis,
+        sea_ice = base_model.sea_ice,
+        free_surface = base_model.free_surface,
+        extra_kwargs = base_model.extra_kwargs,
+    ),
+    # Overloads model_biogeochemistry, which build_simulation calls once the grid exists.
+    biogeochemistry_config = NPZDBiogeochemistry(surface_PAR = surface_par, scale_negatives = true),
+    # Unchanged. The air-sea flux piece gives a top boundary condition to u, v, T and S only, so
+    # the four biogeochemical tracers get Oceananigans' default no-flux surface — right for a
+    # first NPZD, which has no gas exchange and no atmospheric nitrogen deposition. The open
+    # southern edge is what `NPZDBoundaries` exists to feed.
+    boundary_condition_configs = base.boundary_condition_configs,
     simulation_config = SimulationConfig(
         # Its own root. Checkpoints are shared per `results_root`, so pointing this at
         # `oslofjorden.jl`'s would have the two runs pick each other's up.
         results_root = fjord_results_root("oslofjorden_npzd"),
         architecture = simulation.architecture,
-        # `oslofjorden.jl`'s model with the four tracers added and the biogeochemistry filled in.
-        model = CoupledHydrostaticSimulation(
-            buoyancy = base_model.buoyancy,
-            closure = base_model.closure,
-            # `oslofjorden.jl`'s scalar `WENO()`, which was already chosen so that a tracer the setup
-            # does not enumerate — CATKE's `e` then, these four now — does not silently fall back to
-            # an unbounded centered scheme.
-            tracer_advection = base_model.tracer_advection,
-            momentum_advection = base_model.momentum_advection,
-            # Spelled out in full. Oceananigans merges a biogeochemical model's required tracers into
-            # the model's own only when *none* of them is named already (`has_biogeochemical_tracers`),
-            # and NPZD requires `:T` — its growth rate carries a Q₁₀ — which every FjordSim setup
-            # names. All-but-one present is an `ArgumentError`, so the list must be complete. It is
-            # also what `model_tracers` reports, which decides the forcing terms, the open boundary
-            # conditions and the initial conditions, all resolved before the model exists.
-            tracers = (:T, :S, :N, :P, :Z, :D),
-            coriolis = base_model.coriolis,
-            sea_ice = base_model.sea_ice,
-            biogeochemistry = NPZDBiogeochemistry(surface_PAR = surface_par, scale_negatives = true),
-            free_surface = base_model.free_surface,
-            extra_kwargs = base_model.extra_kwargs,
-        ),
-        # Unchanged. The air-sea flux piece gives a top boundary condition to u, v, T and S only, so
-        # the four biogeochemical tracers get Oceananigans' default no-flux surface — right for a
-        # first NPZD, which has no gas exchange and no atmospheric nitrogen deposition. The open
-        # southern edge is what `NPZDBoundaries` exists to feed.
-        boundary_conditions = simulation.boundary_conditions,
         writers = (
             SnapshotWriter(
                 name = :ocean,

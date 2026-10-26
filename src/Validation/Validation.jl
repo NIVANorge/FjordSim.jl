@@ -32,7 +32,11 @@ using JLD2
 using NCDatasets
 using Statistics: cor, mean, std, var
 
-using ..Configs: AbstractSimulationConfig, FjordConfig
+using ..Configs:
+    AbstractSimulationConfig,
+    AbstractFjordConfig,
+    bathymetry_config,
+    simulation_config
 using ..Utils: coverage_window
 using ..Simulations:
     Station,
@@ -112,7 +116,7 @@ model_variable(variable) = get(MODEL_VARIABLES, String(variable), Symbol(variabl
 const VALIDATION_VARIABLES = ("eta", "T", "S", "u", "v")
 
 """
-    default_observations(config::FjordConfig)
+    default_observations(simulation_config, bathymetry_config)
 
 The observation sources a setup can be validated against without anyone supplying a file.
 
@@ -129,11 +133,9 @@ explicitly once their exports exist.
 Returns an empty tuple for a setup with no free-surface station writer, which is not an error —
 `validate_simulation` will simply find nothing to score and say so.
 """
-function default_observations(config::FjordConfig)
-    isnothing(config.simulation_config) && return ()
-
+function default_observations(simulation::AbstractSimulationConfig, bathymetry)
     gauges = Station[]
-    for writer in station_writers(config.simulation_config)
+    for writer in station_writers(simulation)
         writer isa FieldStationWriter || continue
         :η in writer.variables || continue
         append!(gauges, writer.stations)
@@ -143,12 +145,13 @@ function default_observations(config::FjordConfig)
 
     # The bathymetry's data root, the one every setup has, so the cache lands beside its other
     # downloads.
-    data_root = config.bathymetry_config.data_root
+    data_root = bathymetry.data_root
     return (KartverketSeaLevel(; data_root, stations = unique(g -> g.name, gauges)),)
 end
 
 """
-    validate_simulation(config::FjordConfig; observations, window, depths)
+    validate_simulation(config; observations, window, depths)
+    validate_simulation(simulation_config, bathymetry_config; observations, window, depths)
 
 Score a finished run against observations and write the tables and figures. Returns the
 validation directory, or `nothing` for a setup naming no `simulation_config`.
@@ -176,17 +179,20 @@ as "no model output for ..." rather than as an error.
 - `depths`: which depths to score profiles at, in metres. Defaults to a spread through the upper
   ocean and the basin; a surface series ignores it.
 """
+validate_simulation(config::AbstractFjordConfig; kwargs...) =
+    validate_simulation(simulation_config(config), bathymetry_config(config); kwargs...)
+
+# A setup that is never simulated has nothing to validate, which is an opt-out rather than an error —
+# the same `nothing` `run_simulation` returns for it, reported as a no-op by `CLI.main`.
+validate_simulation(::Nothing, bathymetry; kwargs...) = nothing
+
 function validate_simulation(
-    config::FjordConfig;
-    observations = default_observations(config),
-    window = coverage_window(config.simulation_config),
+    simulation::AbstractSimulationConfig,
+    bathymetry;
+    observations = default_observations(simulation, bathymetry),
+    window = coverage_window(simulation),
     depths = (0.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0),
 )
-    # A setup that is never simulated has nothing to validate, which is an opt-out rather than an
-    # error — the same `nothing` `run_simulation` returns for it, reported as a no-op by `CLI.main`.
-    isnothing(config.simulation_config) && return nothing
-
-    simulation = config.simulation_config
     writers = station_writers(simulation)
     isempty(writers) && throw(
         ArgumentError(

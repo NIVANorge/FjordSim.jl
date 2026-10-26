@@ -28,7 +28,7 @@ const FORCING_DEFLATE_LEVEL = 5
 """
     interpolation_architecture(config)
 
-Where `prepare_forcing` and `prepare_boundaries` run their interpolation kernel, from
+Where `prepare_forcing` and `prepare_boundary_data` run their interpolation kernel, from
 `config.architecture`:
 
 - `:auto`: the GPU when one is usable, else the CPU. The default, so one setup runs unchanged on
@@ -160,7 +160,7 @@ variable and an open-boundary one disagree about: four for the forcing file's
 `(along, across, Nz, time)`, three or two for the boundary file, whose across-edge dimension is one
 cell and whose surface variables have no depth axis. Everything else — the three-dimensional mask
 with its one-cell slab, the projected nodes, the source fill — is shared, which is why
-`prepare_boundaries` reuses this type rather than defining its own.
+`prepare_boundary_data` reuses this type rather than defining its own.
 """
 struct PreparedVariable{N}
     source_name::String

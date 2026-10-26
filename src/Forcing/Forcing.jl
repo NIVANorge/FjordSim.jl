@@ -16,11 +16,16 @@ import Oceananigans.OutputReaders: new_backend
 
 using ..Configs:
     AbstractForcingConfig,
-    FjordConfig
+    AbstractFjordConfig,
+    grid_config,
+    bathymetry_config,
+    forcing_config,
+    boundary_data_config,
+    simulation_config
 using ..Utils: coverage_window
 using ..Grids: domain_grid, open_edges, simulation_grid
 using ..Plotting: Plotting, plot_forcing
-using ..Bathymetry: bathymetry_path
+using ..Bathymetry: resolve_bathymetry_file
 using ..Regridding:
     Regridding,
     native_times_to_seconds,
@@ -308,7 +313,7 @@ forcing_from_file(config::AbstractForcingConfig; grid, tracers, reference_date =
 """
     simulation_forcing(config::AbstractForcingConfig, grid, filepath, tracers, reference_date)
 
-The forcing term object `coupled_simulation` consumes, read from `filepath` — the file
+The forcing term object `coupled_model` consumes, read from `filepath` — the file
 `build_simulation` resolved via `simulation_forcing_path`, so this hook takes the path instead of
 resolving it. The rivers are not in it: `build_simulation` adds them from their own file through
 `river_forcing`.
@@ -324,7 +329,7 @@ simulation_forcing(config::AbstractForcingConfig, grid, filepath, tracers, refer
 """
     simulation_forcing(::Nothing, grid, filepath, tracers, reference_date)
 
-No forcing term at all, for a setup whose `forcing_config` is `nothing`: `coupled_simulation`
+No forcing term at all, for a setup whose `forcing_config` is `nothing`: `coupled_model`
 still receives a splattable `forcing` keyword, just an empty one, which is exactly
 `HydrostaticFreeSurfaceModel`'s own default.
 """
@@ -404,19 +409,19 @@ A new forcing dataset implements this on its `AbstractForcingConfig` subtype.
 function forcing_variable_names end
 
 """
-    download_forcing(config::FjordConfig)
-    download_forcing(target_grid, config::AbstractForcingConfig)
+    download_forcing(config)
+    download_forcing(target_grid, forcing_config)
 
 Fetch and subset the source data a later `prepare_forcing` call reads, into
-`forcing_directory(config)`.
+`forcing_directory(forcing_config)`.
 
-The `FjordConfig` form is the generic driver: it builds the setup's grid on the CPU and
-dispatches on the forcing config, so a new dataset only implements the second method. The
-grid is passed rather than the grid config because a dataset needs the domain bounds, which
-`x_domain`/`y_domain` provide for any `AbstractGridConfig`.
+The setup form builds the bare domain grid on the CPU from the setup's grid config and dispatches
+on its forcing config, so a new dataset only implements the second method. The grid is passed
+rather than the grid config because a dataset needs the domain bounds, which `x_domain`/`y_domain`
+provide for any `AbstractGridConfig`.
 """
-download_forcing(config::FjordConfig) =
-    download_forcing(domain_grid(config.grid_config, CPU()), config.forcing_config)
+download_forcing(config::AbstractFjordConfig) =
+    download_forcing(domain_grid(grid_config(config), CPU()), forcing_config(config))
 
 download_forcing(target_grid, ::Nothing) = nothing
 
@@ -508,42 +513,51 @@ end
 prepare_forcing(target_grid, ::Nothing; coverage = nothing, edges = nothing) = nothing
 
 """
-    prepare_forcing(config::FjordConfig)
+    prepare_forcing(config)
+    prepare_forcing(grid_config, bathymetry_config, forcing_config, boundary_data_config, simulation_config)
 
-Regrid the forcing a whole setup names onto its simulation grid, and write the diagnostic plot.
-Returns `nothing` when the setup names no forcing.
+Regrid the forcing a setup names onto its simulation grid, and write the diagnostic plot. Returns
+`nothing` for a `nothing` forcing config.
 
-This is the setup-level driver, the same shape as `download_forcing(config::FjordConfig)`. The
-grid comes from the processed bathymetry rather than the grid config, so the output's land mask
-matches the model exactly, which means `prepare_bathymetry` must have run first. It stays on the
-CPU regardless of `config.forcing_config.architecture` — that field selects where the
-interpolation kernel runs, and building the masks needs scalar access to the bathymetry.
+The setup form only picks out the five components this step reads. The grid comes from the
+processed bathymetry rather than the grid config alone, so the output's land mask matches the model
+exactly, which means `prepare_bathymetry` must have run first. It stays on the CPU regardless of the
+forcing config's `architecture` — that field selects where the interpolation kernel runs, and
+building the masks needs scalar access to the bathymetry.
 
-The coverage window comes from the setup's simulation config, so the prepared file spans the run
-the setup describes; a setup naming no simulation config gets `nothing` and the downloaded range.
-The open edges come from the setup's boundary config, so the mask leaves those edges' velocity faces
-where the open boundary needs them; a setup naming no boundary data is closed all round.
+The coverage window comes from the simulation config, so the prepared file spans the run the setup
+describes; a `nothing` simulation config gives the downloaded range. The open edges come from the
+boundary data config, so the mask leaves those edges' velocity faces where the open boundary needs
+them; a `nothing` boundary data config is closed all round.
 
 # Returns
 The `prepare_forcing(target_grid, config)` named tuple with `plot_file` added.
 """
-function prepare_forcing(config::FjordConfig)
-    isnothing(config.forcing_config) && return nothing
+prepare_forcing(config::AbstractFjordConfig) = prepare_forcing(
+    grid_config(config),
+    bathymetry_config(config),
+    forcing_config(config),
+    boundary_data_config(config),
+    simulation_config(config),
+)
 
-    bathymetry_file = bathymetry_path(config.bathymetry_config)
-    isfile(bathymetry_file) || error(
-        "Processed bathymetry $bathymetry_file does not exist. " *
-        "Run `julia --project -m FjordSim prepare_bathymetry` for this setup first.",
-    )
+prepare_forcing(grid_config, bathymetry_config, ::Nothing, boundary_data_config, simulation_config) = nothing
 
-    grid = simulation_grid(config.grid_config, bathymetry_file, CPU())
+function prepare_forcing(
+    grid_config,
+    bathymetry_config,
+    forcing_config::AbstractForcingConfig,
+    boundary_data_config,
+    simulation_config,
+)
+    grid = simulation_grid(grid_config, resolve_bathymetry_file(bathymetry_config), CPU())
     result = prepare_forcing(
         grid,
-        config.forcing_config;
-        coverage = coverage_window(config.simulation_config),
-        edges = open_edges(config.boundary_config),
+        forcing_config;
+        coverage = coverage_window(simulation_config),
+        edges = open_edges(boundary_data_config),
     )
-    plot_file = plot_forcing(grid, config.forcing_config, forcing_path(config.forcing_config))
+    plot_file = plot_forcing(grid, forcing_config, forcing_path(forcing_config))
 
     @info "Prepared variables: $(join(result.variables, ", "))"
     @info "Time range: $(first(result.times)) to $(last(result.times)) ($(length(result.times)) steps)"

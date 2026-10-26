@@ -1,7 +1,7 @@
 module Simulations
 
 export SimulationConfig,
-    CoupledHydrostaticSimulation,
+    CoupledHydrostaticModel,
     SplitExplicitFreeSurfaceConfig,
     BoundarySponge,
     RiverMouthMixing,
@@ -37,7 +37,7 @@ using KernelAbstractions: @kernel, @index, @Const
 
 using ..Configs:
     AbstractSimulationConfig,
-    AbstractCoupledSimulationConfig,
+    AbstractModelConfig,
     AbstractFreeSurfaceConfig,
     AbstractClosureConfig,
     AbstractWriterConfig,
@@ -46,17 +46,28 @@ using ..Configs:
     AbstractForcingConfig,
     AbstractInitialStateConfig,
     AbstractRiverConfig,
-    FjordConfig
+    AbstractFjordConfig,
+    grid_config,
+    bathymetry_config,
+    forcing_config,
+    initial_state_config,
+    river_config,
+    boundary_data_config,
+    atmosphere_config,
+    model_config,
+    biogeochemistry_config,
+    boundary_condition_configs,
+    simulation_config
 using ..Utils: progress, cell_advection_timescale_coupled_model
 using ..Grids: simulation_grid, open_edges
 using ..Atmospheres: prescribed_atmosphere, prescribed_radiation, atmosphere_date_range
 using ..Regridding: interpolation_architecture, column_wet_levels
-using ..Bathymetry: bathymetry_path
+using ..Bathymetry: resolve_bathymetry_file
 using ..Forcing: simulation_forcing, forcing_date_range, forcing_path
 using ..InitialState: INITIAL_STATE_DATE_ATTRIBUTE, initial_state_path
 using ..Rivers: river_forcing, river_date_range, read_river_columns, combine_forcing, river_forcing_path
 using ..BoundaryData: boundary_series, boundary_date_range
-using ..BoundaryConditions: field_boundary_conditions
+using ..BoundaryConditions: model_boundary_conditions
 
 """
     SplitExplicitFreeSurfaceConfig(; cfl)
@@ -64,7 +75,7 @@ using ..BoundaryConditions: field_boundary_conditions
 The one built-in `AbstractFreeSurfaceConfig`: a barotropic split-explicit solver at a given CFL.
 
 Holds only the knob, not the object — `SplitExplicitFreeSurface(grid, cfl = ...)` needs the grid,
-which does not exist until `coupled_simulation` builds it, so `free_surface` is what does that
+which does not exist until `coupled_model` builds it, so `free_surface` is what does that
 building once the grid is in hand.
 """
 struct SplitExplicitFreeSurfaceConfig <: AbstractFreeSurfaceConfig
@@ -76,27 +87,27 @@ SplitExplicitFreeSurfaceConfig(; cfl) = SplitExplicitFreeSurfaceConfig(Float64(c
 """
     free_surface(config::SplitExplicitFreeSurfaceConfig, grid)
 
-Build the `SplitExplicitFreeSurface` `coupled_simulation` passes to `HydrostaticFreeSurfaceModel`.
+Build the `SplitExplicitFreeSurface` `coupled_model` passes to `HydrostaticFreeSurfaceModel`.
 """
 free_surface(config::SplitExplicitFreeSurfaceConfig, grid) =
     SplitExplicitFreeSurface(grid, cfl = config.cfl)
 
 """
-    model_closure(closure, grid, boundary_config, river_columns)
+    model_closure(closure, grid, boundary_data_config, river_columns)
 
-The closure `coupled_simulation` gives `HydrostaticFreeSurfaceModel`.
+The closure `coupled_model` gives `HydrostaticFreeSurfaceModel`.
 
 The fallback is the identity, so anything a setup already writes — a single Oceananigans closure, or
 a tuple of them — passes through unchanged. An `AbstractClosureConfig` overloads it to build one
 from the grid, the setup's open-boundary data config, and `river_columns` — every column a river
 enters through, as `(; target_i, target_j)`, or `nothing` for a setup with no rivers.
 """
-model_closure(closure, grid, boundary_config, river_columns) = closure
+model_closure(closure, grid, boundary_data_config, river_columns) = closure
 
 """
     model_biogeochemistry(biogeochemistry, grid)
 
-The biogeochemistry `coupled_simulation` gives `HydrostaticFreeSurfaceModel`.
+The biogeochemistry `coupled_model` gives `HydrostaticFreeSurfaceModel`.
 
 The fallback is the identity, so `nothing` or a pre-built biogeochemistry passes through unchanged.
 An `AbstractBiogeochemistryConfig` overloads it to build one from the grid.
@@ -268,7 +279,7 @@ function sponge_parameters(config::BoundarySponge, grid, edges)
 end
 
 """
-    model_closure(config::BoundarySponge, grid, boundary_config, river_columns)
+    model_closure(config::BoundarySponge, grid, boundary_data_config, river_columns)
 
 Append the sponge to `config.base`, or return `base` unchanged when the domain has no open edge.
 
@@ -277,8 +288,8 @@ coordinates, so it needs no field, no allocation and no architecture — the sam
 and GPU. `discrete_form = true` because that is the only form `ScalarDiffusivity` passes
 `parameters` to; see `sponge_viscosity`.
 """
-function model_closure(config::BoundarySponge, grid, boundary_config, river_columns)
-    edges = open_edges(boundary_config)
+function model_closure(config::BoundarySponge, grid, boundary_data_config, river_columns)
+    edges = open_edges(boundary_data_config)
     isempty(edges) && return config.base
 
     parameters = sponge_parameters(config, grid, edges)
@@ -333,18 +344,18 @@ RiverMouthMixing(; base, diffusivity, mixing_depth) =
     RiverMouthMixing(base, Float64(diffusivity), Float64(mixing_depth))
 
 """
-    model_closure(config::RiverMouthMixing, grid, boundary_config, river_columns)
+    model_closure(config::RiverMouthMixing, grid, boundary_data_config, river_columns)
 
 `config.base`'s closure with NumericalEarth's `river_mouth_vertical_diffusivity` appended over
 `river_columns`. An error for a setup with no rivers, which has no columns to mix.
 """
-function model_closure(config::RiverMouthMixing, grid, boundary_config, river_columns)
+function model_closure(config::RiverMouthMixing, grid, boundary_data_config, river_columns)
     isnothing(river_columns) && error(
         "RiverMouthMixing mixes the columns the rivers enter through, but this setup names no " *
         "rivers. Name a `river_config` on the `FjordConfig`, or drop RiverMouthMixing.",
     )
 
-    base = model_closure(config.base, grid, boundary_config, river_columns)
+    base = model_closure(config.base, grid, boundary_data_config, river_columns)
     mixing = NumericalEarth.river_mouth_vertical_diffusivity(
         grid,
         (; rivers = river_columns);
@@ -356,34 +367,32 @@ function model_closure(config::RiverMouthMixing, grid, boundary_config, river_co
 end
 
 """
-    CoupledHydrostaticSimulation(; buoyancy, closure, tracer_advection, momentum_advection,
-                                 tracers, coriolis, sea_ice, biogeochemistry, free_surface)
+    CoupledHydrostaticModel(; buoyancy, closure, tracer_advection, momentum_advection,
+                              tracers, coriolis, sea_ice, free_surface, extra_kwargs)
 
 What the model *is*: a `HydrostaticFreeSurfaceModel` inside a NumericalEarth `OceanSeaIceModel`.
 
 Holds the components that depend on neither the grid nor the device, so they are stored as the
-objects `coupled_simulation` consumes rather than as knobs it has to interpret. `free_surface` is
-the one exception: it is itself an `AbstractFreeSurfaceConfig`, built by its own `free_surface(config,
-grid)` hook rather than stored ready-made, for exactly the reason `coupled_simulation` — and not this
-struct — is what assembles the model: `SplitExplicitFreeSurface` needs the grid, which only exists
-once `coupled_simulation` is called. `closure` and `biogeochemistry` may each be a config of that
-kind too (`AbstractClosureConfig`, `AbstractBiogeochemistryConfig`), resolved by `model_closure` and
-`model_biogeochemistry`.
+objects `coupled_model` consumes rather than as knobs it has to interpret. `free_surface` is the one
+exception: it is itself an `AbstractFreeSurfaceConfig`, built by its own `free_surface(config, grid)`
+hook, because `SplitExplicitFreeSurface` needs the grid, which only exists once `coupled_model` is
+called. `closure` may be an `AbstractClosureConfig` too, resolved by `model_closure`. The
+biogeochemistry is not a field: it is the setup's `biogeochemistry_config`, a component of its own,
+and reaches `coupled_model` as a keyword.
 
 **No field has a default**, deliberately. Every one is a scientific choice about a particular fjord,
 and a default would let the next setup silently inherit it, so a setup that forgets one gets an
 `UndefKeywordError` naming it rather than a plausible-looking run. `extra_kwargs` is no exception: a
 setup that passes nothing extra still writes `extra_kwargs = (;)`.
 
-Ten type parameters. Nine are components, and the tenth is the collapse the count was always headed
-for: rather than one field per remaining constructor keyword — `HydrostaticFreeSurfaceModel` alone
-has eight this does not name — `extra_kwargs` carries all of them in one `NamedTuple`. **Do not add
-an eleventh**; anything new goes inside `extra_kwargs`, which is exactly what it is for. The "config"
-testset guards the count.
+Nine type parameters. Eight are components, and the ninth collapses the rest: rather than one field
+per remaining constructor keyword — `HydrostaticFreeSurfaceModel` alone has eight this does not name
+— `extra_kwargs` carries all of them in one `NamedTuple`. **Do not add a tenth**; anything new goes
+inside `extra_kwargs`, which is exactly what it is for. The "config" testset guards the count.
 
 # `extra_kwargs`
 
-A `NamedTuple` with up to four slots, one per constructor `coupled_simulation` calls, each itself a
+A `NamedTuple` with up to three slots, one per constructor `coupled_model` calls, each itself a
 `NamedTuple` splatted into that call:
 
 | Slot | Reaches | Keywords it is for |
@@ -391,11 +400,10 @@ A `NamedTuple` with up to four slots, one per constructor `coupled_simulation` c
 | `ocean_model` | `HydrostaticFreeSurfaceModel` | `clock`, `timestepper`, `particles`, `velocities`, `pressure`, `closure_fields`, `auxiliary_fields`, `vertical_coordinate` |
 | `ocean_simulation` | `Simulation(ocean_model; …)` | `verbose`, `stop_iteration`, `wall_time_limit`, `align_time_step`, `minimum_relative_step` |
 | `coupled_model` | `OceanSeaIceModel` | `land`, `interfaces`, `ocean_reference_density`, `ocean_heat_capacity`, `sea_ice_reference_density`, `sea_ice_heat_capacity`, and its `interface_kw…` |
-| `coupled_simulation` | `Simulation(coupled_model; …)` | as `ocean_simulation` |
 
 An omitted slot is empty. The escape hatch can only **add**: the constructor rejects a slot key that
-duplicates a keyword `coupled_simulation` already passes, because a splat wins over an explicit
-keyword, so a stray `tracers` in `ocean_model` would silently disagree with `model_tracers` — which
+duplicates a keyword `coupled_model` already passes, because a splat wins over an explicit keyword,
+so a stray `tracers` in `ocean_model` would silently disagree with `model_tracers` — which
 `build_simulation` already used to build the forcing and the boundary conditions before the model
 existed.
 
@@ -404,8 +412,7 @@ validating at construction. That also puts this type in the same category as `Sn
 `ProgressCallback` rather than `SimulationConfig`'s: the `Base.@kwdef`-on-a-parametric-struct rule
 that makes `stop_time = 3600` a `MethodError` there does not apply here.
 """
-struct CoupledHydrostaticSimulation{B,C,TA,MA,TR,CO,SI,BG,FS,EK<:NamedTuple} <:
-       AbstractCoupledSimulationConfig
+struct CoupledHydrostaticModel{B,C,TA,MA,TR,CO,SI,FS,EK<:NamedTuple} <: AbstractModelConfig
     buoyancy::B
     closure::C
     tracer_advection::TA
@@ -413,19 +420,18 @@ struct CoupledHydrostaticSimulation{B,C,TA,MA,TR,CO,SI,BG,FS,EK<:NamedTuple} <:
     tracers::TR
     coriolis::CO
     sea_ice::SI
-    biogeochemistry::BG
     free_surface::FS
     extra_kwargs::EK
 end
 
 """
-The `extra_kwargs` slots, and the keywords `coupled_simulation` already passes to each slot's
+The `extra_kwargs` slots, and the keywords `coupled_model` already passes to each slot's
 constructor.
 
 A slot may not carry any of its own listed keywords: `extra_kwargs` splats *after* the explicit ones,
-so a duplicate would win silently. Keeping the lists here rather than inside `coupled_simulation`
-means the check runs at construction, where the setup file that made the mistake is still what the
-error is about.
+so a duplicate would win silently. Keeping the lists here rather than inside `coupled_model` means
+the check runs at construction, where the setup file that made the mistake is still what the error
+is about.
 """
 const EXTRA_KWARG_SLOTS = (
     ocean_model = (
@@ -442,14 +448,13 @@ const EXTRA_KWARG_SLOTS = (
     ),
     ocean_simulation = (:Δt, :stop_time),
     coupled_model = (:atmosphere, :radiation),
-    coupled_simulation = (:Δt, :stop_time),
 )
 
 """
     validate_extra_kwargs(extra_kwargs)
 
 Reject an `extra_kwargs` naming a slot that reaches nothing, or a keyword that would silently
-override one `coupled_simulation` already passes. Returns it unchanged.
+override one `coupled_model` already passes. Returns it unchanged.
 """
 function validate_extra_kwargs(extra_kwargs::NamedTuple)
     slots = keys(EXTRA_KWARG_SLOTS)
@@ -473,7 +478,7 @@ function validate_extra_kwargs(extra_kwargs::NamedTuple)
         reserved = intersect(keys(values), getproperty(EXTRA_KWARG_SLOTS, slot))
         isempty(reserved) || throw(
             ArgumentError(
-                "`extra_kwargs.$slot` names $(join(reserved, ", ")), which `coupled_simulation` " *
+                "`extra_kwargs.$slot` names $(join(reserved, ", ")), which `coupled_model` " *
                 "already passes. It would silently override the config field of the same name, so " *
                 "set the field instead.",
             ),
@@ -483,7 +488,7 @@ function validate_extra_kwargs(extra_kwargs::NamedTuple)
     return extra_kwargs
 end
 
-function CoupledHydrostaticSimulation(;
+function CoupledHydrostaticModel(;
     buoyancy,
     closure,
     tracer_advection,
@@ -491,11 +496,10 @@ function CoupledHydrostaticSimulation(;
     tracers,
     coriolis,
     sea_ice,
-    biogeochemistry,
     free_surface,
     extra_kwargs,
 )
-    return CoupledHydrostaticSimulation(
+    return CoupledHydrostaticModel(
         buoyancy,
         closure,
         tracer_advection,
@@ -503,7 +507,6 @@ function CoupledHydrostaticSimulation(;
         tracers,
         coriolis,
         sea_ice,
-        biogeochemistry,
         free_surface,
         validate_extra_kwargs(extra_kwargs),
     )
@@ -514,7 +517,7 @@ end
 
 One `extra_kwargs` slot's keywords, or an empty `NamedTuple` for a slot the config omitted.
 """
-extra_kwargs(model::CoupledHydrostaticSimulation, slot::Symbol) =
+extra_kwargs(model::CoupledHydrostaticModel, slot::Symbol) =
     get(model.extra_kwargs, slot, (;))
 
 """
@@ -527,7 +530,12 @@ A hook rather than a field read, because `build_simulation` needs them long befo
 condition per tracer, and `resolve_initial_conditions` reads one state variable per tracer. All three ask the model
 config what it simulates rather than being told a second time.
 """
-model_tracers(model::CoupledHydrostaticSimulation) = model.tracers
+model_tracers(model::CoupledHydrostaticModel) = model.tracers
+
+model_tracers(::Nothing) = error(
+    "This setup is simulated but names no `model_config`. State one on the FjordConfig, e.g. a " *
+    "`CoupledHydrostaticModel`.",
+)
 
 """
 The wall-clock instant this process started, as the fragment `run_tag` names a run's files with.
@@ -1061,36 +1069,33 @@ when the `Simulation` is constructed, the policy only once it exists.
 initial_time_step(config::AdaptiveTimeStep) = config.initial_time_step
 
 """
-    SimulationConfig(; results_root, architecture, model, boundary_conditions, writers, ...)
+    SimulationConfig(; results_root, architecture, writers, callbacks, time_stepping, ...)
 
-Simulation configuration: how a setup whose data is already prepared is run.
+Simulation configuration: how a model built from a setup's prepared data is run.
 
-**No field has a default**, here and in each of the four nested configs. Every knob is a scientific
+**No field has a default**, here and in each of the three nested configs. Every knob is a scientific
 choice about a particular fjord, and a default would let one setup silently inherit another's — so a
 setup that forgets one gets an `UndefKeywordError` naming it rather than a plausible-looking run.
 The setup file is the complete statement of what the simulation is; nothing about it is hidden here.
 
-The fields split into five nested configs and the run control that ties them together, and the split
-is by *what dispatches on what*. `model` is assembled by `coupled_simulation`, `boundary_conditions`
-by `field_boundary_conditions`, each writer by `attach_writer!`, each callback by
-`attach_callback!`, and `time_stepping` by `attach_time_stepping!` — five generic functions, so a
-different model, a new boundary-condition piece, another kind of output or a different diagnostic is
-a new subtype rather than an edit to `build_simulation`.
+The fields split into three nested configs and the run control that ties them together, and the
+split is by *what dispatches on what*: each writer by `attach_writer!`, each callback by
+`attach_callback!`, and `time_stepping` by `attach_time_stepping!`, so another kind of output or a
+different diagnostic is a new subtype rather than an edit to `build_simulation`. What the model is,
+and its boundary conditions, are not here: they are the setup's `model_config` and
+`boundary_condition_configs`.
 
 # Fields
 - `results_root`: the directory every writer, and the run log, resolves against.
 - `architecture`: `:auto`, `:cpu` or `:gpu`, resolved by `simulation_architecture`. A `Symbol`
   rather than a live `CPU()`/`GPU()` so this config's field types stay concrete and a setup file
   loads on a machine with no GPU.
-- `model`: an `AbstractCoupledSimulationConfig`.
-- `boundary_conditions`: an `AbstractBoundaryConditionSetConfig`, usually a
-  `MergedBoundaryConditions` naming the pieces in precedence order.
 - `writers`: a tuple of `AbstractWriterConfig`s. `()` writes nothing.
 - `callbacks`: a tuple of `AbstractCallbackConfig`s. `()` reports nothing.
 - `time_stepping`: an `AbstractTimeSteppingConfig`.
 - `initial_conditions`: where the ocean state starts from — a `NamedTuple` of constants, fields or
   functions, a `FromForcing`, a `FromInitialState`, or a `FromResults`. `build_simulation` puts it through
-  `resolve_initial_conditions`, so what reaches `coupled_simulation` is always a `NamedTuple` `set!`
+  `resolve_initial_conditions`, so what reaches `coupled_model` is always a `NamedTuple` `set!`
   accepts.
 - `start_date`: the calendar instant model time zero stands for.
 - `stop_time`: seconds of simulated time one pass through the run window lasts.
@@ -1101,7 +1106,7 @@ a new subtype rather than an edit to `build_simulation`.
 
 Nothing that could be derived from another config is a field at all: which forcing, river and
 open-boundary files and which atmosphere reader all come from `forcing_config`, `river_config`,
-`boundary_config` and `atmosphere_config`.
+`boundary_data_config` and `atmosphere_config`.
 
 `start_date` is a field rather than something derived from an input file because every prepared
 file has its *own* first record, and each reader used to zero its own axis there: the Oslofjord
@@ -1116,11 +1121,9 @@ durations with `Oceananigans.Units`, whose constants are already `Float64`. `loo
 being an `Int` already, and the nested configs are the other one: each has a hand-written keyword
 constructor that converts, so an integer duration is fine in a writer or a time-stepping config.
 """
-Base.@kwdef mutable struct SimulationConfig{M,BC,W,CB,TS,I} <: AbstractSimulationConfig
+Base.@kwdef mutable struct SimulationConfig{W,CB,TS,I} <: AbstractSimulationConfig
     results_root::String
     architecture::Symbol
-    model::M
-    boundary_conditions::BC
     writers::W
     callbacks::CB
     time_stepping::TS
@@ -1206,18 +1209,18 @@ initial_conditions_date(::FromForcing{Nothing}, start_date) = start_date
 initial_conditions_date(initial_conditions::FromForcing, start_date) = initial_conditions.date
 
 """
-    resolve_initial_conditions(initial_conditions, grid, forcing_file, initial_state_file, config)
+    resolve_initial_conditions(initial_conditions, grid, forcing_file, initial_state_file, config, tracers)
 
 Turn a setup's `initial_conditions` into the `NamedTuple` `set!(model; ...)` consumes.
 `initial_state_file` is where `prepare_initial_state` writes, unchecked, or `nothing` for a setup
 naming no initial state.
 
-Dispatched on the kind of source, so `coupled_simulation` never learns that there is more than one:
+Dispatched on the kind of source, so `coupled_model` never learns that there is more than one:
 it still receives something splattable and still applies it with a single `set!`.
 A `NamedTuple` — constants, functions or fields — passes straight through, which is what every
 setup did before the other two existed.
 
-What gets set is every tracer `model_tracers(config.model)` names plus `u` and `v`, intersected with
+What gets set is every tracer in `tracers` (the model config's `model_tracers`) plus `u` and `v`, intersected with
 what the source file actually carries — see `state_variables`. Nothing is enumerated here, so adding
 a biogeochemical tracer to a setup is enough to have it read back.
 
@@ -1225,44 +1228,44 @@ The free surface `η` and any closure-owned tracer the config does not name (CAT
 defaults, so reading a state in is a *warm start*, not a restart: the barotropic mode and the
 turbulence field re-adjust over the first hours. Use `pickup` for an exact continuation.
 """
-resolve_initial_conditions(initial_conditions::NamedTuple, grid, forcing_file, initial_state_file, config) =
+resolve_initial_conditions(initial_conditions::NamedTuple, grid, forcing_file, initial_state_file, config, tracers) =
     initial_conditions
 
-function resolve_initial_conditions(initial_conditions::FromForcing, grid, forcing_file, initial_state_file, config)
+function resolve_initial_conditions(initial_conditions::FromForcing, grid, forcing_file, initial_state_file, config, tracers)
     date = initial_conditions_date(initial_conditions, config.start_date)
     @info "Initial conditions from forcing $forcing_file at $date"
-    return forcing_state(forcing_file, grid, date, model_tracers(config.model))
+    return forcing_state(forcing_file, grid, date, tracers)
 end
 
 # There is no forcing file because the setup names no forcing config at all — `resolve_forcing_file`
 # returns `nothing` for one. Stated here rather than left to fail inside `NCDataset(nothing)` after
 # the grid has been built.
-resolve_initial_conditions(::FromForcing, grid, ::Nothing, initial_state_file, config) = error(
+resolve_initial_conditions(::FromForcing, grid, ::Nothing, initial_state_file, config, tracers) = error(
     "Initial conditions are `FromForcing`, but this setup names no `forcing_config`, so there is no " *
     "prepared forcing file to read a state from. Name one, give `initial_conditions` a `NamedTuple` " *
     "of constants, start from one day of source data with `FromInitialState`, or from a previous " *
     "run's snapshot with `FromResults`.",
 )
 
-function resolve_initial_conditions(::FromInitialState, grid, forcing_file, initial_state_file, config)
+function resolve_initial_conditions(::FromInitialState, grid, forcing_file, initial_state_file, config, tracers)
     isfile(initial_state_file) || error(
         "Initial state $initial_state_file does not exist. Run `julia --project -m FjordSim " *
         "download_initial_state` and `prepare_initial_state` for this setup first.",
     )
     @info "Initial conditions from initial state $initial_state_file"
-    return initial_state_variables(initial_state_file, grid, config.start_date, model_tracers(config.model))
+    return initial_state_variables(initial_state_file, grid, config.start_date, tracers)
 end
 
-resolve_initial_conditions(::FromInitialState, grid, forcing_file, ::Nothing, config) = error(
+resolve_initial_conditions(::FromInitialState, grid, forcing_file, ::Nothing, config, tracers) = error(
     "Initial conditions are `FromInitialState`, but this setup names no `initial_state_config` to " *
     "read a state from. Name one, or give `initial_conditions` a `NamedTuple` of constants.",
 )
 
-function resolve_initial_conditions(initial_conditions::FromResults, grid, forcing_file, initial_state_file, config)
+function resolve_initial_conditions(initial_conditions::FromResults, grid, forcing_file, initial_state_file, config, tracers)
     filepath = results_state_path(initial_conditions, config)
     isfile(filepath) || error("Results file $filepath does not exist.")
     @info "Initial conditions from results $filepath"
-    return results_state(filepath, grid, initial_conditions.date, model_tracers(config.model))
+    return results_state(filepath, grid, initial_conditions.date, tracers)
 end
 
 """
@@ -1433,8 +1436,6 @@ Which prepared forcing file the simulation reads: the one `prepare_forcing` wrot
 for a setup naming no forcing at all. The rivers are not in it — they have a file of their own,
 `resolve_river_file`.
 """
-simulation_forcing_path(config::FjordConfig) = simulation_forcing_path(config.forcing_config)
-
 simulation_forcing_path(::Nothing) = nothing
 simulation_forcing_path(config::AbstractForcingConfig) = forcing_path(config)
 
@@ -1465,14 +1466,12 @@ function resolve_river_file(rivers::AbstractRiverConfig)
 end
 
 """
-    resolve_forcing_file(config::FjordConfig)
+    resolve_forcing_file(forcing_config)
 
-The prepared forcing file `build_simulation` reads: `simulation_forcing_path(config)`, checked to
-exist and reported by the step that writes it if it does not — or `nothing`, for a setup naming
-no forcing at all, which is not a prerequisite to check.
+The prepared forcing file `build_simulation` reads: `simulation_forcing_path(forcing_config)`,
+checked to exist and reported by the step that writes it if it does not — or `nothing`, for a setup
+naming no forcing at all, which is not a prerequisite to check.
 """
-resolve_forcing_file(config::FjordConfig) = resolve_forcing_file(config.forcing_config)
-
 resolve_forcing_file(::Nothing) = nothing
 
 function resolve_forcing_file(forcing_config::AbstractForcingConfig)
@@ -2373,10 +2372,11 @@ function restart_loop!(simulation, config::AbstractSimulationConfig, loop)
 end
 
 """
-    build_simulation(config::FjordConfig)
+    build_simulation(config)
+    build_simulation(simulation_config, config)
 
-Assemble the coupled simulation a setup describes, with its output writer, progress callback and
-time-step wizard attached, and return it without running it.
+Assemble the simulation a setup describes, with its writers, callbacks and time stepping attached,
+and return it without running it.
 
 Split from `run_simulation` so a run can be inspected or stepped by hand:
 
@@ -2385,48 +2385,73 @@ simulation = build_simulation(fjord_config("examples/oslofjorden.jl"))
 run!(simulation)
 ```
 
-Every input comes from the setup's own prepared files — `bathymetry_path`, the forcing file
-`simulation_forcing_path` picks, the river file `add_rivers` wrote, and the atmosphere the
-`prescribed_atmosphere` and `prescribed_radiation` hooks read. A missing prerequisite is reported
-naming the step that writes it, rather than as a read error from deep inside NetCDF.
+The setup form only dispatches on the setup's simulation config, so a different way of building a
+run is a new `AbstractSimulationConfig` subtype with its own method. The built-in method runs in
+stages, each its own function: check the prerequisites (`validate_model_inputs`), build the grid,
+gather everything the model is built from (`model_inputs`), build the model (`coupled_model`, on the
+model config), wrap it in a `Simulation`, and attach the outputs.
 
-The rivers are forcing terms of their own, added to the file forcing by `combine_forcing`: a
-free-surface source `η` and a top-cell source on each tracer the river file carries. The open
-boundaries are built from the file forcing alone, which is what they always saw.
-
-The initial conditions go through `resolve_initial_conditions`, so a `FromForcing`, `FromInitialState`
-or `FromResults` is read here — where the grid and the file paths are known — and what `coupled_simulation`
-receives is always a plain `NamedTuple`. Note that `pickup` supersedes them: the checkpoint restores
-the state that `set!` had just written.
+Every input comes from the setup's own prepared files, and a missing one is reported naming the step
+that writes it, rather than as a read error from deep inside NetCDF. Note that `pickup` supersedes the
+initial conditions: the checkpoint restores the state that `set!` had just written.
 
 Returns `nothing` for a setup naming no simulation config.
 """
-function build_simulation(config::FjordConfig)
-    simulation_config = config.simulation_config
-    isnothing(simulation_config) && return nothing
+build_simulation(config::AbstractFjordConfig) = build_simulation(simulation_config(config), config)
 
-    bathymetry_file = bathymetry_path(config.bathymetry_config)
-    isfile(bathymetry_file) || error(
-        "Processed bathymetry $bathymetry_file does not exist. " *
-        "Run `julia --project -m FjordSim prepare_bathymetry` for this setup first.",
-    )
+build_simulation(::Nothing, config) = nothing
 
-    forcing_file = resolve_forcing_file(config)
-    rivers = config.river_config
+function build_simulation(simulation::AbstractSimulationConfig, config)
+    bathymetry_file = resolve_bathymetry_file(bathymetry_config(config))
+
+    simulation.loops >= 1 || throw(ArgumentError("loops must be at least 1, got $(simulation.loops)"))
+    validate_writers(simulation)
+    validate_callbacks(simulation)
+    validate_model_inputs(config, simulation)
+
+    grid = simulation_grid(grid_config(config), bathymetry_file, simulation_architecture(simulation))
+
+    # The one place a results directory is created. `coupled_model` is about assembling a model, and
+    # `NetCDFWriter` only creates the `dir` keyword it is not given.
+    mkpath(simulation.results_root)
+
+    model = coupled_model(model_config(config), grid; model_inputs(config, grid, simulation)...)
+    built = Simulation(model; Δt = initial_time_step(simulation.time_stepping), stop_time = simulation.stop_time)
+
+    attach_callbacks!(built, simulation)
+
+    # For the loop `run_simulation` will start at, not unconditionally the first: a resumed run has
+    # to write into the loop it left off in, and to checkpoint under that loop's prefix.
+    start_loop = resume_loop(simulation)
+    attach_writers!(built, simulation, start_loop)
+
+    @info "Run $(run_tag(simulation)): output to " *
+          "$(join(loop_output_paths(simulation, start_loop), ", "))"
+
+    attach_time_stepping!(built, simulation.time_stepping)
+
+    return built
+end
+
+"""
+    validate_model_inputs(config, simulation_config)
+
+Check every prepared file the model reads exists and spans the run window, before the grid is built.
+
+One window, not `loops` of them: every repetition replays the same interval, so what the prepared
+files have to span does not grow with the loop count. Each check goes through a hook on its own
+config (`forcing_date_range`, `atmosphere_date_range`, …), so nothing here names a file layout.
+"""
+function validate_model_inputs(config::AbstractFjordConfig, simulation)
+    forcing_file = resolve_forcing_file(forcing_config(config))
+    rivers = river_config(config)
     river_file = resolve_river_file(rivers)
+    start_date = simulation.start_date
+    stop_time = simulation.stop_time
 
-    simulation_config.loops >= 1 ||
-        throw(ArgumentError("loops must be at least 1, got $(simulation_config.loops)"))
-    validate_writers(simulation_config)
-    validate_callbacks(simulation_config)
-
-    start_date = simulation_config.start_date
-    stop_time = simulation_config.stop_time
-    # One window, not `loops` of them: every repetition replays the same interval, so what the
-    # prepared files have to span does not grow with the loop count.
     validate_time_coverage(
         "forcing $forcing_file",
-        forcing_date_range(config.forcing_config, forcing_file),
+        forcing_date_range(forcing_config(config), forcing_file),
         start_date,
         stop_time,
         "prepare more years of forcing",
@@ -2440,92 +2465,81 @@ function build_simulation(config::FjordConfig)
     )
     validate_time_coverage(
         "atmosphere",
-        atmosphere_date_range(config.atmosphere_config),
+        atmosphere_date_range(atmosphere_config(config)),
         start_date,
         stop_time,
         "prepare more years of atmosphere",
     )
     validate_time_coverage(
         "open-boundary data",
-        boundary_date_range(config.boundary_config),
+        boundary_date_range(boundary_data_config(config)),
         start_date,
         stop_time,
         "prepare more years of open-boundary data",
     )
 
-    architecture = simulation_architecture(simulation_config)
-    grid = simulation_grid(config.grid_config, bathymetry_file, architecture)
-    tracers = model_tracers(simulation_config.model)
+    return nothing
+end
 
-    # The one place a results directory is created. `coupled_simulation` is about assembling a
-    # model, and `NetCDFWriter` only creates the `dir` keyword it is not given.
-    mkpath(simulation_config.results_root)
+"""
+    model_inputs(config, grid, simulation_config)
 
-    # Every time axis is zeroed at the same instant, so the components stay in phase: each
-    # prepared file has its own first record, and left to itself each reader would zero there.
-    # Dispatched on the forcing config rather than a hardcoded `forcing_from_file` call, so a
-    # source whose prepared files are not that NetCDF contract could read a different way.
-    forcing = simulation_forcing(config.forcing_config, grid, forcing_file, tracers, start_date)
-    # The exterior state along the open edge, on the same `start_date`-zeroed time axis as the
-    # forcing and the atmosphere. Read here rather than inside the boundary config for exactly that
-    # reason: this is the one place `start_date` is known, and a config that opened the file itself
-    # would need telling that instant a second time.
-    boundaries = boundary_series(config.boundary_config, grid, start_date)
-    # Named `model_boundary_conditions` rather than `boundary_conditions`, which is the hook each
-    # piece of it was built by: assigning to that name here would make it a local and shadow the
-    # function for the rest of this body.
-    model_boundary_conditions = field_boundary_conditions(
-        simulation_config.boundary_conditions,
-        grid,
-        forcing,
-        config.boundary_config,
-        tracers,
-        boundaries,
-    )
+Everything `coupled_model` is built from besides its own config, as the `NamedTuple` of keywords it
+receives: each read from one component of the setup, through that component's own hook.
 
-    initial_conditions = resolve_initial_conditions(
-        simulation_config.initial_conditions,
-        grid,
-        forcing_file,
-        simulation_initial_state_path(config.initial_state_config),
-        simulation_config,
-    )
+The rivers are forcing terms of their own, added to the file forcing by `combine_forcing`: a
+free-surface source `η` and a top-cell source on each tracer the river file carries. The boundary
+conditions are built from the file forcing alone. Every time axis is zeroed at the simulation's
+`start_date`, so the components stay in phase: each prepared file has its own first record, and left
+to itself each reader would zero there. The initial conditions go through
+`resolve_initial_conditions`, so what `coupled_model` receives is always a plain `NamedTuple`.
 
-    simulation = coupled_simulation(
-        simulation_config.model,
-        grid;
+Dispatched on the whole setup because this is where its components meet. A setup type carrying an
+input of a new kind overloads it and merges its own keyword into the default's; the model config it
+pairs with takes that keyword in its `coupled_model` method.
+"""
+function model_inputs(config::AbstractFjordConfig, grid, simulation)
+    model = model_config(config)
+    tracers = model_tracers(model)
+    forcing_data = forcing_config(config)
+    rivers = river_config(config)
+    boundary_data = boundary_data_config(config)
+    atmosphere = atmosphere_config(config)
+    architecture = simulation_architecture(simulation)
+    start_date = simulation.start_date
+
+    forcing_file = resolve_forcing_file(forcing_data)
+    river_file = resolve_river_file(rivers)
+    forcing = simulation_forcing(forcing_data, grid, forcing_file, tracers, start_date)
+    boundaries = boundary_series(boundary_data, grid, start_date)
+
+    return (;
         forcing = combine_forcing(forcing, river_forcing(rivers, grid, river_file, tracers, start_date)),
-        boundary_conditions = model_boundary_conditions,
-        initial_conditions = initial_conditions,
-        atmosphere = prescribed_atmosphere(
-            config.atmosphere_config,
-            architecture;
-            reference_date = start_date,
+        boundary_conditions = model_boundary_conditions(
+            model,
+            boundary_condition_configs(config),
+            grid,
+            forcing,
+            boundary_data,
+            tracers,
+            boundaries,
         ),
-        radiation = prescribed_radiation(
-            config.atmosphere_config,
-            architecture;
-            reference_date = start_date,
+        initial_conditions = resolve_initial_conditions(
+            simulation.initial_conditions,
+            grid,
+            forcing_file,
+            simulation_initial_state_path(initial_state_config(config)),
+            simulation,
+            tracers,
         ),
-        boundary_config = config.boundary_config,
+        biogeochemistry = model_biogeochemistry(biogeochemistry_config(config), grid),
+        atmosphere = prescribed_atmosphere(atmosphere, architecture; reference_date = start_date),
+        radiation = prescribed_radiation(atmosphere, architecture; reference_date = start_date),
+        boundary_data_config = boundary_data,
         river_columns = read_river_columns(rivers),
-        stop_time = stop_time,
-        initial_time_step = initial_time_step(simulation_config.time_stepping),
+        stop_time = simulation.stop_time,
+        initial_time_step = initial_time_step(simulation.time_stepping),
     )
-
-    attach_callbacks!(simulation, simulation_config)
-
-    # For the loop `run_simulation` will start at, not unconditionally the first: a resumed run has
-    # to write into the loop it left off in, and to checkpoint under that loop's prefix.
-    start_loop = resume_loop(simulation_config)
-    attach_writers!(simulation, simulation_config, start_loop)
-
-    @info "Run $(run_tag(simulation_config)): output to " *
-          "$(join(loop_output_paths(simulation_config, start_loop), ", "))"
-
-    attach_time_stepping!(simulation, simulation_config.time_stepping)
-
-    return simulation
 end
 
 """
@@ -2560,13 +2574,15 @@ function validate_writers(config::AbstractSimulationConfig)
 end
 
 """
-    run_simulation(config::FjordConfig)
+    run_simulation(config)
+    run_simulation(simulation_config, config)
 
 Build the simulation a setup describes and run its window `loops` times.
 
-This is the setup-level driver, the same shape as `prepare_forcing(config::FjordConfig)`, and the
-last step of the pipeline: it needs `prepare_bathymetry`, and each of `prepare_forcing`,
-`add_rivers`, `prepare_boundaries` and `prepare_atmosphere` whose config the setup names.
+The last step of the pipeline: it needs `prepare_bathymetry`, and each of `prepare_forcing`,
+`add_rivers`, `prepare_boundary_data` and `prepare_atmosphere` whose config the setup names. The
+setup form only dispatches on the setup's simulation config, so a different way of running — an
+ensemble, a nested run — is a new `AbstractSimulationConfig` subtype with its own method.
 
 # Looping
 
@@ -2583,11 +2599,13 @@ so stops matching the loop the moment a file is padded to a different window.
 Returns `nothing` for a setup naming no simulation config, which is how `FjordSim.CLI.main`
 reports a step a setup opts out of; otherwise `(; simulation, output_files)`.
 """
-function run_simulation(config::FjordConfig)
-    simulation = build_simulation(config)
-    isnothing(simulation) && return nothing
+run_simulation(config::AbstractFjordConfig) = run_simulation(simulation_config(config), config)
 
-    simulation_config = config.simulation_config
+run_simulation(::Nothing, config) = nothing
+
+function run_simulation(simulation_config::AbstractSimulationConfig, config)
+    simulation = build_simulation(simulation_config, config)
+
     # Asked again rather than threaded out of `build_simulation`, whose contract is the bare
     # `Simulation`: it is a directory scan, and both entry points have to agree on the answer
     # anyway. The one visible cost is that a `pickup` with no checkpoints warns twice.
@@ -2619,42 +2637,36 @@ function run_simulation(config::FjordConfig)
 end
 
 """
-    coupled_simulation(model, grid; forcing, boundary_conditions, initial_conditions,
-                       atmosphere, radiation, boundary_config, river_columns, stop_time,
-                       initial_time_step)
+    coupled_model(model, grid; forcing, boundary_conditions, initial_conditions, biogeochemistry,
+                  atmosphere, radiation, boundary_data_config, river_columns, stop_time,
+                  initial_time_step)
 
-Assemble the coupled `Simulation` a model config describes, on `grid`, and return it without
-running it.
+Assemble the model a model config describes, on `grid`, and return it.
 
-The low-level entry point, dispatched on the model config and taking every grid-dependent component
-already built — `build_simulation` is what takes a `FjordConfig` and derives them. Adding a
-different kind of model is a new `AbstractCoupledSimulationConfig` subtype and a new method here;
-neither `build_simulation` nor anything above it changes.
+Dispatched on the model config and taking every grid-dependent input already built —
+`model_inputs` is what derives them from the setup. A different kind of model is a new
+`AbstractModelConfig` subtype and a new method here; nothing above it changes.
 
 The method below builds a `HydrostaticFreeSurfaceModel` inside a NumericalEarth `OceanSeaIceModel`.
-Three of its components are resolved here rather than arriving prebuilt, and for the same reason:
+Two of its components are resolved here rather than arriving prebuilt, and for the same reason:
 `model.free_surface`'s `free_surface(config, grid)` hook, because `SplitExplicitFreeSurface` needs
-the grid, `model.closure` through `model_closure`, because a closure may need the grid, the
-open edges *and* the river columns, and `model.biogeochemistry` through `model_biogeochemistry`,
-because a biogeochemical model may need the grid. Both fallbacks are the identity, so a plain
-Oceananigans closure or a `nothing` biogeochemistry — which is what most setups write — passes
-through untouched.
+the grid, and `model.closure` through `model_closure`, because a closure may need the grid, the open
+edges *and* the river columns. The fallback of `model_closure` is the identity, so a plain
+Oceananigans closure passes through untouched.
 
-`boundary_config` is the setup's `AbstractBoundaryDataConfig`, or `nothing`. It is passed rather than
-read, for the same reason `boundary_condition_sides` takes it: the edges are stated once, on that
-config, and a second statement of them could only disagree. `river_columns` is every column a
-river enters through, as `read_river_columns` reads them from the river file, or `nothing` without
-rivers.
+`OceanSeaIceModel` takes the ocean as a `Simulation`, which is why this needs `stop_time` and
+`initial_time_step`; the outer `Simulation` stepping the coupled model is `build_simulation`'s.
 """
-function coupled_simulation(
-    model::CoupledHydrostaticSimulation,
+function coupled_model(
+    model::CoupledHydrostaticModel,
     grid;
     forcing,
     boundary_conditions,
     initial_conditions,
+    biogeochemistry,
     atmosphere,
     radiation,
-    boundary_config,
+    boundary_data_config,
     river_columns,
     stop_time,
     initial_time_step,
@@ -2666,7 +2678,7 @@ function coupled_simulation(
     ocean_model = HydrostaticFreeSurfaceModel(
         grid;
         buoyancy = model.buoyancy,
-        closure = model_closure(model.closure, grid, boundary_config, river_columns),
+        closure = model_closure(model.closure, grid, boundary_data_config, river_columns),
         tracer_advection = model.tracer_advection,
         momentum_advection = model.momentum_advection,
         tracers = model.tracers,
@@ -2674,7 +2686,7 @@ function coupled_simulation(
         coriolis = model.coriolis,
         forcing = forcing,
         boundary_conditions = boundary_conditions,
-        biogeochemistry = model_biogeochemistry(model.biogeochemistry, grid),
+        biogeochemistry = biogeochemistry,
         # Kernels otherwise get the time in the grid's float type (Float32 here) while the host pages
         # each `FieldTimeSeries` window from the Float64 clock. Near an exact hour the two round to
         # different slices, so the kernel indexes outside the window and faults on the GPU.
@@ -2685,10 +2697,14 @@ function coupled_simulation(
 
     set!(ocean_model; initial_conditions...)
 
-    Δt = initial_time_step
-    ocean_sim = Simulation(ocean_model; Δt, stop_time, extra_kwargs(model, :ocean_simulation)...)
-    coupled_model = OceanSeaIceModel(
-        ocean_sim,
+    ocean_simulation = Simulation(
+        ocean_model;
+        Δt = initial_time_step,
+        stop_time,
+        extra_kwargs(model, :ocean_simulation)...,
+    )
+    ocean_sea_ice_model = OceanSeaIceModel(
+        ocean_simulation,
         model.sea_ice;
         atmosphere,
         radiation,
@@ -2696,7 +2712,7 @@ function coupled_simulation(
     )
     @info "Initialized coupled model"
 
-    return Simulation(coupled_model; Δt, stop_time, extra_kwargs(model, :coupled_simulation)...)
+    return ocean_sea_ice_model
 end
 
 end  # module Simulations

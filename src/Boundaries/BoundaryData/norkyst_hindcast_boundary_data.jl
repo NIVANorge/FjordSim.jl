@@ -1,7 +1,7 @@
 # Norkyst-v3 hindcast adapter for the open-boundary pipeline: the same exterior state as
-# `norkyst_boundaries.jl`, from the collection that reaches back to 2012 instead of the operational
+# `norkyst_boundary_data.jl`, from the collection that reaches back to 2012 instead of the operational
 # one that starts 2017-02-20. Shares every read-side hook with it through
-# `AbstractNorKystBoundariesConfig`; what this file states is where the files are and how the
+# `AbstractNorKystBoundaryDataConfig`; what this file states is where the files are and how the
 # barotropic pair is obtained.
 #
 # The hindcast splits what the operational collection keeps in one file. `zdepth` carries the
@@ -14,7 +14,7 @@
 #
 # The pair is `ubar_eastward`/`vbar_northward` here, already rotated to geographic axes by met.no,
 # where the operational collection publishes ROMS' grid-relative `ubar`/`vbar` and
-# `NorKystBoundariesConfig` has to derotate them itself. So this config wants no
+# `NorKystBoundaryDataConfig` has to derotate them itself. So this config wants no
 # `boundary_source_slab` method at all, and the generic `blended_slab` default applies to all seven
 # variables.
 
@@ -50,10 +50,10 @@ const NORKYST_HINDCAST_BOUNDARY_VARIABLE_NAMES = Dict(
 )
 
 """
-    NorKystHindcastBoundariesConfig
+    NorKystHindcastBoundaryDataConfig
 
 Configuration for downloading and subsetting hourly Norkyst-v3 hindcast data along the open lateral
-boundaries. The counterpart of [`NorKystBoundariesConfig`](@ref) for a run window predating
+boundaries. The counterpart of [`NorKystBoundaryDataConfig`](@ref) for a run window predating
 2017-02-20.
 
 Every record is kept, unlike the interior forcing's one-a-day: a Flather boundary compares the
@@ -63,14 +63,14 @@ survive, and a daily sample would alias it away.
 # Fields
 - `data_root`: Directory holding this setup's boundary files. Required.
 - `output_directory`: Name of the directory the monthly downloads are written to. Required.
-- `output_file`: Name of the prepared boundary NetCDF written by `prepare_boundaries`.
+- `output_file`: Name of the prepared boundary NetCDF written by `prepare_boundary_data`.
 - `plot_file`: Name of the diagnostic boundary plot.
 - `open_edges`: Lateral boundaries the domain is open on, each one of `:south`, `:north`, `:west` or
   `:east`. One `Symbol` or a collection; the constructor normalizes either to a `Vector{Symbol}`.
   Required, and stated only here.
 - `margin`: Degrees of latitude/longitude the download reaches past the boundary row, on both sides.
   Must leave room for the source cells the bilinear interpolation reads around the row.
-- `architecture`: Where `prepare_boundaries` interpolates — `:auto`, `:cpu` or `:gpu`.
+- `architecture`: Where `prepare_boundary_data` interpolates — `:auto`, `:cpu` or `:gpu`.
 - `catalog_url`, `opendap_url`: the `zdepth` collection, which supplies all five full-field
   variables. Defaulted.
 - `barotropic_catalog_url`, `barotropic_opendap_url`: the `sdepth` collection, which supplies
@@ -79,7 +79,7 @@ survive, and a daily sample would alias it away.
 - `parameters`: Source variable names to extract. Required.
 - `years`: Calendar years to download. Required.
 """
-mutable struct NorKystHindcastBoundariesConfig <: AbstractNorKystBoundariesConfig
+mutable struct NorKystHindcastBoundaryDataConfig <: AbstractNorKystBoundaryDataConfig
     data_root::String
     output_directory::String
     output_file::String
@@ -95,10 +95,10 @@ mutable struct NorKystHindcastBoundariesConfig <: AbstractNorKystBoundariesConfi
     years::Vector{Int}
 end
 
-# A hand-written keyword constructor for the same reason `NorKystBoundariesConfig` has one:
+# A hand-written keyword constructor for the same reason `NorKystBoundaryDataConfig` has one:
 # `open_edges` may be written as one `Symbol` or as a collection, and `@kwdef` would `convert`,
 # which has no method from `Symbol` to `Vector{Symbol}`.
-function NorKystHindcastBoundariesConfig(;
+function NorKystHindcastBoundaryDataConfig(;
     data_root,
     output_directory,
     output_file = "boundaries.nc",
@@ -116,13 +116,13 @@ function NorKystHindcastBoundariesConfig(;
     edges = lateral_edges(open_edges)
     isempty(edges) && throw(
         ArgumentError(
-            "NorKystHindcastBoundariesConfig names no `open_edges`. A boundary dataset exists to " *
+            "NorKystHindcastBoundaryDataConfig names no `open_edges`. A boundary dataset exists to " *
             "supply the exterior state along at least one open edge; a closed domain names no " *
             "boundary config at all.",
         ),
     )
 
-    return NorKystHindcastBoundariesConfig(
+    return NorKystHindcastBoundaryDataConfig(
         data_root,
         output_directory,
         output_file,
@@ -140,34 +140,34 @@ function NorKystHindcastBoundariesConfig(;
 end
 
 """
-    boundary_monthly_filename(config::NorKystHindcastBoundariesConfig, year, month)
+    boundary_monthly_filename(config::NorKystHindcastBoundaryDataConfig, year, month)
 
 Name of the combined monthly Norkyst-v3 boundary NetCDF written for `year` and `month`. Distinct
 from the operational collection's name so the two can share one directory without colliding.
 """
-boundary_monthly_filename(config::NorKystHindcastBoundariesConfig, year, month) =
+boundary_monthly_filename(config::NorKystHindcastBoundaryDataConfig, year, month) =
     "Norkyst-v3_boundary_$(year)$(lpad(month, 2, '0')).nc"
 
 """
-    boundary_variable_names(config::NorKystHindcastBoundariesConfig)
+    boundary_variable_names(config::NorKystHindcastBoundaryDataConfig)
 
 The Norkyst-v3 variables this dataset can supply along a boundary and the FjordSim names they
 become. This is where `ubar_eastward`/`vbar_northward` become the `ubar`/`vbar` the read side reads.
 """
-boundary_variable_names(config::NorKystHindcastBoundariesConfig) =
+boundary_variable_names(config::NorKystHindcastBoundaryDataConfig) =
     NORKYST_HINDCAST_BOUNDARY_VARIABLE_NAMES
 
 # --- Download ---
 
 """
-    download_boundaries(target_grid, config::NorKystHindcastBoundariesConfig)
+    download_boundary_data(target_grid, config::NorKystHindcastBoundaryDataConfig)
 
 Download the Norkyst-v3 hindcast months covering `config.years`, each combined into one NetCDF file
 in `boundary_data_directory(config)` subset to the box `boundary_domain` derives from
 `open_edges(config)` and `target_grid`. A month whose file already exists is skipped, so an
 interrupted download resumes.
 """
-function download_boundaries(target_grid, config::NorKystHindcastBoundariesConfig)
+function download_boundary_data(target_grid, config::NorKystHindcastBoundaryDataConfig)
     output_directory = boundary_data_directory(config)
     mkpath(output_directory)
 
@@ -228,7 +228,7 @@ function process_hindcast_boundary_month(
     month,
     longitude,
     latitude,
-    config::NorKystHindcastBoundariesConfig,
+    config::NorKystHindcastBoundaryDataConfig,
 )
     year_month = "$(year)-$(lpad(month, 2, '0'))"
     output_path =

@@ -2,8 +2,8 @@ module BoundaryData
 
 # Open-boundary data: the generic half of the boundary pipeline. A dataset adapter subtypes
 # `AbstractBoundaryDataConfig` and implements `boundary_time_steps`, `boundary_source_grid` and
-# `boundary_variable_names` (plus `download_boundaries` if it fetches data); everything below is
-# shared. `norkyst_boundaries.jl` is the template to copy.
+# `boundary_variable_names` (plus `download_boundary_data` if it fetches data); everything below is
+# shared. `norkyst_boundary_data.jl` is the template to copy.
 #
 # What this exists for: an open lateral boundary needs the exterior state *at* the boundary —
 # elevation and barotropic transport for the Flather condition, velocity and tracers for the
@@ -15,10 +15,10 @@ module BoundaryData
 # edge is a set of new variables in the same file rather than a new file or a format change. The
 # edge is a `Val` everywhere it decides anything.
 
-export download_boundaries,
-    prepare_boundaries,
-    NorKystBoundariesConfig,
-    NorKystHindcastBoundariesConfig
+export download_boundary_data,
+    prepare_boundary_data,
+    NorKystBoundaryDataConfig,
+    NorKystHindcastBoundaryDataConfig
 
 using Oceananigans
 using Oceananigans.Units: Time
@@ -35,7 +35,11 @@ import Oceananigans.OutputReaders: new_backend
 
 using ..Configs:
     AbstractBoundaryDataConfig,
-    FjordConfig
+    AbstractFjordConfig,
+    grid_config,
+    bathymetry_config,
+    boundary_data_config,
+    simulation_config
 using ..Utils: coverage_window
 using ..Grids:
     domain_grid,
@@ -44,8 +48,8 @@ using ..Grids:
     LATERAL_EDGES,
     validate_open_edge,
     lateral_edges
-using ..Plotting: Plotting, plot_boundaries
-using ..Bathymetry: bathymetry_path
+using ..Plotting: Plotting, plot_boundary_data
+using ..Bathymetry: resolve_bathymetry_file
 using ..Regridding:
     Regridding,
     native_times_to_seconds,
@@ -73,7 +77,7 @@ using ..Regridding:
     boundary_data_directory(config)
 
 Resolve `config.output_file` and `config.output_directory` against `config.data_root`: the prepared
-open-boundary NetCDF written by `prepare_boundaries`, and the directory `download_boundaries` writes
+open-boundary NetCDF written by `prepare_boundary_data`, and the directory `download_boundary_data` writes
 its intermediate files into. Defined for every `AbstractBoundaryDataConfig`, so a new dataset
 inherits path resolution; one without those fields overloads them. An absolute field is returned
 unchanged.
@@ -269,7 +273,7 @@ interpolation is bilinear.
 four, have bands whose bounding box is the whole domain plus the margin — so a multi-edge download is
 the full box at hourly cadence, and the interior of it is downloaded and never read. Keeping it one
 box is what lets `boundary_time_steps` and `boundary_source_grid` stay single-file hooks and
-`prepare_boundaries` interpolate every edge from one source. Per-edge downloads would be the
+`prepare_boundary_data` interpolate every edge from one source. Per-edge downloads would be the
 optimization, at the price of both hooks becoming per-edge.
 """
 function boundary_domain(edges, target_grid, margin)
@@ -302,7 +306,7 @@ end
     boundary_time_steps(config)
 
 Every source time record available to `config`, as `SourceRecord`s sorted by date with duplicates
-dropped. `prepare_boundaries` completes them to a gap-free hourly axis.
+dropped. `prepare_boundary_data` completes them to a gap-free hourly axis.
 
 A new dataset implements this on its `AbstractBoundaryDataConfig` subtype.
 """
@@ -345,27 +349,21 @@ boundary_source_slab(config::AbstractBoundaryDataConfig, reader, step, source_na
     blended_slab(reader, step, source_name)
 
 """
-    download_boundaries(config::FjordConfig)
-    download_boundaries(target_grid, config::AbstractBoundaryDataConfig)
+    download_boundary_data(config)
+    download_boundary_data(target_grid, boundary_data_config)
 
-Fetch and subset the hourly source data a later `prepare_boundaries` call reads, into
-`boundary_data_directory(config)`.
+Fetch and subset the hourly source data a later `prepare_boundary_data` call reads, into
+`boundary_data_directory(boundary_data_config)`.
 
-The `FjordConfig` form is the generic driver, the same shape as `download_forcing`: it builds the
-setup's grid on the CPU and dispatches on the setup's boundary config, which is also where the open
-edges are stated — so a dataset reads them with `open_edges(config)` rather than being handed them. It
-says
-nothing about forcing: a setup can name boundary data and no interior forcing, or the other way
-round.
+The setup form builds the bare domain grid on the CPU and dispatches on the boundary data config,
+which is also where the open edges are stated — so a dataset reads them with `open_edges(config)`
+rather than being handed them. It says nothing about forcing: a setup can name boundary data and no
+interior forcing, or the other way round.
 """
-function download_boundaries(config::FjordConfig)
-    boundaries = config.boundary_config
-    isnothing(boundaries) && return nothing
+download_boundary_data(config::AbstractFjordConfig) =
+    download_boundary_data(domain_grid(grid_config(config), CPU()), boundary_data_config(config))
 
-    return download_boundaries(domain_grid(config.grid_config, CPU()), boundaries)
-end
-
-download_boundaries(target_grid, ::Nothing) = nothing
+download_boundary_data(target_grid, ::Nothing) = nothing
 
 """
     boundary_date_range(config)
@@ -474,7 +472,7 @@ function prepared_boundary_variable(
 end
 
 """
-    prepare_boundaries(target_grid, config::AbstractBoundaryDataConfig; coverage = nothing)
+    prepare_boundary_data(target_grid, config::AbstractBoundaryDataConfig; coverage = nothing)
 
 Regrid the hourly source files already downloaded into `boundary_data_directory(config)` onto the
 open edge rows of `target_grid`, and write the boundary NetCDF at `boundary_data_path(config)` that
@@ -499,7 +497,7 @@ range.
 # Returns
 A named tuple with `output_file`, `times` and `variables` (the written variable names).
 """
-function prepare_boundaries(target_grid, config::AbstractBoundaryDataConfig; coverage = nothing)
+function prepare_boundary_data(target_grid, config::AbstractBoundaryDataConfig; coverage = nothing)
     architecture = interpolation_architecture(config)
     edges = open_edges(config)
 
@@ -538,34 +536,40 @@ function prepare_boundaries(target_grid, config::AbstractBoundaryDataConfig; cov
     )
 end
 
-prepare_boundaries(target_grid, ::Nothing; coverage = nothing) = nothing
+prepare_boundary_data(target_grid, ::Nothing; coverage = nothing) = nothing
 
 """
-    prepare_boundaries(config::FjordConfig)
+    prepare_boundary_data(config)
+    prepare_boundary_data(grid_config, bathymetry_config, boundary_data_config, simulation_config)
 
-Regrid the open-boundary data a whole setup names onto its simulation grid, and write the diagnostic
-plot. Returns `nothing` when the setup names no boundary data.
+Regrid the open-boundary data a setup names onto its simulation grid, and write the diagnostic plot.
+Returns `nothing` for a `nothing` boundary data config.
 
-The setup-level driver, the same shape as `prepare_forcing(config::FjordConfig)`: the grid comes
-from the processed bathymetry so the boundary row's land mask matches the model exactly, which means
-`prepare_bathymetry` must have run first, and the coverage window comes from the simulation config.
+The grid comes from the processed bathymetry so the boundary row's land mask matches the model
+exactly, which means `prepare_bathymetry` must have run first, and the coverage window comes from
+the simulation config. The setup form only picks out the four components this step reads.
 
 # Returns
-The `prepare_boundaries(target_grid, config)` named tuple with `plot_file` added.
+The `prepare_boundary_data(target_grid, config)` named tuple with `plot_file` added.
 """
-function prepare_boundaries(config::FjordConfig)
-    boundaries = config.boundary_config
-    isnothing(boundaries) && return nothing
+prepare_boundary_data(config::AbstractFjordConfig) = prepare_boundary_data(
+    grid_config(config),
+    bathymetry_config(config),
+    boundary_data_config(config),
+    simulation_config(config),
+)
 
-    bathymetry_file = bathymetry_path(config.bathymetry_config)
-    isfile(bathymetry_file) || error(
-        "Processed bathymetry $bathymetry_file does not exist. " *
-        "Run `julia --project -m FjordSim prepare_bathymetry` for this setup first.",
-    )
+prepare_boundary_data(grid_config, bathymetry_config, ::Nothing, simulation_config) = nothing
 
-    grid = simulation_grid(config.grid_config, bathymetry_file, CPU())
-    result = prepare_boundaries(grid, boundaries; coverage = coverage_window(config.simulation_config))
-    plot_file = plot_boundaries(boundaries, boundary_data_path(boundaries))
+function prepare_boundary_data(
+    grid_config,
+    bathymetry_config,
+    boundaries::AbstractBoundaryDataConfig,
+    simulation_config,
+)
+    grid = simulation_grid(grid_config, resolve_bathymetry_file(bathymetry_config), CPU())
+    result = prepare_boundary_data(grid, boundaries; coverage = coverage_window(simulation_config))
+    plot_file = plot_boundary_data(boundaries, boundary_data_path(boundaries))
 
     @info "Prepared boundary variables: $(join(result.variables, ", "))"
     @info "Time range: $(first(result.times)) to $(last(result.times)) ($(length(result.times)) steps)"
@@ -906,7 +910,7 @@ function boundary_series(config::AbstractBoundaryDataConfig, grid, reference_dat
     filepath = boundary_data_path(config)
     isfile(filepath) || error(
         "Prepared boundary file $filepath does not exist. " *
-        "Run `julia --project -m FjordSim prepare_boundaries` for this setup first.",
+        "Run `julia --project -m FjordSim prepare_boundary_data` for this setup first.",
     )
 
     validate_boundary_file_edges(filepath, edges)
@@ -933,7 +937,7 @@ function validate_boundary_file_edges(filepath, edges)
     missing_edges = setdiff(edges, written)
     isempty(missing_edges) || error(
         "Boundary file $filepath was written for the $(join(written, ", ")) edge(s) but this setup " *
-        "opens $(join(edges, ", ")). Re-run `julia --project -m FjordSim prepare_boundaries` for it.",
+        "opens $(join(edges, ", ")). Re-run `julia --project -m FjordSim prepare_boundary_data` for it.",
     )
 
     return nothing
@@ -950,7 +954,7 @@ function boundary_edge_series(config, grid, edge, filepath, reference_date)
         [name for name in names if haskey(ds, boundary_variable_name(edge, name))], length(ds["time"])
     end
     isempty(present) &&
-        error("Boundary file $filepath carries no :$edge variables. Re-run `prepare_boundaries`.")
+        error("Boundary file $filepath carries no :$edge variables. Re-run `prepare_boundary_data`.")
 
     backend = BoundaryBackend(min(BOUNDARY_RECORDS_IN_MEMORY, record_count))
     time_indices_in_memory = 1:length(backend)
@@ -1004,7 +1008,7 @@ function reduced_series_size(grid, locations)
     end
 end
 
-include("norkyst_boundaries.jl")
-include("norkyst_hindcast_boundaries.jl")
+include("norkyst_boundary_data.jl")
+include("norkyst_hindcast_boundary_data.jl")
 
 end # module

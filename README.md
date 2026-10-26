@@ -54,8 +54,8 @@ julia --project -m FjordSim prepare_bathymetry     --config examples/oslofjorden
 julia --project -m FjordSim download_initial_state --config examples/oslofjorden.jl  # optional: initial state
 julia --project -m FjordSim prepare_initial_state  --config examples/oslofjorden.jl  # optional: initial state
 julia --project -m FjordSim add_rivers             --config examples/oslofjorden.jl  # optional: rivers
-julia --project -m FjordSim download_boundaries    --config examples/oslofjorden.jl  # optional: open boundaries
-julia --project -m FjordSim prepare_boundaries     --config examples/oslofjorden.jl  # optional: open boundaries
+julia --project -m FjordSim download_boundary_data --config examples/oslofjorden.jl  # optional: open boundaries
+julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden.jl  # optional: open boundaries
 julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden.jl  # optional: atmosphere
 julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden.jl  # optional: atmosphere
 julia --project -m FjordSim run_simulation         --config examples/oslofjorden.jl  # the run itself
@@ -70,8 +70,8 @@ prepare_bathymetry(config)
 download_initial_state(config)
 prepare_initial_state(config)
 add_rivers(config)
-download_boundaries(config)
-prepare_boundaries(config)
+download_boundary_data(config)
+prepare_boundary_data(config)
 download_atmosphere(config)
 prepare_atmosphere(config)
 run_simulation(config)
@@ -97,10 +97,16 @@ run does without that component. So a setup names what it wants and skips the re
 | Bathymetry | `bathymetry_config` | `prepare_bathymetry` | — (required) |
 | Initial state | `initial_state_config` | `download_initial_state`, `prepare_initial_state` | no `FromInitialState` initial conditions |
 | Rivers | `river_config` | `add_rivers` | no river inflow |
-| Open boundaries | `boundary_config` | `download_boundaries`, `prepare_boundaries` | every lateral edge is a closed wall |
+| Open boundaries | `boundary_data_config` | `download_boundary_data`, `prepare_boundary_data` | every lateral edge is a closed wall |
 | Atmosphere | `atmosphere_config` | `download_atmosphere`, `prepare_atmosphere` | no prescribed atmosphere or radiation |
 | Forcing | `forcing_config` | `download_forcing`, `prepare_forcing` | no interior forcing terms, no `FromForcing` initial conditions |
+| Model | `model_config` | `run_simulation` | data preparation only; required with a simulation config |
+| Biogeochemistry | `biogeochemistry_config` | `run_simulation` | no biogeochemical model |
+| Boundary conditions | `boundary_condition_configs` | `run_simulation` | data preparation only; required with a simulation config, `()` for the model's defaults |
 | Simulation | `simulation_config` | `run_simulation`, `validate_simulation` | data preparation only |
+
+The model, its biogeochemistry, its boundary conditions and the run are separate components, side
+by side with the data: `model_config` says what is built, `simulation_config` how it is run.
 
 1. **Bathymetry** — the domain's depth and land/sea mask. `prepare_bathymetry` regrids a bathymetry
    source onto the simulation grid (built from the grid config's bounds and resolution) and writes the
@@ -121,7 +127,7 @@ run does without that component. So a setup names what it wants and skips the re
    axis spans.
 
 4. **Open-boundary data** — the exterior state along the open lateral edges, which is what makes them
-   open. `prepare_boundaries` regrids the *hourly* NorKyst collection onto the boundary rows,
+   open. `prepare_boundary_data` regrids the *hourly* NorKyst collection onto the boundary rows,
    including surface elevation and depth-averaged velocities, so the tide survives. The boundary
    condition itself is Flather on the transport plus Orlanski radiation with inflow nudging on
    everything else. Any subset of the four edges can be open — a fjord names one, a region in the

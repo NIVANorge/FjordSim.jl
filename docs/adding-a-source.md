@@ -7,7 +7,7 @@ Every pipeline is a generic function on the config supertype plus a small set of
 source by subtyping and overloading the hooks — never by editing the generic function. The
 adapter files (`src/Bathymetry/geonorge.jl`, `src/Forcing/norkyst.jl`,
 `src/InitialState/norkyst_initial_state.jl`, `src/Rivers/nve_rivers.jl`,
-`src/Boundaries/BoundaryData/norkyst_boundaries.jl`) are the templates.
+`src/Boundaries/BoundaryData/norkyst_boundary_data.jl`) are the templates.
 
 Neither the supertypes nor the hooks are exported — `using FjordSim` gives a setup only what it
 names. Code adding a source imports the supertype from `FjordSim.Configs` and extends each hook
@@ -58,8 +58,8 @@ Bathymetry — `AbstractBathymetryConfig`, consumed by `prepare_bathymetry`:
 | `smoothing_options(config)` → NamedTuple for `smooth_bathymetry_gaps!` — `open_boundary_land_cells`, `max_island_cells`, `close_narrow_passages`, `spike_ratio`, `minimum_cell_fraction`, `max_slope_factor`, `minimum_depth`, `preserve_sills`. `preserve_sills = true` also has `prepare_bathymetry` read the source back on its own grid (`native_bathymetry`), which needs the dataset's `longitude_interfaces`, `latitude_interfaces`, `size` and a 2D variable in its file | no | `(;)`, leaving only the topological cleanup |
 
 The `edges` keyword `prepare_bathymetry` takes is a pipeline *argument*, not a hook, exactly as
-`prepare_forcing`'s is: the `FjordConfig` driver reads it with `open_edges(config.boundary_config)`
-and every source inherits `clear_open_boundary_land` unchanged.
+`prepare_forcing`'s is: the step reads it with `open_edges(boundary_data_config)` and every source
+inherits `clear_open_boundary_land` unchanged.
 
 Forcing — `AbstractForcingConfig`, consumed by `prepare_forcing`:
 
@@ -69,7 +69,7 @@ Forcing — `AbstractForcingConfig`, consumed by `prepare_forcing`:
 | `forcing_source_grid(config, filepath)` → source grid | yes |
 | `forcing_variable_names(config)` → `Dict` source name => FjordSim name | yes |
 | `download_forcing(target_grid, config)` | only if it downloads |
-| `simulation_forcing(config, grid, filepath, tracers, reference_date)` → the forcing term object `coupled_simulation` consumes | no; defaults to `forcing_from_file`, the FjordSim NetCDF contract |
+| `simulation_forcing(config, grid, filepath, tracers, reference_date)` → the forcing term object `coupled_model` consumes | no; defaults to `forcing_from_file`, the FjordSim NetCDF contract |
 | `forcing_date_range(config, filepath)` → `(first, last)` `DateTime`s | no; defaults to reading `ds["time"]` from the prepared NetCDF. A source that overrides `simulation_forcing` overrides this too |
 | `source_field_grid(source, architecture)`, `projected_target_nodes(longitude, latitude, source)` | only for a source grid that is not a regular projected grid; dispatch on the source-grid type, not the config |
 
@@ -82,7 +82,7 @@ Initial state — `AbstractInitialStateConfig`, consumed by `prepare_initial_sta
 | `initial_state_variable_names(config)` → `Dict` source name => FjordSim name | yes |
 | `download_initial_state(target_grid, config, date)` | only if it downloads |
 
-`date` is the simulation config's `start_date`, passed by the `FjordConfig` drivers: the dataset
+`date` is the simulation config's `start_date`, passed by the setup-level step: the dataset
 decides which of its records stands for that instant, and fetches only that one.
 
 Rivers — `AbstractRiverConfig`, consumed by `add_rivers`:
@@ -111,18 +111,18 @@ name rivers with no forcing at all. Every `river_series` variable
 is written; the run uses those naming a model tracer and ignores the rest, so one river dataset can
 serve models with different tracers.
 
-Open-boundary data — `AbstractBoundaryDataConfig`, consumed by `prepare_boundaries`:
+Open-boundary data — `AbstractBoundaryDataConfig`, consumed by `prepare_boundary_data`:
 
 | Hook | Required | Default |
 |---|---|---|
 | `boundary_time_steps(config)` → `Vector{SourceRecord}` | yes | none |
 | `boundary_source_grid(config, filepath)` → source grid | yes | none |
 | `boundary_variable_names(config)` → `Dict` source name => FjordSim name | yes | none |
-| `download_boundaries(target_grid, config)` | only if it downloads; reads its edges with `open_edges(config)`, and subsets the box `boundary_domain` derives from them | none |
+| `download_boundary_data(target_grid, config)` | only if it downloads; reads its edges with `open_edges(config)`, and subsets the box `boundary_domain` derives from them | none |
 | `boundary_date_range(config)` → `(first, last)` `DateTime`s | no | reads `ds["time"]` from the prepared NetCDF |
 | `boundary_source_slab(config, reader, step, source_name)` → one source slab | no | `blended_slab`, a plain read. Override only for a variable *derived* from more than one of the source's own — a velocity component stated along the source's own grid axes is the case that needs it |
 
-Like a river config, this is a `FjordConfig` field of its own, `boundary_config`, `nothing` for a
+Like a river config, this is a `FjordConfig` field of its own, `boundary_data_config`, `nothing` for a
 setup whose lateral boundary is not data-driven: the exterior state is its own hourly file from its own
 collection read by its own pipeline, and either config is nameable without the forcing one.
 
@@ -135,7 +135,7 @@ disagreeing; `prepare_forcing` takes them as an `edges` keyword, since a forcing
 business naming them, and `nothing` there means a closed domain. Not to be
 confused with `AbstractBoundaryConditionConfig`, which is the scheme rather than the data.
 
-`prepare_boundaries` reuses the `Regridding` core on a one-cell-thick target slab, so a boundary source on
+`prepare_boundary_data` reuses the `Regridding` core on a one-cell-thick target slab, so a boundary source on
 a regular projected grid inherits `source_field_grid`, `projected_target_nodes`, `SourceFill` and the
 interpolation kernel unchanged, exactly as a forcing source does. It loops the whole per-variable build
 over the config's edges and writes them all into one file, so neither hook above becomes per-edge — the
@@ -176,19 +176,29 @@ five of its eight variables are derived rather than copied) returns the identity
 `Regridding`'s `grid_rotation_angle` and `rotate_to_east_north` are available to any adapter whose
 source gives wind relative to its own grid axes.
 
-Simulation — `AbstractSimulationConfig`, consumed by `build_simulation`: **no hooks**. It is data
-only, read field by field, so an alternative simulation config is a subtype supplying the field
-set its docstring lists. It inherits `results_path`, `run_tag` and `coverage_window` — the last reads
-`start_date`, so a subtype omitting that field inherits only the first two. Everything that *is*
-dispatched on comes from the supertypes it nests, one hook table each. `AbstractCallbackConfig` is
-the newest row: it replaced a bare `progress_interval::Float64`, which could only change how often
-the one hardcoded `Callback(progress, TimeInterval(...))` fired.
+Model — `AbstractModelConfig`, the setup's `model_config`, consumed by `build_simulation`. Its
+biogeochemistry and its boundary conditions are setup components of their own, beside it:
+
+| Supertype | `FjordConfig` field | Hooks |
+|---|---|---|
+| `AbstractModelConfig` | `model_config` | `coupled_model(model, grid; forcing, boundary_conditions, initial_conditions, biogeochemistry, atmosphere, radiation, boundary_data_config, river_columns, stop_time, initial_time_step)` → the model, and `model_tracers(model)`: required. `model_boundary_conditions(model, pieces, grid, forcing, boundary_data_config, tracers, boundaries)`: optional, defaults to merging the pieces into Oceananigans `FieldBoundaryConditions` |
+| `AbstractBiogeochemistryConfig` | `biogeochemistry_config` | `model_biogeochemistry(config, grid)` → the biogeochemistry `coupled_model` receives; required. `examples/oslofjorden_npzd.jl` has one |
+| `AbstractBoundaryConditionConfig` | `boundary_condition_configs` (a tuple, merged in order) | `boundary_condition_sides(config, grid, forcing, boundary_data_config, tracers[, boundaries])` — implement the six-argument form only if the piece reads the prepared open-boundary state; the five-argument one is reached through a forwarding fallback |
+
+The boundary-condition pieces are a plain tuple because how they combine, and what shape the result
+takes, is the model's business: a model whose boundary objects are not `FieldBoundaryConditions`
+overloads `model_boundary_conditions` on its own config.
+
+Simulation — `AbstractSimulationConfig`, the setup's `simulation_config`: how a built model is run.
+`build_simulation(simulation_config, config)` and `run_simulation(simulation_config, config)` dispatch
+on it, so a different way of building or running — an ensemble, a nested run — is a subtype with
+its own methods of those two. Its fields are read directly, so a subtype that reuses the built-in
+methods supplies the field set its docstring lists. It inherits `results_path`, `run_tag` and
+`coverage_window` — the last reads `start_date`, so a subtype omitting that field inherits only the
+first two. What it nests is dispatched on one hook table each:
 
 | Supertype | Field | Required hooks |
 |---|---|---|
-| `AbstractCoupledSimulationConfig` | `model` | `coupled_simulation(model, grid; forcing, boundary_conditions, initial_conditions, atmosphere, radiation, boundary_config, river_columns, stop_time, initial_time_step)`, `model_tracers(model)` |
-| `AbstractBoundaryConditionSetConfig` | `boundary_conditions` | `field_boundary_conditions(config, grid, forcing, boundary_config, tracers, boundaries)` |
-| `AbstractBoundaryConditionConfig` | the pieces inside the set | `boundary_condition_sides(config, grid, forcing, boundary_config, tracers[, boundaries])` — implement the six-argument form only if the piece reads the prepared open-boundary state; the five-argument one is reached through a forwarding fallback. The fourth argument was the *forcing* config before the open edge moved, so a piece that reads it needs checking |
 | `AbstractCallbackConfig` | `callbacks` (a tuple) | `attach_callback!(simulation, callback, config)` |
 | `AbstractWriterConfig` | `writers` (a tuple) | `attach_writer!(simulation, writer, config, loop)`; optionally `checkpoint_trait`, `output_path_trait`, both defaulting to the negative. `SnapshotWriter` (NetCDF), `FieldSnapshotWriter` (JLD2, for z-reduced fields NetCDF rejects) and `CheckpointWriter` are the built-ins |
 | `AbstractTimeSteppingConfig` | `time_stepping` | `attach_time_stepping!(simulation, config)`, `initial_time_step(config)` |
@@ -196,39 +206,75 @@ the one hardcoded `Callback(progress, TimeInterval(...))` fired.
 A writer needs an `output_file` field only when its `output_path_trait` is `NamesOutputFile`; on any
 other, `results_path` raises a stated `ArgumentError` rather than failing on a missing field.
 
-`CoupledHydrostaticSimulation`, the built-in `AbstractCoupledSimulationConfig`, can nest three further
-supertypes of its own. None is one of the rows above — those are what `SimulationConfig` itself
-nests — but the same reasoning applies one level down: a different free surface, closure or
-biogeochemistry is a new subtype and a new method, not an edit to `coupled_simulation`.
+`CoupledHydrostaticModel`, the built-in `AbstractModelConfig`, nests two further supertypes of its
+own, so a different free surface or closure is a new subtype and a new method, not an edit to
+`coupled_model`:
 
 | Supertype | Field | Required hook | Built-in |
 |---|---|---|---|
-| `AbstractFreeSurfaceConfig` | `free_surface` | `free_surface(config, grid)` → the free-surface object `coupled_simulation` passes to `HydrostaticFreeSurfaceModel` | `SplitExplicitFreeSurfaceConfig` |
-| `AbstractClosureConfig` | `closure` | `model_closure(config, grid, boundary_config, river_columns)` → the closure, or tuple of closures, it passes | `BoundarySponge`, `RiverMouthMixing` |
-| `AbstractBiogeochemistryConfig` | `biogeochemistry` | `model_biogeochemistry(config, grid)` → the biogeochemistry it passes | none; `examples/oslofjorden_npzd.jl` has one |
+| `AbstractFreeSurfaceConfig` | `free_surface` | `free_surface(config, grid)` → the free-surface object `coupled_model` passes to `HydrostaticFreeSurfaceModel` | `SplitExplicitFreeSurfaceConfig` |
+| `AbstractClosureConfig` | `closure` | `model_closure(config, grid, boundary_data_config, river_columns)` → the closure, or tuple of closures, it passes | `BoundarySponge`, `RiverMouthMixing` |
 
 They differ in one way that matters. `free_surface` is *always* a config — there is nothing else
 it could hold. `closure` holds a config **or** a pre-built Oceananigans closure, and usually the
 latter; `model_closure`'s fallback is the identity, so the two shapes are resolved by dispatch and a
-setup naming a plain closure needs no change and never sees the hook. `biogeochemistry` works the
-same way through `model_biogeochemistry`, so `nothing` passes through. Same pattern as
+setup naming a plain closure needs no change and never sees the hook. `model_biogeochemistry` has the
+same identity fallback, so a `nothing` biogeochemistry passes through. Same pattern as
 `initial_conditions` and `resolve_initial_conditions`.
 
-`model_closure` takes `boundary_config` as well as the grid because a closure may act on the open
+`model_closure` takes `boundary_data_config` as well as the grid because a closure may act on the open
 edges, which are stated only on the `AbstractBoundaryDataConfig`, and `river_columns` — what
 `read_river_columns` reads from the river file, or `nothing` — because one may act on the river
-mouths. That is why `coupled_simulation` carries both too.
+mouths. That is why `coupled_model` carries both too.
 
-`CoupledHydrostaticSimulation` also carries `extra_kwargs`, which is not a hook but the reason a
-setup rarely needs a *new* `AbstractCoupledSimulationConfig` subtype: it splats one `NamedTuple` per
-slot into each of the four constructors `coupled_simulation` calls, so a model differing from the
+`CoupledHydrostaticModel` also carries `extra_kwargs`, which is not a hook but the reason a
+setup rarely needs a *new* `AbstractModelConfig` subtype: it splats one `NamedTuple` per
+slot into each of the three constructors `coupled_model` calls, so a model differing from the
 built-in one by a keyword is a config value rather than a new type and a new method. See
 `docs/architecture.md` (Simulations section) for the slot names and for why the constructor rejects
 keys that would shadow the fields.
 
-The `coverage` keyword `prepare_forcing`, `prepare_boundaries` and `prepare_atmosphere` take is a
-pipeline *argument*, not a hook: the `FjordConfig` drivers derive it with `coverage_window` and every
-source inherits the padding unchanged. No source gains a hook for it.
+## A new kind of input, or a setup type of its own
+
+Every step that takes a whole setup takes an `AbstractFjordConfig`, and only picks out the components
+it reads through accessor functions — `grid_config(config)`, `forcing_config(config)`, … — before
+calling the method that does the work, which dispatches on those components alone:
+`prepare_bathymetry(config)` is `prepare_bathymetry(grid_config, bathymetry_config,
+boundary_data_config)`. Each optional component has a `::Nothing` method at that level, which is how
+a step becomes a no-op. So a setup type of its own reuses every step by implementing the eleven
+accessors (`FjordSim.Configs`), and the test suite's `DelegatingFjord` is the minimal example.
+
+An input of a kind `FjordConfig` has no field for — nutrient loads, wave forcing — is such a type
+with one more field, and three overloads, none of them an edit to FjordSim:
+
+```julia
+using FjordSim: Configs, Simulations, CLI
+
+struct NutrientFjord{C<:FjordConfig,N} <: Configs.AbstractFjordConfig
+    base::C
+    nutrient_config::N
+end
+
+Configs.grid_config(config::NutrientFjord) = Configs.grid_config(config.base)   # … every accessor
+
+# The keyword the model receives: the default inputs plus the new one.
+Simulations.model_inputs(config::NutrientFjord, grid, simulation) = merge(
+    Simulations.model_inputs(config.base, grid, simulation),
+    (; nutrients = nutrient_forcing(config.nutrient_config, grid)),
+)
+
+# The step that prepares it, offered on the command line after the built-in ones.
+CLI.pipeline_steps(config::NutrientFjord) =
+    [CLI.pipeline_steps(config.base); "prepare_nutrients" => prepare_nutrients]
+```
+
+The model config it pairs with takes the new keyword in its own `coupled_model` method. A new step
+follows the same shape as the built-in ones: a one-line method on the setup type that picks out the
+components, and the method that does the work on those components.
+
+The `coverage` keyword `prepare_forcing`, `prepare_boundary_data` and `prepare_atmosphere` take is a
+pipeline *argument*, not a hook: the steps derive it from the simulation config with `coverage_window`
+and every source inherits the padding unchanged. No source gains a hook for it.
 
 Required fields are listed in each supertype's docstring in `src/Configs.jl`. Path resolution
 (`bathymetry_path`, `forcing_path`, `forcing_directory`, `initial_state_path`,

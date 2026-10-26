@@ -17,8 +17,8 @@ using Oceananigans.Units: day, days, hour, minute, minutes, second
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using NumericalEarth: FreezingLimitedOceanTemperature
 using FjordSim.Configs: AbstractAtmosphereConfig, AbstractBathymetryConfig,
-    AbstractBoundaryConditionConfig, AbstractBoundaryConditionSetConfig, AbstractCallbackConfig,
-    AbstractCoupledSimulationConfig, AbstractForcingConfig, AbstractFreeSurfaceConfig,
+    AbstractBoundaryConditionConfig, AbstractCallbackConfig, AbstractFjordConfig,
+    AbstractModelConfig, AbstractForcingConfig, AbstractFreeSurfaceConfig,
     AbstractGridConfig, AbstractRiverConfig, AbstractSimulationConfig, AbstractTimeSteppingConfig,
     AbstractWriterConfig
 
@@ -76,13 +76,35 @@ end
 # The supertypes `SimulationConfig` nests, plus the free surface one level further down, each with
 # no hook overloaded, so the "Config extensibility" testset can assert that a missing hook surfaces
 # as a `MethodError` naming it.
-struct MinimalModel <: AbstractCoupledSimulationConfig end
+struct MinimalModel <: AbstractModelConfig end
 struct MinimalFreeSurface <: AbstractFreeSurfaceConfig end
 struct MinimalBoundary <: AbstractBoundaryConditionConfig end
-struct MinimalBoundarySet <: AbstractBoundaryConditionSetConfig end
 struct MinimalWriter <: AbstractWriterConfig end
 struct MinimalCallback <: AbstractCallbackConfig end
 struct MinimalTimeStepping <: AbstractTimeSteppingConfig end
+
+# A setup type of its own that delegates every component to a wrapped `FjordConfig`, so the
+# "Config extensibility" testset can check that every step reaches its components through the
+# `AbstractFjordConfig` accessors rather than through `FjordConfig`'s fields.
+struct DelegatingFjord{C<:FjordConfig} <: AbstractFjordConfig
+    base::C
+end
+
+for accessor in (
+    :grid_config,
+    :bathymetry_config,
+    :forcing_config,
+    :initial_state_config,
+    :river_config,
+    :boundary_data_config,
+    :atmosphere_config,
+    :model_config,
+    :biogeochemistry_config,
+    :boundary_condition_configs,
+    :simulation_config,
+)
+    @eval FjordSim.Configs.$accessor(config::DelegatingFjord) = FjordSim.Configs.$accessor(config.base)
+end
 
 # A stand-in for a coupled-model component that does have a clock, so `rewind_clock!`'s
 # has-a-clock branch can be exercised without building a model.
@@ -207,7 +229,7 @@ test_forcing_config(; data_root = tempdir(), kwargs...) = NorKystConfig(;
     kwargs...,
 )
 
-test_boundaries_config(; data_root = tempdir(), kwargs...) = NorKystBoundariesConfig(;
+test_boundaries_config(; data_root = tempdir(), kwargs...) = NorKystBoundaryDataConfig(;
     data_root,
     output_directory = "norkyst_hourly",
     open_edges = :south,
@@ -260,7 +282,7 @@ end
     test_model_fields(; kwargs...)
     test_model_config(; kwargs...)
 
-Every one of `CoupledHydrostaticSimulation`'s fields, and the config built from them.
+Every one of `CoupledHydrostaticModel`'s fields, and the config built from them.
 
 Three values are not free: `tracers` must name `T` and `S` (`AirSeaFluxes` builds a top condition
 for each by name); `buoyancy` must be a `SeawaterBuoyancy` over a `TEOS10EquationOfState`, the only
@@ -279,7 +301,6 @@ function test_model_fields(; kwargs...)
         :tracers => (:T, :S),
         :coriolis => HydrostaticSphericalCoriolis(),
         :sea_ice => FreezingLimitedOceanTemperature(),
-        :biogeochemistry => nothing,
         :free_surface => SplitExplicitFreeSurfaceConfig(cfl = 0.7),
         # The pass-through slots, empty. Stated rather than defaulted, like every other field here —
         # the "no field has a default" sweep covers this one too.
@@ -290,7 +311,7 @@ function test_model_fields(; kwargs...)
 end
 
 test_model_config(; kwargs...) =
-    CoupledHydrostaticSimulation(; test_model_fields(; kwargs...)...)
+    CoupledHydrostaticModel(; test_model_fields(; kwargs...)...)
 
 """
     test_snapshot_writer(; kwargs...)
@@ -321,7 +342,7 @@ test_time_stepping(;
     max_time_step_change = 1.01,
 ) = AdaptiveTimeStep(; initial_time_step, cfl, max_time_step, max_time_step_change)
 
-test_boundary_conditions() = MergedBoundaryConditions(
+test_boundary_conditions() = (
     AirSeaFluxes(),
     QuadraticBottomDrag(coefficient = 0.003),
     OpenLateralBoundaryFromData(inflow_timescale = 1day, outflow_timescale = 360days),
@@ -338,15 +359,13 @@ Every one of `SimulationConfig`'s fields, as a `Dict` the constructor can be spl
 A `Dict` rather than a `NamedTuple` because the "no field has a default" sweep needs to *remove* one
 field at a time, which `delete!(copy(fields), name)` does and a `NamedTuple` cannot.
 
-The six nested-config fields come from the factories above, so a test that cares about one of them
+The four nested-config fields come from the factories above, so a test that cares about one of them
 overrides just that one.
 """
 function test_simulation_fields(; kwargs...)
     fields = Dict{Symbol,Any}(
         :results_root => TEST_RESULTS_ROOT,
         :architecture => :cpu,          # pinned, never :auto — no test may depend on a GPU
-        :model => test_model_config(),
-        :boundary_conditions => test_boundary_conditions(),
         :writers => (test_snapshot_writer(), test_checkpoint_writer()),
         :callbacks => (test_progress_callback(),),
         :time_stepping => test_time_stepping(),
@@ -375,10 +394,9 @@ own field types force: `Base.@kwdef` on a parametric struct dispatches rather th
 `stop_time = 3600` is a `MethodError` where `1hour` is fine. The nested configs each have a
 hand-written keyword constructor that *does* convert, so an integer duration is fine in one of those.
 
-Overriding `model`, `boundary_conditions`, `writers`, `time_stepping` or `initial_conditions` yields a
-different `SimulationConfig` type, and so a fresh `build_simulation` specialization — a full recompile
-of the coupled model. Vary only the `String`/`Symbol`/`Float64`/`Int`/`Bool` fields inside a testset
-that builds one.
+Overriding `writers`, `time_stepping` or `initial_conditions` yields a different `SimulationConfig`
+type, and so a fresh `build_simulation` specialization — a full recompile of the coupled model. Vary
+only the `String`/`Symbol`/`Float64`/`Int`/`Bool` fields inside a testset that builds one.
 """
 test_simulation_config(; kwargs...) = SimulationConfig(; test_simulation_fields(; kwargs...)...)
 
@@ -505,7 +523,7 @@ end
                               names = ("T", "S", "u", "v", "eta", "ubar", "vbar"),
                               dates = ..., value = (name, index) -> 1.0f0, land = nothing)
 
-A NetCDF file in exactly the layout `prepare_boundaries` writes: the same six spatial dimensions the
+A NetCDF file in exactly the layout `prepare_boundary_data` writes: the same six spatial dimensions the
 forcing file defines, one `Float32` variable per name *prefixed with its edge* for each edge, no
 `_lambda` twins, a CF-encoded `time`, and the comma-joined `open_edge` global attribute.
 
@@ -514,11 +532,11 @@ open all round is `edges = (:south, :north, :west, :east)` — one file with fou
 what the real writer produces.
 
 The staggering and rank come from `BoundaryData.boundary_dimension_names`, the same function
-`prepare_boundaries` writes with, so a change to the layout earns a failing read rather than a
+`prepare_boundary_data` writes with, so a change to the layout earns a failing read rather than a
 passing test against a file the model cannot use.
 
 - `value(name, index)`: what fills variable `name` (unprefixed) at record `index`.
-- `land`: an along-boundary index set to `NaN32` in every variable, the way `prepare_boundaries`
+- `land`: an along-boundary index set to `NaN32` in every variable, the way `prepare_boundary_data`
   marks a dry boundary cell — what `fill_boundary_gaps!` then fills on read.
 """
 function write_prepared_boundaries(
@@ -565,7 +583,7 @@ end
     write_hourly_source_stub(filepath; dates, longitude, latitude, depths = [0.0, 5.0, 20.0],
                              value = (name, level, index) -> ..., grid_angle = 0.0)
 
-One downloaded hourly-NorKyst month, as `download_boundaries` writes it: `X`/`Y`/`depth`/`time`
+One downloaded hourly-NorKyst month, as `download_boundary_data` writes it: `X`/`Y`/`depth`/`time`
 dimensions, 2D `lon`/`lat`, the `projection_stere.proj4` attribute `boundary_source_grid` reads, the
 `angle` field `boundary_source_slab` rotates `ubar`/`vbar` with, four full-depth variables and three
 surface ones.
@@ -577,7 +595,7 @@ The projected `X`/`Y` box is derived from the target `longitude`/`latitude` thro
 `projected_target_nodes`, so it actually contains the projected target nodes — a box in arbitrary
 metres would put every node outside the source and make `interpolate` extrapolate to `±Inf`.
 
-This is the only fixture that drives the real `prepare_boundaries` write path; `write_prepared_forcing`
+This is the only fixture that drives the real `prepare_boundary_data` write path; `write_prepared_forcing`
 and `write_prepared_boundaries` hand-roll the *output* layout instead.
 """
 const NORKYST_STUB_PROJ4 = "+proj=stere +lat_0=90 +lat_ts=60 +lon_0=70 +x_0=3192800 +y_0=1784000 " *

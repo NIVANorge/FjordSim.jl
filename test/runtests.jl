@@ -2262,6 +2262,30 @@ end
             @test water_mask(grid, Center, Center, nothing) == water_mask(grid, Center, Center, :west)
         end
     end
+
+    @testset "source chunk cache" begin
+        record_chunks = FjordSim.Regridding.record_chunks
+
+        # The cache must hold every chunk one record touches, which is the chunks across all but the
+        # last dimension, partial edge chunks included, each a whole chunk once inflated.
+        mktempdir() do tmp
+            path = joinpath(tmp, "source.nc")
+            NCDataset(path, "c") do ds
+                defDim(ds, "X", 10)
+                defDim(ds, "Y", 12)
+                defDim(ds, "depth", 3)
+                defDim(ds, "time", 8)
+                defVar(ds, "temperature", Float32, ("X", "Y", "depth", "time"); chunksizes = [4, 5, 2, 2])
+                defVar(ds, "zeta", Float64, ("X", "Y", "time"); chunksizes = [10, 12, 8])
+                defVar(ds, "depth", Float32, ("depth",))
+            end
+
+            # temperature: 3 x 3 x 2 chunks of 4 x 5 x 2 x 2 Float32, 5760 bytes. zeta: one chunk of
+            # 10 x 12 x 8 Float64, more bytes in fewer chunks, so each maximum comes from its own
+            # variable. The contiguous `depth` needs no cache.
+            @test record_chunks(path) == (count = 3 * 3 * 2, bytes = 10 * 12 * 8 * 8)
+        end
+    end
 end
 
 @testset "Forcing" begin

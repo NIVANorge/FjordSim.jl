@@ -785,30 +785,66 @@ end
 
 SourceReader(filepath::String) = SourceReader(filepath, open_source_file(filepath))
 
-# The chunk cache each variable of a source file gets, and how many chunks it may hold. Sized for a
-# downloaded month written with netCDF's default chunking: NorKyst-v3 hourly boundary months come as
-# `(15, 22, 7, 180)` chunks, so one hour of a full-depth variable touches 64 compressed chunks — about
-# 106 MB once inflated — that each hold 180 hours. Below that, every hour decompresses the same 64
-# chunks again: 88 ms per slab measured, against 1.0 ms with the block cached.
-const SOURCE_CHUNK_CACHE_BYTES = 256 * 2^20
+# The chunk cache each variable of a source file gets is sized from the file itself. Downloads are
+# written with netCDF's default chunking, whose chunks span many records, so a cache that cannot
+# hold every chunk one record touches decompresses all of them again for every record — and how
+# many that is depends on the download's extent. A NorKyst-v3 hourly boundary month of the
+# Oslofjord comes as `(15, 22, 7, 180)` chunks: one hour of a full-depth variable touches 64 of
+# them, about 106 MB inflated, and reads in 88 ms uncached against 1.0 ms cached. An operational
+# NorKyst-800m month over a 301 x 320 source box comes as `(51, 54, 2, 112)` to `(51, 54, 2, 124)`
+# chunks: 288 of them, 710-790 MB, read in 0.9 s under a 256 MB cache against 0.009 s under this
+# sizing (g2-standard-8). A variable's cache holds only the chunks it has read, so a generous size
+# costs no memory beyond that.
+#
+# HDF5 keeps at most one chunk per hash slot and evicts on a collision, so both the size and the
+# slot count are twice the exact fit, and the slot count never drops below 1009, a prime as HDF5
+# recommends for its hash table.
+const SOURCE_CHUNK_CACHE_HEADROOM = 2
 const SOURCE_CHUNK_CACHE_SLOTS = 1009
 const SOURCE_CHUNK_CACHE_PREEMPTION = 0.75
+
+"""
+    record_chunks(filepath)
+
+How many chunks, and how many bytes once inflated, one record along the last dimension touches, for
+the variable of `filepath` that needs the most of each. Contiguous and non-numeric variables need
+none.
+"""
+record_chunks(filepath) = NCDataset(filepath) do ds
+    needs = [record_chunks(NCDatasets.variable(ds, name)) for name in keys(ds)]
+    return (
+        count = maximum(need -> need.count, needs; init=0),
+        bytes = maximum(need -> need.bytes, needs; init=0),
+    )
+end
+
+function record_chunks(variable::NCDatasets.Variable)
+    storage, chunk_size = chunking(variable)
+    element = eltype(variable)
+    (storage == :chunked && isbitstype(element)) || return (count = 0, bytes = 0)
+
+    extents = size(variable)
+    count = prod(cld(extents[d], chunk_size[d]) for d = 1:length(extents)-1; init=1)
+
+    return (; count, bytes = count * prod(chunk_size) * sizeof(element))
+end
 
 """
     open_source_file(filepath)
 
 Open a downloaded source file for reading one time record at a time, with a per-variable chunk cache
-large enough to hold every chunk one record touches — see `SOURCE_CHUNK_CACHE_BYTES`.
+large enough to hold every chunk one record touches — see `record_chunks`.
 
 netCDF takes a variable's cache from the process-wide default at the moment the file is opened, so
 the default is raised for the open and put back straight after: every other file this process opens
 keeps the library's own setting.
 """
 function open_source_file(filepath)
+    needed = record_chunks(filepath)
     size, nelems, preemption = NCDatasets.get_chunk_cache()
     NCDatasets.set_chunk_cache(
-        size = SOURCE_CHUNK_CACHE_BYTES,
-        nelems = SOURCE_CHUNK_CACHE_SLOTS,
+        size = SOURCE_CHUNK_CACHE_HEADROOM * needed.bytes,
+        nelems = max(SOURCE_CHUNK_CACHE_SLOTS, SOURCE_CHUNK_CACHE_HEADROOM * needed.count),
         preemption = SOURCE_CHUNK_CACHE_PREEMPTION,
     )
     try

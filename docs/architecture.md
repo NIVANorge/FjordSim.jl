@@ -522,9 +522,13 @@ a few hundred MB where an hourly interior file would be hundreds of GB.
   locations are exactly what `getbc` accepts, so `OpenLateralBoundaryFromData` passes them straight
   through. `BoundaryBackend` is separate from the forcing backend to keep a rank branch out of that
   hot path.
-- **A large chunk cache.** The downloads' chunks span 180 hours, so under the default cache every
-  hourly slab decompressed ~106 MB again: 2.4 h for 640 days. `open_source_file` gives each variable
-  256 MB, bringing it to 0.7 h.
+- **A chunk cache sized from the file.** The downloads' chunks span 112–180 hours, so a cache that
+  cannot hold every chunk one hour touches decompresses them all again each hour. On the Oslofjord,
+  ~106 MB per hourly slab, that took 2.4 h for 640 days, and a fixed 256 MB cache brought it to
+  0.7 h. A download covering a 301 x 320 NorKyst box needs 710–790 MB per slab, so under that fixed
+  cache each slab took 0.9 s instead of 0.009 s, about 100 minutes per regridded month.
+  `open_source_file` therefore sizes the cache from the file's own chunking (`record_chunks`), at
+  twice the exact fit.
 - **The operational collection's `ubar`/`vbar` are grid-relative**, unlike its derotated
   `u_eastward`/`v_northward`. With NorKyst rotated ~59°, `vbar` here is nearly *eastward*: unrotated,
   `cor(vbar, depth-mean v)` was −0.034, and a run grew a ~0.5 m/s spurious band inside the southern

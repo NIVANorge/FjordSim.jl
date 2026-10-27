@@ -20,6 +20,10 @@ cd FjordSim.jl
 julia --project -e 'using Pkg; Pkg.instantiate()'
 ```
 
+On Windows, clone with `git clone -c core.symlinks=true ...` (it needs Developer Mode enabled) or
+clone inside WSL: `AGENTS.md` and `.agents/skills` are symlinks, which Git for Windows otherwise checks
+out as plain text files (see [Working with AI coding agents](#working-with-ai-coding-agents)).
+
 `instantiate` resolves a `Manifest.toml` from `Project.toml`, then installs and precompiles the dependencies.
 To track the repository from a project of your own rather than working inside it,
 `add https://github.com/NIVANorge/FjordSim.jl.git`.
@@ -82,8 +86,7 @@ point for the REPL and the debugger. Snapshots and a per-launch log land in
 `~/FjordSim_results/oslofjorden/`; `julia --project -m FjordSim --help` lists every subcommand.
 
 What to re-run after changing the run window or the grid, how to archive a run before a fresh
-rerun, and how to resume are in [`docs/running.md`](docs/running.md); running on a cloud GPU is in
-[`gcp/README.md`](gcp/README.md).
+rerun, and how to resume are in [`docs/running.md`](docs/running.md).
 
 ## What a run is made of
 
@@ -163,6 +166,24 @@ on another with `base = include("oslofjorden.jl")`, as the variants in `examples
 ```bash
 julia --project -m FjordSim run_simulation --config examples/oslofjorden_npzd.jl
 ```
+
+## Working with AI coding agents
+
+The repository is prepared for AI coding agents (Claude Code, Codex, GitHub Copilot, Cursor) to
+write new setups, add data sources and run the pipeline. Ask in plain words, for example
+"set up a simulation of Hardangerfjorden with the same sources as Oslofjorden" or
+"add a forcing source that reads my model's NetCDF output".
+
+- `CLAUDE.md` (also linked as `AGENTS.md`) gives every agent the commands, the hard rules and the
+  conventions, and points it to the doc for each task.
+- Two skills hold step-by-step checklists: `new-setup` for writing a setup and `run-simulation` for
+  running its steps. They live in `.claude/skills/` (also linked as `.agents/skills/`), and an agent
+  loads one when a request matches it; in Claude Code, `/new-setup` or `/run-simulation` loads it
+  explicitly.
+- [`docs/adding-a-source.md`](docs/adding-a-source.md) and [`docs/setups.md`](docs/setups.md) describe
+  how a new grid, bathymetry, forcing, river, boundary, atmosphere or observation source and a new
+  setup are written: a new source subtypes a config supertype and overloads its hooks, so it never
+  touches the generic pipeline.
 
 ## Some `run_simulation` details
 

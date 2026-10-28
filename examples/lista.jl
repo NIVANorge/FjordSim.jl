@@ -122,6 +122,9 @@ FjordConfig(
         # soundings before trusting it.
         max_slope_factor      = 0.5,
         preserve_sills        = true,
+        # Three open edges cut across the trench slope, where an edge column can reach a level the
+        # column inside it does not. The radiation condition stops acting on such a face.
+        raise_boundary_pockets = true,
         geonorge_cache        = true,
         regrid_cache          = false,
     ),

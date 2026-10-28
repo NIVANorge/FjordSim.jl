@@ -278,36 +278,41 @@ end
     smooth_bathymetry_gaps!(bottom_height; open_boundary_land_cells = 0, max_island_cells = 0,
                             close_narrow_passages = false, spike_ratio = 0,
                             minimum_cell_fraction = 0, max_slope_factor = 0, minimum_depth = 0,
-                            preserve_sills = false, native = nothing, edges = nothing)
+                            preserve_sills = false, raise_boundary_pockets = false,
+                            native = nothing, edges = nothing)
 
-Clean up the regridded bathymetry in place, in eight stages.
+Clean up the regridded bathymetry in place, in nine stages.
 
 First the topological pass every source gets: one diagonal-pair fill, then
 `BATHYMETRY_GAP_FILL_PASSES` rounds of isolated sea/land cell cleanup, following the fixed cleanup
 used for the Oslofjord ROMS-based bathymetry. This removes the checkerboard noise that would
 otherwise skew the neighbor medians a later stage takes.
 
-Then seven optional stages — eight runs, since `snap_partial_bottom_cells` runs once each side of
+Then eight optional stages — nine runs, since `snap_partial_bottom_cells` runs once each side of
 slope limiting and sill preservation — each skipped when its parameter is `false` or zero so a source
 that configures none keeps exactly the behavior above: `clear_open_boundary_land` with
 `open_boundary_land_cells` and `edges`, `fill_small_islands` with `max_island_cells`,
 `remove_narrow_passages` with `close_narrow_passages`, `fill_shallow_spikes` with `spike_ratio`,
 `snap_partial_bottom_cells` with `minimum_cell_fraction`, `limit_bottom_slope` with
 `max_slope_factor` and `minimum_depth`, and `preserve_sill_depths` with `preserve_sills` and
-`native`, the source's bathymetry before regridding (see `native_bathymetry`).
+`native`, the source's bathymetry before regridding (see `native_bathymetry`), and
+`raise_open_boundary_pockets` with `raise_boundary_pockets` and `edges`.
 
-`preserve_sill_depths` runs after slope limiting because it is the one stage that has to have the
-last word on depth: the limiter raises the deep cell of every steep pair, and a carved sill channel
-is, by construction, deeper than the flanks beside it. It changes no land, so it cannot undo what the
+`raise_open_boundary_pockets` runs last, after the second snap, because every depth stage can
+recreate a pocket on an open edge.
+
+`preserve_sill_depths` runs after slope limiting because it is the one stage, the boundary pockets
+aside, that has to have the last word on depth: the limiter raises the deep cell of every steep
+pair, and a carved sill channel is, by construction, deeper than the flanks beside it. It changes no land, so it cannot undo what the
 land-mask stages decided.
 
-`clear_open_boundary_land` is first of the seven, and belongs there for the same reason
+`clear_open_boundary_land` is first of the eight, and belongs there for the same reason
 `fill_small_islands` precedes `remove_narrow_passages`: it only ever turns land into sea, so it can
 neither manufacture a narrow passage nor strand a cell, while running it first lets the island and
 passage stages judge the band as it will actually be. A land component straddling the band's inner
 edge loses its in-band cells here and is then correctly measured — as whatever is left of it — by
-`fill_small_islands`. It is also the only stage that reads `edges`, and it is a no-op when the setup
-names none.
+`fill_small_islands`. It and `raise_open_boundary_pockets` are the stages that read `edges`, and
+both are no-ops when the setup names none.
 
 The order of the remaining five is forced. The two stages that change the *land mask* run before the two that
 change depths: run the other way round, the cells they are about to turn into land or water would
@@ -351,6 +356,7 @@ function smooth_bathymetry_gaps!(
     max_slope_factor = 0,
     minimum_depth = 0,
     preserve_sills = false,
+    raise_boundary_pockets = false,
     native = nothing,
     edges = nothing,
 )
@@ -407,6 +413,14 @@ function smooth_bathymetry_gaps!(
     # the docstring for what it costs.
     (max_slope_factor > 0 || preserve_sills) && minimum_cell_fraction > 0 &&
         (h = snap_and_report(h, z_faces, minimum_cell_fraction, minimum_depth, "after slope limiting and sill preservation"))
+
+    if raise_boundary_pockets
+        before = copy(h)
+        for edge in lateral_edges(edges)
+            h = raise_open_boundary_pockets(h, Val(edge))
+        end
+        @info "Raised $(count(h .!= before)) open-boundary cells to the depth of the cell inside them, $(count((h .>= 0) .& (before .< 0))) of them to land"
+    end
 
     set!(bottom_height, h)
     return bottom_height
@@ -508,6 +522,47 @@ open_boundary_band(::Val{:west}, Nx, Ny, cells) = (1:min(cells, Nx), 1:Ny)
 open_boundary_band(::Val{:east}, Nx, Ny, cells) = (max(1, Nx - cells + 1):Nx, 1:Ny)
 
 open_boundary_band(::Val{edge}, Nx, Ny, cells) where {edge} =
+    throw(ArgumentError("open_edge must be one of $LATERAL_EDGES, got :$edge"))
+
+"""
+    raise_open_boundary_pockets(h, edge::Val)
+
+Raise every cell in the boundary row of one open lateral edge to no deeper than the cell inside it,
+so no bottom cell on an open edge is walled off from the interior.
+
+The radiation condition updates the boundary-normal velocity from the two faces inside it. Where
+the edge column reaches a level the column inside it does not, the first of those faces is
+immersed: the scheme reads zero, treats the face as outflow with no phase speed, and leaves it to
+the outflow nudging alone, while the split-explicit corrector adds to it every step. On a 500 m
+shelf grid such faces reached 3.7 m/s in a 1.2 m bottom cell, with the interior under 1.5 m/s.
+An edge cell with land behind it is a pocket over its whole depth and becomes land.
+
+Every new depth is the inner neighbour's, which the snap has already put on a face, so no sliver
+is created.
+
+# Arguments
+- `h`: bottom height, `h < 0` sea.
+- `edge`: `Val(:south)`, `Val(:north)`, `Val(:west)` or `Val(:east)`.
+"""
+function raise_open_boundary_pockets(h, edge::Val)
+    raised = copy(h)
+    for (edge_cell, inner_cell) in boundary_neighbours(edge, size(h)...)
+        raised[edge_cell...] = max(h[edge_cell...], h[inner_cell...])
+    end
+    return raised
+end
+
+"""
+    boundary_neighbours(edge::Val, Nx, Ny)
+
+Each cell of one lateral edge's boundary row, paired with the cell next to it inside the domain.
+"""
+boundary_neighbours(::Val{:south}, Nx, Ny) = [((i, 1), (i, 2)) for i = 1:Nx]
+boundary_neighbours(::Val{:north}, Nx, Ny) = [((i, Ny), (i, Ny - 1)) for i = 1:Nx]
+boundary_neighbours(::Val{:west}, Nx, Ny) = [((1, j), (2, j)) for j = 1:Ny]
+boundary_neighbours(::Val{:east}, Nx, Ny) = [((Nx, j), (Nx - 1, j)) for j = 1:Ny]
+
+boundary_neighbours(::Val{edge}, Nx, Ny) where {edge} =
     throw(ArgumentError("open_edge must be one of $LATERAL_EDGES, got :$edge"))
 
 """

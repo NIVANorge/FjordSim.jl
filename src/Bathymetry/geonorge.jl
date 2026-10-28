@@ -184,6 +184,13 @@ across fjords.
   11 m deep and 180 m wide, regridded to 5.6 m. The stage deepens cells only along one path per lost
   connection and never below the deepest native water in a cell, so it restores the sill without
   deepening the slopes beside it.
+- `raise_boundary_pockets`: Run `raise_open_boundary_pockets` last, raising every cell in an open
+  edge's boundary row to no deeper than the cell inside it, and turning one with land behind it into
+  land. `false` disables the stage, and so does a setup that names no boundary data config.
+
+  Where the edge column reaches a level the column inside it does not, the radiation condition
+  reads an immersed face there and stops acting on the boundary face, which then drifts. On a 500 m
+  shelf grid such faces reached 3.7 m/s in a 1.2 m bottom cell, with the interior under 1.5 m/s.
 - `geonorge_cache`: Reuse the cached regional raw NetCDF when available.
 - `regrid_cache`: Use NumericalEarth's on-disk bathymetry cache.
 
@@ -215,6 +222,7 @@ Base.@kwdef mutable struct DybdedataConfig <: AbstractBathymetryConfig
     minimum_cell_fraction::Float64 = 0.0
     max_slope_factor::Float64 = 0.0
     preserve_sills::Bool = false
+    raise_boundary_pockets::Bool = false
     geonorge_cache::Bool = true
     regrid_cache::Bool = true
     raw_file::String = ""
@@ -269,6 +277,7 @@ smoothing_options(config::DybdedataConfig) = (;
     max_slope_factor = config.max_slope_factor,
     minimum_depth = config.minimum_depth,
     preserve_sills = config.preserve_sills,
+    raise_boundary_pockets = config.raise_boundary_pockets,
 )
 
 """

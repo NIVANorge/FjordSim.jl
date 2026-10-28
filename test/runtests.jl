@@ -1714,6 +1714,7 @@ end
             max_slope_factor = 0.0,
             minimum_depth = 0.0,
             preserve_sills = false,
+            raise_boundary_pockets = false,
         )
         @test smoothing_options(test_bathymetry_config(
             open_boundary_land_cells = 5,
@@ -1724,6 +1725,7 @@ end
             max_slope_factor = 0.4,
             minimum_depth = 2.0,
             preserve_sills = true,
+            raise_boundary_pockets = true,
         )) == (
             open_boundary_land_cells = 5,
             max_island_cells = 6,
@@ -1733,6 +1735,7 @@ end
             max_slope_factor = 0.4,
             minimum_depth = 2.0,
             preserve_sills = true,
+            raise_boundary_pockets = true,
         )
 
         # smooth_bathymetry_gaps! round-trips a Field through the same pipeline
@@ -1893,6 +1896,43 @@ end
         both = Array(interior(band_field, :, :, 1))
         @test all(<(0), both[:, 1:3])
         @test all(<(0), both[1:3, :])
+
+        # --- raise_open_boundary_pockets ---
+        raise_open_boundary_pockets = FjordSim.Bathymetry.raise_open_boundary_pockets
+
+        # Along each edge's boundary row: a pocket deeper than the cell inside it, an edge cell
+        # shallower than it, and an edge cell with land inside it.
+        for (edge, cell, inner) in (
+            (:south, (i, j) -> (i, j), (i, j) -> (i, j + 1)),
+            (:north, (i, j) -> (i, 7 - j), (i, j) -> (i, 6 - j)),
+            (:west, (i, j) -> (j, i), (i, j) -> (j + 1, i)),
+            (:east, (i, j) -> (7 - j, i), (i, j) -> (6 - j, i)),
+        )
+            pockets = fill(-20.0, 6, 6)
+            pockets[cell(2, 1)...] = -30.0
+            pockets[cell(3, 1)...] = -10.0
+            pockets[inner(4, 1)...] = 1.0
+            raised = raise_open_boundary_pockets(pockets, Val(edge))
+            @test raised[cell(2, 1)...] == -20.0   # raised to the cell inside it
+            @test raised[cell(3, 1)...] == -10.0   # already shallower: untouched
+            @test raised[cell(4, 1)...] == 1.0     # land behind it: land
+            changed = findall(raised .!= pockets)
+            @test sort(changed) == sort(CartesianIndex.([cell(2, 1), cell(4, 1)]))
+        end
+        @test_throws ArgumentError raise_open_boundary_pockets(fill(-20.0, 6, 6), Val(:up))
+
+        # Wired into the pipeline, opt-in, and a no-op when the setup names no open edge.
+        pocket = fill(-5.0f0, 9, 9)
+        pocket[1, 5] = -8.0f0
+        for (kwargs, expected) in (
+            ((; edges = :west), -8.0f0),
+            ((; raise_boundary_pockets = true), -8.0f0),
+            ((; raise_boundary_pockets = true, edges = (:south, :west)), -5.0f0),
+        )
+            set!(band_field, pocket)
+            FjordSim.Bathymetry.smooth_bathymetry_gaps!(band_field; kwargs...)
+            @test Array(interior(band_field, :, :, 1))[1, 5] == expected
+        end
     end
 
     @testset "partial bottom cell snapping" begin

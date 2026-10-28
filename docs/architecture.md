@@ -140,7 +140,7 @@ raw file's name carries `_linear`, so a cached inverse-distance file is never re
 ### The smoothing stages, and why their order is forced
 
 `smooth_bathymetry_gaps!` runs the topological cleanup every source gets (diagonal pairs, isolated
-sea/land cells), then seven opt-in stages, each skipped when its `smoothing_options` parameter is
+sea/land cells), then eight opt-in stages, each skipped when its `smoothing_options` parameter is
 `false` or zero:
 
 1. `clear_open_boundary_land`
@@ -151,6 +151,7 @@ sea/land cells), then seven opt-in stages, each skipped when its `smoothing_opti
 6. `limit_bottom_slope`
 7. `preserve_sill_depths`
 8. `snap_partial_bottom_cells` (second pass)
+9. `raise_open_boundary_pockets`
 
 - Topological cleanup first: checkerboard noise would skew the neighbour medians.
 - **Land-mask stages before depth stages**, or the cells about to change would already have
@@ -168,6 +169,7 @@ sea/land cells), then seven opt-in stages, each skipped when its `smoothing_opti
   24-level grid. The second snap leaves none, at the cost of raising the steepest slope from 0.250 to
   0.307 on 16 pairs of 84 000. The first snap is still needed: it gives the limiter less to move, and
   is the only snap when the limiter is off.
+- `raise_open_boundary_pockets` last: every depth stage can recreate a pocket on an open edge.
 
 ### Why the depth stages exist
 
@@ -192,6 +194,27 @@ clean channel it is derived for rather than a headland splitting the prescribed 
   order.
 - **The price is exterior data**: a newly wet cell has no profile in the boundary file and
   `fill_boundary_gaps!` fills it from the nearest wet cell. Keep the width to a few cells.
+
+### `raise_open_boundary_pockets`
+
+Raises each cell of an open edge's boundary row to no deeper than the cell inside it. A *pocket* is
+a bottom cell on the edge with a wall on its interior side: the radiation condition updates the
+boundary face from the two faces inside it (`radiate_west_halo!` in Oceananigans' `NormalRadiation`),
+so with the first one immersed it reads zero, takes the face as outflow with no phase speed and
+leaves it to the outflow nudging, while the split-explicit corrector adds to it every step.
+
+- **Measured** on a 500 m shelf grid open to the west and north: such faces reached 3.7 m/s in a
+  1.2 m bottom cell with the interior under 1.5 m/s. There were 38 western and 42 northern pockets,
+  and 11 northern edge cells with land behind them, a pocket over the whole depth, which become land.
+  The stage changed 127 and 236 edge cells, by a median 4.5 and 3.6 m, and took 0.7 % and 1.8 % off
+  the edges' cross-sections.
+- **The edge cell only.** Making the second face open too (no deeper than columns 2 and 3) doubles
+  the change, and copying the inner depth across both (ROMS' zero normal gradient) rewrites almost
+  every edge cell, by up to 189 m.
+- **Not ROMS' parent matching** (Mason et al. 2010), which blends the edge towards the parent
+  model's depth: a terrain-following grid has no pockets, and a smooth parent depth still crosses
+  level faces.
+- **No sliver**: every new depth is the inner neighbour's, already snapped.
 
 ### `remove_narrow_passages`
 

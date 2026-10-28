@@ -55,7 +55,7 @@ Bathymetry — `AbstractBathymetryConfig`, consumed by `prepare_bathymetry`:
 |---|---|---|
 | `bathymetry_dataset(target_grid, config)` → NumericalEarth dataset | yes | none |
 | `regrid_options(config)` → NamedTuple for `regrid_bathymetry` | no | `(;)` |
-| `smoothing_options(config)` → NamedTuple for `smooth_bathymetry_gaps!` — `open_boundary_land_cells`, `max_island_cells`, `close_narrow_passages`, `spike_ratio`, `minimum_cell_fraction`, `max_slope_factor`, `minimum_depth`, `preserve_sills`. `preserve_sills = true` also has `prepare_bathymetry` read the source back on its own grid (`native_bathymetry`), which needs the dataset's `longitude_interfaces`, `latitude_interfaces`, `size` and a 2D variable in its file | no | `(;)`, leaving only the topological cleanup |
+| `smoothing_options(config)` → NamedTuple for `smooth_bathymetry_gaps!` — `open_boundary_land_cells`, `max_island_cells`, `close_narrow_passages`, `spike_ratio`, `minimum_cell_fraction`, `max_slope_factor`, `minimum_depth`, `preserve_sills`, `raise_boundary_pockets`. `preserve_sills = true` also has `prepare_bathymetry` read the source back on its own grid (`native_bathymetry`), which needs the dataset's `longitude_interfaces`, `latitude_interfaces`, `size` and a 2D variable in its file | no | `(;)`, leaving only the topological cleanup |
 
 The `edges` keyword `process_bathymetry` takes is a pipeline *argument*, not a hook, exactly as
 `regrid_forcing`'s is: the step reads it with `open_edges(boundary_data_config)` and every source

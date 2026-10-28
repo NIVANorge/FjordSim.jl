@@ -79,6 +79,7 @@ using ..InitialState: INITIAL_STATE_DATE_ATTRIBUTE, initial_state_path
 using ..Rivers: river_forcing, river_date_range, read_river_columns, combine_forcing, river_forcing_path
 using ..BoundaryData: boundary_series, boundary_date_range
 using ..BoundaryConditions: model_boundary_conditions
+using ..AdvectionSchemes: model_tracer_advection
 
 """
     SplitExplicitFreeSurfaceConfig(; cfl)
@@ -2678,11 +2679,12 @@ Dispatched on the model config and taking every grid-dependent input already bui
 `AbstractModelConfig` subtype and a new method here; nothing above it changes.
 
 The method below builds a `HydrostaticFreeSurfaceModel` inside a NumericalEarth `OceanSeaIceModel`.
-Two of its components are resolved here rather than arriving prebuilt, and for the same reason:
+Its components that need the grid are resolved here rather than arriving prebuilt:
 `model.free_surface`'s `free_surface(config, grid)` hook, because `SplitExplicitFreeSurface` needs
 the grid, and `model.closure` through `model_closure`, because a closure may need the grid, the open
 edges *and* the river columns. The fallback of `model_closure` is the identity, so a plain
-Oceananigans closure passes through untouched.
+Oceananigans closure passes through untouched. `model.tracer_advection` goes through
+`model_tracer_advection` the same way, for `RiverMouthAdvection`, which needs the river columns.
 
 `OceanSeaIceModel` takes the ocean as a `Simulation`, which is why this needs `stop_time` and
 `initial_time_step`; the outer `Simulation` stepping the coupled model is `build_simulation`'s.
@@ -2709,7 +2711,7 @@ function coupled_model(
         grid;
         buoyancy = model.buoyancy,
         closure = model_closure(model.closure, grid, boundary_data_config, river_columns),
-        tracer_advection = model.tracer_advection,
+        tracer_advection = model_tracer_advection(model.tracer_advection, grid, river_columns),
         momentum_advection = model.momentum_advection,
         tracers = model.tracers,
         free_surface = free_surface(model.free_surface, grid),

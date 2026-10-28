@@ -422,6 +422,8 @@ compensating deep inflow over the sills, so basins were diluted from above and n
   only `(; η, U, V)` for fields.
 - `RiverMouthMixing` (opt-in) adds NumericalEarth's river-mouth diffusivity over the river columns,
   since CATKE does not mix down a 1 m fresh layer over salt water.
+- `RiverMouthAdvection` (opt-in) upwinds the horizontal tracer fluxes around the river columns,
+  where WENO overshoots across the fresh front (section 14).
 
 ### NVE: HydAPI says what, the map services say where
 
@@ -562,7 +564,38 @@ a few hundred MB where an hourly interior file would be hundreds of GB.
   `norkyst_hindcast_boundary_data.jl` needs no such method; it reads the barotropic pair from the
   `sdepth` files and everything else from `zdepth`.
 
-## 14. Simulations (`src/Simulations.jl`)
+## 14. Advection schemes (`src/AdvectionSchemes.jl`)
+
+### `RiverMouthAdvection`
+
+**The defect.** A river column is held near fresh against salt water a cell away, and WENO's
+horizontal reconstruction across that front overshoots both ways. On the Møre og Romsdal setup
+(500 m cells, WENO for T and S, salinity bounded to (0, 40)) a cell beside the Driva mouth reached
+35.43 g/kg by day 40, saltier than any source (initial state and boundaries ≤ 35.05), and a 2 m
+Surna mouth column fell to −1.0 °C. On a Larvik sub-domain of the Oslofjord the same runaway
+survived WENO order 3, `GridFittedBottom` and a constant closure; switching the river off, upwinding
+only the horizontal, or bounding S each removed it.
+
+**The fix is local.** Upwinding the horizontal everywhere adds numerical diffusion of about
+|u|Δx/2 (25–125 m²/s at 0.1–0.5 m/s on 500 m cells) to the whole domain. `RiverMouthAdvection`
+keeps it to the mouths: a horizontal face beside a cell within `width_cells` of a river column takes
+first-order upwind's flux, every other face `interior`'s.
+
+- **One flux per face**, shared by the two cells beside it, so the tracer stays conserved exactly; it
+  overrides `_advective_tracer_flux_x/y/z`, as Oceananigans' own `FluxFormAdvection` does, and
+  leaves `div_Uc` generic.
+- **Vertical faces are always `interior`'s**: the evidence is a horizontal overshoot.
+- **A bounded `WENO` interior needs its own fluxes.** Oceananigans limits a bounded WENO only in
+  that scheme's own `div_Uc`, which a wrapper never reaches, so `interior_flux_*` repeats its face
+  fluxes, each side's reconstruction rescaled by the limiter of the cell it was made in, and
+  `update_advection!` is forwarded so the limiter is filled each step.
+- **Built at model build time.** The zone needs the river columns, so the setup's
+  `RiverMouthAdvection` becomes a `RiverMouthScheme` in `model_tracer_advection`, called from
+  `coupled_model` like `model_closure`. The zone is a 2D field of ones and zeros with filled halos.
+- **On a grid too small for `interior`'s order** Oceananigans adapts it into a `FluxFormAdvection`,
+  which drops a bounded WENO's bounds; a model grid is never that small.
+
+## 15. Simulations (`src/Simulations.jl`)
 
 `coupled_model` lives here, not in `src/FjordSim.jl`, because a function defined after the
 `include` block cannot be imported by a module inside it.
@@ -709,7 +742,7 @@ MB per checkpoint on the Oslofjord grid, hence `cleanup = true`.
 - Snapshots *are* per launch, so a resumed run's file starts at the resume point.
 - `pickup` supersedes `initial_conditions`.
 
-## 15. Validation (`src/Validation/`)
+## 16. Validation (`src/Validation/`)
 
 The only module that runs after a simulation, built the same way as the others: an
 `AbstractObservationConfig` per source. Every stage is permissive about missing data — most
@@ -718,7 +751,7 @@ station-variable combinations in a sweep are empty, and each is a blank row, not
 `default_observations` builds its station list from the writers, and a mismatch shows up as "no model
 output", not an error.
 
-## 16. CLI (`src/CLI.jl`)
+## 17. CLI (`src/CLI.jl`)
 
 **No setup is part of the package.** A setup is a script ending in its `FjordConfig`, and
 `fjord_config(path)` `Base.include`s it into `Main` on every call. So each step gets a fresh config —
@@ -743,7 +776,7 @@ reproducible by re-running, and it is the only step guaranteed a `results_root`.
   to `{…}`. `STACKTRACE_WIDTH` below 120 changes nothing (`Base.type_depth_limit` floors it).
 - During a run `stdout` is a `Pipe`, so `displaysize` is 24x80 and wide `show` output may wrap.
 
-## 17. Top-level (`src/FjordSim.jl`)
+## 18. Top-level (`src/FjordSim.jl`)
 
 **It overrides one NumericalEarth method**, `update_net_ocean_fluxes!` on `NoSeaIceInterfaceModel`,
 with a copy of upstream's body. Without sea ice, NumericalEarth's zero fluxes are an untyped

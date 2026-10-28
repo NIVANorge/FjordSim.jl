@@ -108,15 +108,18 @@ The modules, in `include` order from `src/FjordSim.jl`:
 13. **Boundary data** (`src/Boundaries/BoundaryData/`) — the open-boundary data pipeline
     (`download_boundary_data`, `prepare_boundary_data`, `boundary_series`) and its NorKyst adapters.
     Independent of `BoundaryConditions`; `build_simulation` hands one's output to the other.
-14. **Simulations** (`src/Simulations.jl`) — `CoupledHydrostaticModel` and `coupled_model`,
+14. **Advection schemes** (`src/AdvectionSchemes.jl`) — `RiverMouthAdvection` (first-order upwind
+    horizontally around the river mouths) and `model_tracer_advection`, the hook `coupled_model` builds
+    the tracer advection through.
+15. **Simulations** (`src/Simulations.jl`) — `CoupledHydrostaticModel` and `coupled_model`,
     `RunConfig`, `build_simulation` (staged in `assemble_simulation`: `validate_model_inputs`,
     `model_inputs`, `coupled_model`)/`run_simulation` (`run_loops`), writers, callbacks, looping,
     checkpointing, initial conditions, the run tag.
-15. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
+16. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
     observation sources, skill and tidal statistics, and the comparison figures. `StationWriter`
     (in `Simulations`) is what a run writes for it.
-16. **CLI** (`src/CLI.jl`) — `fjord_config` (loads a config file), subcommand dispatch, logging.
-17. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
+17. **CLI** (`src/CLI.jl`) — `fjord_config` (loads a config file), subcommand dispatch, logging.
+18. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
 
 ## Setups
 

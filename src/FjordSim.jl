@@ -37,6 +37,7 @@ export
     SplitExplicitFreeSurfaceConfig,
     BoundarySponge,
     RiverMouthMixing,
+    RiverMouthAdvection,
     SnapshotWriter,
     FieldSnapshotWriter,
     Station,
@@ -80,6 +81,7 @@ include("InitialState/InitialState.jl")
 include("Rivers/Rivers.jl")
 include("Boundaries/BoundaryConditions/BoundaryConditions.jl")
 include("Boundaries/BoundaryData/BoundaryData.jl")
+include("AdvectionSchemes.jl")
 include("Simulations.jl")
 include("Validation/Validation.jl")
 # CLI names every driver, so it comes last.
@@ -97,6 +99,7 @@ using .InitialState
 using .Rivers
 using .BoundaryConditions
 using .BoundaryData
+using .AdvectionSchemes
 using .Simulations
 using .Validation
 using .CLI

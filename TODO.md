@@ -160,6 +160,18 @@ reconstruction, so another term drives this cell below zero.
       vertical diffusion of fresh water, or the free-surface inflow interacting with advection in a
       nearly enclosed cell.
 
+### River-mouth extremes under WENO
+
+On the Møre og Romsdal setup, WENO's horizontal reconstruction across the river fronts made water
+saltier than any source beside the Driva (35.43 g/kg; no source exceeds 35.05) and cooled a 2 m
+Surna column to −1.0 °C. `RiverMouthAdvection` upwinds T and S horizontally within `width_cells` of
+the river columns and is so far tested only on small grids.
+
+- [ ] Measure it on a 30-day run against the run without it: the extremes at the mouths, and how
+      much it smooths the plumes outside the zone.
+- [ ] If it holds, decide whether the river-borne ECOSMO tracers need it too, and whether the Glomma
+      delta undershoot above has the same cause.
+
 ### Hot shallow cells
 
 With the TKE floor at 7e-7, the warmest cell reaches 33.8 °C (27 July 2014) and 29.4 °C in 2015.

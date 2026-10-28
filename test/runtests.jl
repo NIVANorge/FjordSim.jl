@@ -23,6 +23,7 @@ using FjordSim.Rivers: place_rivers, river_discharge, river_forcing_path, river_
     river_maximum_inflow_velocity, river_search_radius, river_series
 using FjordSim.BoundaryConditions: boundary_condition_sides, model_boundary_conditions,
     top_bottom_boundary_conditions
+using FjordSim.AdvectionSchemes: model_tracer_advection, river_mouth_zone, RiverMouthScheme
 using FjordSim.BoundaryData: boundary_data_directory, boundary_data_path, boundary_variable_name,
     boundary_variable_names, regrid_boundary_data
 using FjordSim.Simulations: attach_callback!, attach_time_stepping!, attach_writer!,
@@ -90,6 +91,7 @@ end
             :SplitExplicitFreeSurfaceConfig,
             :BoundarySponge,
             :RiverMouthMixing,
+            :RiverMouthAdvection,
             :SnapshotWriter,
             :FieldSnapshotWriter,
             :Station,
@@ -461,6 +463,97 @@ end
 
         # A setup with no rivers has no columns to mix, which is a configuration error, not a no-op.
         @test_throws ErrorException model_closure(mixing, grid, nothing, nothing)
+    end
+
+    @testset "river mouth advection" begin
+        Advection = Oceananigans.Advection
+        underlying = RectilinearGrid(
+            CPU();
+            size = (16, 8, 6),
+            halo = (4, 4, 4),
+            x = (0, 16),
+            y = (0, 8),
+            z = (-6, 0),
+            topology = (Periodic, Bounded, Bounded),
+        )
+        # A land row along the southern wall, parallel to the flow, so the immersed path is exercised.
+        grid = ImmersedBoundaryGrid(underlying, GridFittedBottom((x, y) -> y < 1 ? 0.0 : -6.0))
+        columns = (; target_i = [4], target_j = [5])
+
+        zone = interior(river_mouth_zone(grid, columns, 1))[:, :, 1]
+        @test findall(==(1), zone) == vec(CartesianIndex.(3:5, (4:6)'))
+        @test sum(zone) == 9
+        clipped = interior(river_mouth_zone(grid, (; target_i = [1], target_j = [8]), 2))[:, :, 1]
+        @test findall(==(1), clipped) == vec(CartesianIndex.(1:3, (6:8)'))
+
+        # A setup with no rivers has no mouths to upwind around.
+        config = RiverMouthAdvection(interior = WENO(order = 5), width_cells = 1)
+        @test_throws ErrorException model_tracer_advection(config, grid, nothing)
+
+        # Anything else passes through, and per-tracer schemes are resolved one by one.
+        weno = WENO(order = 5)
+        @test model_tracer_advection(weno, grid, columns) === weno
+        resolved = model_tracer_advection((; T = config, S = weno), grid, columns)
+        @test resolved.T isa RiverMouthScheme
+        @test resolved.S === weno
+
+        # Each face takes upwind's flux when either cell beside it is in the zone, `interior`'s
+        # otherwise, and every vertical face `interior`'s.
+        scheme = Advection.materialize_advection(model_tracer_advection(config, grid, columns), grid)
+        weno = Advection.materialize_advection(weno, grid)
+        upwind = UpwindBiased(order = 1)
+        c = CenterField(grid)
+        set!(c, (x, y, z) -> sin(x) * cos(2y) + z / 6)
+        Oceananigans.fill_halo_regions!(c)
+        U = XFaceField(grid)
+        set!(U, (x, y, z) -> 1 + cos(y))
+        Oceananigans.fill_halo_regions!(U)
+        flux_x(s, i, j, k) = Advection._advective_tracer_flux_x(i, j, k, grid, s, U, c)
+        flux_y(s, i, j, k) = Advection._advective_tracer_flux_y(i, j, k, grid, s, U, c)
+        flux_z(s, i, j, k) = Advection._advective_tracer_flux_z(i, j, k, grid, s, U, c)
+        @test flux_x(scheme, 3, 5, 3) == flux_x(upwind, 3, 5, 3)      # inside the zone
+        @test flux_x(scheme, 6, 5, 3) == flux_x(upwind, 6, 5, 3)      # between the zone and outside
+        @test flux_x(scheme, 7, 5, 3) == flux_x(weno, 7, 5, 3)        # outside
+        @test flux_x(scheme, 7, 5, 3) != flux_x(upwind, 7, 5, 3)
+        @test flux_y(scheme, 4, 7, 3) == flux_y(upwind, 4, 7, 3)
+        @test flux_y(scheme, 4, 8, 3) == flux_y(weno, 4, 8, 3)
+        @test flux_z(scheme, 4, 5, 3) == flux_z(weno, 4, 5, 3)
+
+        # A bounded interior keeps its limiter: away from the zone the tendency is the bounded WENO's.
+        # The bounds are the field's own range, so the limiter acts at its extrema.
+        bounded = Advection.materialize_advection(WENO(order = 5; bounds = extrema(interior(c))), grid)
+        wrapped = RiverMouthScheme(bounded, upwind, scheme.zone)
+        Advection.update_bounds_preserving_limiter!(bounded, grid, c)
+        away = CartesianIndices((9:14, 2:8, 1:6))
+        @test minimum(interior(bounded.bounds.limiter)[away]) < 1
+        velocities = (; u = U, v = U, w = U)
+        div_Uc(s, index) = Advection.div_Uc(Tuple(index)..., grid, s, velocities, c)
+        @test all(index -> div_Uc(wrapped, index) ≈ div_Uc(bounded, index), away)
+
+        # Stepped through a model, a front crossing the zone conserves the tracer exactly, a bounded
+        # interior stays inside its bounds, and the model updates the limiter it carries.
+        model = HydrostaticFreeSurfaceModel(
+            grid;
+            tracer_advection = model_tracer_advection(
+                RiverMouthAdvection(interior = WENO(order = 5; bounds = (0, 1)), width_cells = 1),
+                grid,
+                columns,
+            ),
+            tracers = :c,
+            buoyancy = nothing,
+            velocities = PrescribedVelocityFields(u = 1),
+            momentum_advection = nothing,
+        )
+        set!(model, c = (x, y, z) -> 1 < x < 4 ? 1.0 : 0.0)
+        wet(field) = interior(field)[:, 2:end, :]
+        total = sum(wet(model.tracers.c))
+        for _ in 1:20
+            time_step!(model, 0.2)
+        end
+        @test sum(wet(model.tracers.c)) ≈ total rtol = 1e-12
+        @test minimum(wet(model.tracers.c)) > -1e-10
+        @test maximum(wet(model.tracers.c)) < 1 + 1e-10
+        @test maximum(interior(model.advection.c.interior.bounds.limiter)) > 0
     end
 
     @testset "boundary condition configs" begin

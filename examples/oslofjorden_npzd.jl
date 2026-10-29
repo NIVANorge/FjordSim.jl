@@ -327,6 +327,10 @@ function append_boundary_variables!(filepath, edges, profiles)
 
                 variable = defVar(
                     ds, variable_name, Float32, (along, "Nz", "time");
+                    # One record per chunk, as `prepare_boundary_data` writes its own variables. Left
+                    # to netCDF, the chunks span over a thousand records, and the run decompresses
+                    # all of them for each page it reads.
+                    chunksizes = [n_along, length(z), 1],
                     deflatelevel = NPZD_DEFLATE_LEVEL,
                     attrib = ["_FillValue" => NaN32],
                 )

@@ -617,8 +617,9 @@ function write_boundaries_file(
         ds.attrib[BOUNDARY_EDGE_ATTRIBUTE] = join(edges, ",")
 
         for variable in variables
-            # One boundary section of one time step per chunk, matching how both this writer and
-            # `load_boundary_data` touch the file: one time index at a time.
+            # One boundary section of one time step per chunk, matching how this writer touches
+            # the file, one time index at a time, and costing `load_boundary_data` nothing for
+            # records outside its page.
             chunksizes = [count_along_dimensions(variable)..., 1]
             defVar(ds, variable.name, Float32, variable.dimensions; chunksizes,
                 deflatelevel = BOUNDARY_DEFLATE_LEVEL, attrib = ["_FillValue" => NaN32])
@@ -704,6 +705,10 @@ unprefixed_boundary_name(name, edge) = replace(String(name), string(edge, "_") =
 in memory, streamed from NetCDF like `NetCDFBackend`, and paged one record ahead of the clock — see
 `update_field_time_series!` below.
 
+The window is long because paging stops the run: the model waits while every boundary series of every
+edge reads its page. On the Moro setup, 48 series paged every hour from a three-record window took
+13.8 s an hour against about 4 s of GPU work, and the GPU sat idle 75 % of the time.
+
 A separate type rather than a reuse of `NetCDFBackend` because the two read different ranks. A
 boundary variable is stored with its cross-edge dimension dropped, so `set!` has to reshape on the
 way in; making `load_from_netcdf` do that for every forcing variable too would put a rank branch in
@@ -722,8 +727,10 @@ Base.summary(backend::BoundaryBackend) = string("BoundaryBackend(", backend.star
 
 const BoundaryFTS = FlavorOfFTS{<:Any,<:Any,<:Any,<:Any,<:BoundaryBackend}
 
-# The interpolating pair plus the record after it, or every record of a shorter file.
-const BOUNDARY_RECORDS_IN_MEMORY = 3
+# A day of hourly records, so the series page about once a simulated day; or every record of a
+# shorter file. The window must hold the interpolating pair plus the record after it. On a 400-cell
+# edge with 52 levels, a series costs about 0.1 MB of device memory per record, halos included.
+const BOUNDARY_RECORDS_IN_MEMORY = 24
 
 """
     update_field_time_series!(fts::BoundaryFTS, time::Time)
@@ -759,43 +766,63 @@ function Oceananigans.OutputReaders.update_field_time_series!(fts::BoundaryFTS, 
 end
 
 """
-    load_boundary_data(; path, variable_name, series_size, time_indices_in_memory, reference_date)
+    load_boundary_data(; path, variable_name, series_size, time_indices_in_memory)
 
 One page of a prepared boundary variable, reshaped from the file's `(along, Nz, time)` or
-`(along, time)` layout to the `series_size` of the reduced `FieldTimeSeries` that holds it, plus the
-time axis in seconds from `reference_date`.
+`(along, time)` layout to the `series_size` of the reduced `FieldTimeSeries` that holds it.
+
+Each run of consecutive indices is one read, so a chunk holding several of the page's records is
+decompressed once rather than once per record. A `Cyclical()` window that wraps past the last record
+is two runs.
 
 Land is `NaN` in the file and is filled here by `fill_boundary_gaps!`, so the series a boundary
 condition reads is finite everywhere. That is not cosmetic — see that function.
 """
-function load_boundary_data(;
-    path::String,
-    variable_name::String,
-    series_size::Tuple,
-    time_indices_in_memory,
-    reference_date = nothing,
-)
-    ds = NCDataset(path)
-    try
+function load_boundary_data(; path::String, variable_name::String, series_size::Tuple, time_indices_in_memory)
+    data = zeros(Float64, series_size..., length(time_indices_in_memory))
+
+    NCDataset(path) do ds
         variable = ds[variable_name]
-        native_times = ds["time"]
-
-        data = zeros(Float64, series_size..., length(time_indices_in_memory))
-        page = 1
-        for index in time_indices_in_memory
-            slice = coalesce.(read_last_dimension(variable, index), NaN)
-            @views data[:, :, :, page] .= reshape(slice, series_size)
-            page += 1
+        page = 0
+        for indices in consecutive_runs(time_indices_in_memory)
+            records = coalesce.(read_last_dimension(variable, indices), NaN)
+            @views data[:, :, :, page+1:page+length(indices)] .= reshape(records, series_size..., length(indices))
+            page += length(indices)
         end
+    end
 
-        fill_boundary_gaps!(data)
+    return fill_boundary_gaps!(data)
+end
 
-        start_time = isnothing(reference_date) ? native_times[1] : reference_date
-        times = convert.(Int64, native_times_to_seconds(native_times, start_time))
+"""
+    consecutive_runs(indices)
 
-        return data, times
-    finally
-        close(ds)
+`indices` split into ranges of consecutive values, in order: `(8759, 8760, 1, 2)` is
+`[8759:8760, 1:2]`.
+"""
+function consecutive_runs(indices)
+    runs = UnitRange{Int}[]
+    for index in indices
+        if !isempty(runs) && index == last(runs[end]) + 1
+            runs[end] = first(runs[end]):index
+        else
+            push!(runs, index:index)
+        end
+    end
+    return runs
+end
+
+"""
+    boundary_times(path, reference_date)
+
+The prepared boundary file's time axis in seconds from `reference_date`, or from its first record
+when that is `nothing`.
+"""
+function boundary_times(path, reference_date)
+    return NCDataset(path) do ds
+        native_times = ds["time"][:]
+        start_time = isnothing(reference_date) ? first(native_times) : reference_date
+        return convert.(Int64, native_times_to_seconds(native_times, start_time))
     end
 end
 
@@ -882,7 +909,7 @@ the boundary conditions of every field in `Oceananigans.fields(model)` — barot
 included.
 """
 function set!(fts::BoundaryFTS, path::String = fts.path, name::String = fts.name)
-    data, _ = load_boundary_data(;
+    data = load_boundary_data(;
         path,
         variable_name = name,
         series_size = size(fts)[1:end-1],
@@ -964,19 +991,14 @@ function boundary_edge_series(config, grid, edge, filepath, reference_date)
 
     backend = BoundaryBackend(min(BOUNDARY_RECORDS_IN_MEMORY, record_count))
     time_indices_in_memory = 1:length(backend)
+    times = boundary_times(filepath, reference_date)
 
     series = map(present) do name
         LX, LY, LZ = boundary_location(Val(edge), name)
         variable_name = boundary_variable_name(edge, name)
         series_size = reduced_series_size(grid, (LX, LY, LZ))
 
-        data, times = load_boundary_data(;
-            path = filepath,
-            variable_name,
-            series_size,
-            time_indices_in_memory,
-            reference_date,
-        )
+        data = load_boundary_data(; path = filepath, variable_name, series_size, time_indices_in_memory)
 
         fts = FieldTimeSeries{LX,LY,LZ}(
             grid,

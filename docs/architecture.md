@@ -554,6 +554,13 @@ a few hundred MB where an hourly interior file would be hundreds of GB.
   cache each slab took 0.9 s instead of 0.009 s, about 100 minutes per regridded month.
   `open_source_file` therefore sizes the cache from the file's own chunking (`record_chunks`), at
   twice the exact fit.
+- **The run pages boundary data a day at a time.** The model waits while every series of every edge
+  reads its page, so `BOUNDARY_RECORDS_IN_MEMORY` is 24 records, and `load_boundary_data` reads each
+  run of consecutive records in one call. With three records paged every hour, the Moro setup's 48
+  series took 13.8 s per simulated hour against about 4 s of GPU work: 13.2 s of it went to 34
+  variables a setup had appended without `chunksizes`, which netCDF had chunked 1461 records deep.
+  A setup appending to the prepared file should chunk one record per chunk, as
+  `prepare_boundary_data` does.
 - **The operational collection's `ubar`/`vbar` are grid-relative**, unlike its derotated
   `u_eastward`/`v_northward`. With NorKyst rotated ~59°, `vbar` here is nearly *eastward*: unrotated,
   `cor(vbar, depth-mean v)` was −0.034, and a run grew a ~0.5 m/s spurious band inside the southern

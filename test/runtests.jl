@@ -3896,8 +3896,9 @@ end
         # baroclinic steps past the clock, so a boundary series paged for the clock's interpolating
         # pair alone is read one record past its window near every record.
         mktempdir() do tmp
+            window = FjordSim.BoundaryData.BOUNDARY_RECORDS_IN_MEMORY
             longitude, latitude = (10.0, 11.0), (59.0, 60.0)
-            dates = [DateTime(2020, 1, 1) + Hour(hour) for hour = 0:5]
+            dates = [DateTime(2020, 1, 1) + Hour(hour) for hour = 0:2window]
             (; grid) = immersed_test_grid(
                 joinpath(tmp, "bathymetry.nc");
                 size = (4, 3, 2),
@@ -3923,17 +3924,30 @@ end
             eta = FjordSim.BoundaryData.boundary_series(boundaries_config, grid, DateTime(2020, 1, 1)).south.eta
             stored = NCDataset(ds -> Float64.(ds["south_eta"][1, :]), boundary_data_path(boundaries_config))
 
-            # Ten seconds before 02:00 the clock's pair is records 2 and 3; the window starts at the
-            # pair and holds record 4 as well.
-            clock_time = 2 * 3600 - 10.0
+            # Record n is at hour n - 1. Ten seconds before the hour of the window's last record,
+            # the clock's pair is its last two records and the record after the pair is outside it,
+            # so the window moves to start at the pair.
+            clock_time = (window - 1) * 3600 - 10.0
             Oceananigans.OutputReaders.update_field_time_series!(eta, Oceananigans.Units.Time(clock_time))
-            @test collect(Oceananigans.OutputReaders.time_indices(eta)) == [2, 3, 4]
+            @test collect(Oceananigans.OutputReaders.time_indices(eta)) == collect(window-1:2window-2)
+            @test interior(eta)[1, 1, 1, :] ≈ stored[window-1:2window-2]
 
-            # A substep ten minutes on reads between records 3 and 4 — from memory, without paging.
+            # A substep ten minutes on reads between records `window` and `window + 1` — from
+            # memory, without paging.
             substep_time = clock_time + 600
-            fraction = (substep_time - 2 * 3600) / 3600
-            expected = stored[3] + fraction * (stored[4] - stored[3])
+            fraction = (substep_time - (window - 1) * 3600) / 3600
+            expected = stored[window] + fraction * (stored[window+1] - stored[window])
             @test eta[1, 1, 1, Oceananigans.Units.Time(substep_time)] ≈ expected
+
+            # A `Cyclical()` window wrapping past the last record reads it as two runs, in order.
+            last_record = length(dates)
+            wrapped = FjordSim.BoundaryData.load_boundary_data(;
+                path = boundary_data_path(boundaries_config),
+                variable_name = "south_eta",
+                series_size = size(eta)[1:end-1],
+                time_indices_in_memory = (last_record - 1, last_record, 1, 2),
+            )
+            @test wrapped[1, 1, 1, :] ≈ stored[[last_record - 1, last_record, 1, 2]]
         end
     end
 

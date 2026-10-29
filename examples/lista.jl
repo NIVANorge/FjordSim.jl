@@ -107,7 +107,9 @@ FjordConfig(
         contour_stride        = 10,
         interpolation_passes  = 1,
         major_basins          = 1,
-        minimum_depth         = 2.0,
+        # 5 m rather than 2, keeping out the 2-3 m cells that overheated in the Oslofjord validation
+        # run (see CATKE below). Against 2 m it changes 148 cells, by at most 10 m.
+        minimum_depth         = 5.0,
         # Off. The coast runs into the eastern open edge, which is land for its northern two thirds,
         # and the stage floods outwards from the water along the whole edge band. It would advance
         # the coastline several kilometres up that band.
@@ -117,10 +119,12 @@ FjordConfig(
         spike_ratio           = 0.5,
         # Must equal the `minimum_fractional_cell_height` the grid gives `PartialCellBottom`.
         minimum_cell_fraction = 0.2,
-        # Oslofjord's limit and sill restoration. Here the limit acts on the trench slope, which
-        # drops from about 100 m to 300 m within a few cells. Compare `bathymetry.png` with the raw
-        # soundings before trusting it.
-        max_slope_factor      = 0.5,
+        # 0.4 rather than Oslofjord's 0.5, as on the Moro setup: upslope w in the thin levels over
+        # the steepest slopes limits the time step. Against 0.5 it changes 72 more cells by over
+        # 10 m (494 of 7173) and leaves the volume unchanged. Here the limit acts on the trench slope
+        # and the fjord walls, which drop 100-300 m within a cell or two. Compare `bathymetry.png`
+        # with the raw soundings before trusting it.
+        max_slope_factor      = 0.4,
         preserve_sills        = true,
         # Three open edges cut across the trench slope, where an edge column can reach a level the
         # column inside it does not. The radiation condition stops acting on such a face.
@@ -226,8 +230,7 @@ FjordConfig(
                 # towards uniform and freshened the sill basins. Over 640 days at 7e-7 the
                 # salinity RMSE against 216 casts was 1.73 g/kg and the temperature RMSE
                 # 1.22 °C, and summer heat no longer reached too deep. The cost was overheating
-                # in 2-3 m deep cells, which this box has among the skerries at
-                # `minimum_depth = 2.0`.
+                # in 2-3 m deep cells, which `minimum_depth = 5.0` keeps out of this box.
                 # Unmeasured here: check `e` against the floor in the snapshots.
                 CATKEVerticalDiffusivity(FT; minimum_tke = 7e-7),
                 # Oslofjord's ν = 2e4 m⁴ s⁻¹ scaled by (490/193)⁴. That keeps the same damping
@@ -251,7 +254,15 @@ FjordConfig(
         # salinity below TEOS10's -32 psu floor beside a large river entering shallow
         # columns, and Kvina and Lygna enter at the heads of narrow fjords, Sira into a small bay. A
         # NamedTuple has to name `e`, or CATKE's TKE falls back to `Centered()`.
-        tracer_advection   = (T = WENO(FT), S = WENO(FT; bounds = (0, 40)), e = WENO(FT)),
+        #
+        # T and S upwinded horizontally around the river mouths, as on the Moro setup, where WENO
+        # across a mouth's fresh front made water saltier than any source and a 2 m column −1 °C.
+        # Three cells is WENO5's stencil, so no face outside reconstructs across a river column.
+        tracer_advection   = (
+            T = RiverMouthAdvection(interior = WENO(FT), width_cells = 3),
+            S = RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 3),
+            e = WENO(FT),
+        ),
         momentum_advection = WENOVectorInvariant(FT),
         tracers            = (:T, :S),
         coriolis           = HydrostaticSphericalCoriolis(FT),

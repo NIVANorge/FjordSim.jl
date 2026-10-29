@@ -28,7 +28,8 @@ Two ways to write one:
 
 - **From scratch**, or by copying the example closest to the new domain: `examples/oslofjorden.jl`
   (inner fjord, open southern edge), `examples/drammensfjorden.jl` (a sub-domain sharing Oslofjord's
-  downloads), `examples/lista.jl` (open coast, three open edges).
+  downloads), `examples/lista.jl` (open coast, three open edges), `examples/moro.jl` (coast, shelf
+  and continental slope, open western and northern edges).
 - **As a variant of another setup**: `base = include("oslofjorden.jl")` resolves beside the
   including file and returns that setup's config, whose fields the variant then changes or wraps
   (`examples/oslofjorden_validation.jl`, `examples/oslofjorden_npzd.jl`). The included script's

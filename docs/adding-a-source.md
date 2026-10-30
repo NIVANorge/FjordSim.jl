@@ -202,7 +202,7 @@ each:
 | Supertype | Accessor | Required hooks |
 |---|---|---|
 | `AbstractCallbackConfig` | `callbacks` (a tuple) | `attach_callback!(simulation, callback, config)` |
-| `AbstractWriterConfig` | `writers` (a tuple) | `attach_writer!(simulation, writer, config, loop)`; optionally `checkpoint_trait`, `output_path_trait` and `station_output`, all defaulting to the negative. `SnapshotWriter` (NetCDF), `FieldSnapshotWriter` (JLD2, for z-reduced fields NetCDF rejects) and `CheckpointWriter` are the built-ins; `StationWriter` and `FieldStationWriter`, whose `station_output` is `true`, are what `validate_simulation` scores |
+| `AbstractWriterConfig` | `writers` (a tuple) | `attach_writer!(simulation, writer, config, loop)`; optionally `checkpoint_trait`, `output_path_trait` and `station_output`, all defaulting to the negative. `SnapshotWriter` (NetCDF), `FieldSnapshotWriter` (JLD2, for z-reduced fields NetCDF rejects), `SurfaceSnapshotWriter` (JLD2, the top level only, split into file parts) and `CheckpointWriter` are the built-ins; `StationWriter` and `FieldStationWriter`, whose `station_output` is `true`, are what `validate_simulation` scores |
 | `AbstractTimeSteppingConfig` | `time_stepping` | `attach_time_stepping!(simulation, config)`, `initial_time_step(config)` |
 | `AbstractInitialConditionsConfig` | `initial_conditions` (or a plain `NamedTuple`) | `resolve_initial_conditions(initial_conditions, grid, config, tracers)` → the `NamedTuple` `set!` takes. `config` is the whole setup, so a source reads whichever component holds its data. `FromForcing`, `FromInitialState` and `FromResults` are the built-ins |
 

@@ -221,8 +221,8 @@ No built-in implementation.
 
 ### `AbstractWriterConfig`
 
-| Hook | Status | `CheckpointWriter` | `FieldSnapshotWriter` | `FieldStationWriter` | `SectionWriter` | `SnapshotWriter` | `StationWriter` |
-|---|---|---|---|---|---|---|---|
-| `attach_writer!` | required | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `FjordSim.Simulations.checkpoint_trait` | optional | ✓ | default | default | default | default | default |
-| `FjordSim.Simulations.output_path_trait` | optional | default | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Hook | Status | `CheckpointWriter` | `FieldSnapshotWriter` | `FieldStationWriter` | `SectionWriter` | `SnapshotWriter` | `StationWriter` | `SurfaceSnapshotWriter` |
+|---|---|---|---|---|---|---|---|---|
+| `attach_writer!` | required | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `FjordSim.Simulations.checkpoint_trait` | optional | ✓ | default | default | default | default | default | default |
+| `FjordSim.Simulations.output_path_trait` | optional | default | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |

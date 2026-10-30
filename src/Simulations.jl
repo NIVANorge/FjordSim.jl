@@ -7,6 +7,7 @@ export RunConfig,
     RiverMouthMixing,
     SnapshotWriter,
     FieldSnapshotWriter,
+    SurfaceSnapshotWriter,
     Station,
     StationWriter,
     FieldStationWriter,
@@ -701,6 +702,49 @@ function FieldSnapshotWriter(; name, output_file, variables, interval, overwrite
         String(output_file),
         Tuple(Symbol(variable) for variable in variables),
         Float64(interval),
+        Bool(overwrite_existing),
+    )
+end
+
+"""
+    SurfaceSnapshotWriter(; name, output_file, variables, interval, split_times, overwrite_existing)
+
+`FieldSnapshotWriter` for the top level only: each 3D field of `variables` is written as its top
+level, `(Nx, Ny, 1)` or `(Nx + 1, Ny, 1)` for `u`, and a z-reduced one such as `η` whole. Hourly
+surface fields cost 1/Nz of the whole ones.
+
+A new file part, `<name>_part<n>.jld2`, starts at each of `split_times`, in seconds of model time.
+The layout is `FieldSnapshotWriter`'s.
+"""
+struct SurfaceSnapshotWriter{V<:Tuple{Vararg{Symbol}}} <: AbstractWriterConfig
+    name::Symbol
+    output_file::String
+    variables::V
+    interval::Float64
+    split_times::Vector{Float64}
+    overwrite_existing::Bool
+end
+
+function SurfaceSnapshotWriter(;
+    name,
+    output_file,
+    variables,
+    interval,
+    split_times,
+    overwrite_existing,
+)
+    interval > 0 || throw(
+        ArgumentError("A surface snapshot writer's `interval` must be positive, got $interval."),
+    )
+    isempty(variables) &&
+        throw(ArgumentError("Surface snapshot writer :$name names no `variables` to write."))
+
+    return SurfaceSnapshotWriter(
+        Symbol(name),
+        String(output_file),
+        Tuple(Symbol(variable) for variable in variables),
+        Float64(interval),
+        Float64.(split_times),
         Bool(overwrite_existing),
     )
 end
@@ -1605,6 +1649,7 @@ struct NamesNoOutputFile <: OutputPathTrait end
 output_path_trait(::AbstractWriterConfig) = NamesNoOutputFile()
 output_path_trait(::SnapshotWriter) = NamesOutputFile()
 output_path_trait(::FieldSnapshotWriter) = NamesOutputFile()
+output_path_trait(::SurfaceSnapshotWriter) = NamesOutputFile()
 output_path_trait(::StationWriter) = NamesOutputFile()
 output_path_trait(::FieldStationWriter) = NamesOutputFile()
 output_path_trait(::SectionWriter) = NamesOutputFile()
@@ -1770,7 +1815,14 @@ variable sets legitimately differ and which no config named, while here the setu
 down. An over-eager error costs a typo fix; a silently dropped variable costs a whole run.
 """
 function snapshot_outputs(
-    writer::Union{SnapshotWriter,FieldSnapshotWriter,StationWriter,FieldStationWriter,SectionWriter},
+    writer::Union{
+        SnapshotWriter,
+        FieldSnapshotWriter,
+        SurfaceSnapshotWriter,
+        StationWriter,
+        FieldStationWriter,
+        SectionWriter,
+    },
     ocean_model,
 )
     available = fields(ocean_model)
@@ -1857,6 +1909,43 @@ function attach_writer!(
         snapshot_outputs(writer, ocean_sim.model);
         filename = filepath,
         schedule = TimeInterval(writer.interval),
+        overwrite_files = writer.overwrite_existing,
+        with_halos = false,
+    )
+
+    return simulation
+end
+
+# A view of the top level shares the model's memory. A field one level deep — `η`, which
+# `SplitExplicitFreeSurface` keeps on the top face alone — is already its own surface.
+top_level(field) = size(field, 3) == 1 ? field : view(field, :, :, size(field, 3))
+
+"""
+    attach_writer!(simulation, writer::SurfaceSnapshotWriter, config, loop)
+
+`FieldSnapshotWriter`'s attach, writing each output's top level and splitting the file at
+`writer.split_times`. A fresh splitting schedule each loop, since the clock restarts at zero.
+"""
+function attach_writer!(
+    simulation,
+    writer::SurfaceSnapshotWriter,
+    config::AbstractRunConfig,
+    loop,
+)
+    ocean_sim = simulation.model.ocean
+
+    haskey(ocean_sim.output_writers, writer.name) &&
+        close(pop!(ocean_sim.output_writers, writer.name))
+
+    filepath = loop_output_path(writer, config, loop)
+    mkpath(dirname(filepath))
+
+    ocean_sim.output_writers[writer.name] = JLD2Writer(
+        ocean_sim.model,
+        map(top_level, snapshot_outputs(writer, ocean_sim.model));
+        filename = filepath,
+        schedule = TimeInterval(writer.interval),
+        file_splitting = SpecifiedTimes(writer.split_times),
         overwrite_files = writer.overwrite_existing,
         with_halos = false,
     )

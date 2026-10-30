@@ -40,6 +40,7 @@ export
     RiverMouthAdvection,
     SnapshotWriter,
     FieldSnapshotWriter,
+    SurfaceSnapshotWriter,
     Station,
     StationWriter,
     FieldStationWriter,

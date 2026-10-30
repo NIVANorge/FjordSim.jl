@@ -24,11 +24,11 @@
 # The physics is the validation run's, with every coefficient that depends on grid spacing scaled
 # from 193 m to 500 m: bounded WENO for salinity, CATKE's `minimum_tke` at 7e-7, the biharmonic
 # tracer diffusivity κ at 0, `oslofjorden.jl`'s top levels, its bathymetry knobs, sponge, bottom
-# drag and open-boundary timescales. Each is argued beside its value, as are the three it does not
-# take: 10 m levels between 41 and 131 m, a stronger slope limit and a CFL of 0.4. Three things do
-# not carry over. The validation run reads the Norkyst-v3 hindcast because its window predates
-# 2017, while 2023 is in the operational archive. Its tide correction was fitted at Viker. Its
-# initial state is a previous run's.
+# drag, open-boundary timescales and CFL. Each is argued beside its value, as are the two it does
+# not take: 10 m levels between 41 and 131 m and a stronger slope limit. Three things do not carry
+# over. The validation run reads the Norkyst-v3 hindcast because its window predates 2017, while
+# 2023 is in the operational archive. Its tide correction was fitted at Viker. Its initial state is
+# a previous run's.
 
 using FjordSim
 using FjordSim.Bathymetry: GEONORGE_DYBDEDATA_GDB
@@ -42,7 +42,7 @@ using Oceananigans.TurbulenceClosures: HorizontalScalarBiharmonicDiffusivity
 using Oceananigans.Units: day, days, hour, hours, minutes, second
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using NumericalEarth: FreezingLimitedOceanTemperature
-using Dates: DateTime
+using Dates: DateTime, Second
 
 data_root = fjord_data_root("moro")
 FT = Float32
@@ -257,13 +257,14 @@ FjordConfig(
                 interval           = 1day,
                 overwrite_existing = true,
             ),
-            # `η` in JLD2, which the NetCDF writer cannot take (`FieldSnapshotWriter`). Hourly, for
-            # the tide.
-            FieldSnapshotWriter(
+            # The top level of T, S, u and v, and `η`, hourly for the tide, one file per month.
+            SurfaceSnapshotWriter(
                 name               = :surface,
                 output_file        = "snapshots_surface.jld2",
-                variables          = (:η,),
+                variables          = (:η, :T, :S, :u, :v),
                 interval           = 1hour,
+                split_times        = [(DateTime(2023, month, 1) - DateTime(2023, 1, 1)) / Second(1)
+                                      for month in 2:12],
                 overwrite_existing = true,
             ),
             # The two permanent Kartverket gauges in the box, from Kartverket's station register
@@ -287,10 +288,11 @@ FjordConfig(
         # The advective CFL limits Δt, not `max_time_step`. At `oslofjorden.jl`'s 0.3 the first
         # 41 days of 2023 took 67-186 s steps. At 0.5, with Δt near 90 s, the top cells on the open
         # western edge went unstable on 12 February 2023 at day 42.3, under a 0.8-0.9 m/s
-        # NorKyst surface inflow at low tide.
+        # NorKyst surface inflow at low tide. At 0.4 the largest current jumped from 0.7 to 7.3 m/s
+        # within an hour at day 150.0, 31 May 2023, and the run failed.
         time_stepping = AdaptiveTimeStep(
             initial_time_step    = 1second,
-            cfl                  = 0.4,
+            cfl                  = 0.3,
             max_time_step        = 3minutes,
             max_time_step_change = 1.01,
         ),

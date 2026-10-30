@@ -94,6 +94,7 @@ end
             :RiverMouthAdvection,
             :SnapshotWriter,
             :FieldSnapshotWriter,
+            :SurfaceSnapshotWriter,
             :Station,
             :StationWriter,
             :FieldStationWriter,
@@ -6149,6 +6150,51 @@ end
                 @test ds["u"][n, :, end] ≈ interior(u_centred, i, j, :)
             end
             @test (ds["i"][1], ds["j"][1]) != (1, 1)
+        end
+    end
+
+    @testset "SurfaceSnapshotWriter writes the top level in parts" begin
+        directory = mktempdir()
+        (; grid) = immersed_test_grid(
+            joinpath(directory, "bathymetry.nc"); size = (4, 4, 3), halo = (3, 3, 3),
+        )
+        writer = SurfaceSnapshotWriter(
+            name = :surface,
+            output_file = "surface.jld2",
+            variables = (:η, :T, :u),
+            interval = 1.0,
+            split_times = [1.5],
+            overwrite_existing = true,
+        )
+        @test writer.split_times == [1.5]
+        @test FjordSim.Simulations.output_path_trait(writer) isa FjordSim.Simulations.NamesOutputFile
+        @test_throws ArgumentError SurfaceSnapshotWriter(
+            name = :surface, output_file = "s.jld2", variables = (),
+            interval = 1.0, split_times = Float64[], overwrite_existing = true,
+        )
+
+        model = HydrostaticFreeSurfaceModel(
+            grid;
+            tracers = (:T, :S),
+            buoyancy = nothing,
+            free_surface = SplitExplicitFreeSurface(grid, cfl = 0.7),
+        )
+        set!(model, T = (λ, φ, z) -> λ + φ + z, u = (λ, φ, z) -> z)
+        ocean = Simulation(model; Δt = 1.0, stop_iteration = 3, verbose = false)
+        config = test_run_config(results_root = directory, writers = (writer,))
+        attach_writer!((; model = (; ocean)), writer, config, 1)
+        run!(ocean)
+
+        stem = first(splitext(FjordSim.Simulations.loop_output_path(writer, config, 1)))
+        part_times(part) = jldopen("$(stem)_part$part.jld2") do file
+            sort([file["timeseries/t/$i"] for i in keys(file["timeseries/t"])])
+        end
+        @test part_times(1) == [0.0, 1.0]
+        @test part_times(2) == [2.0, 3.0]
+        jldopen("$(stem)_part2.jld2") do file
+            @test file["timeseries/T/3"] ≈ interior(model.tracers.T, :, :, 3:3)
+            @test file["timeseries/u/3"] ≈ interior(model.velocities.u, :, :, 3:3)
+            @test size(file["timeseries/η/3"]) == (4, 4, 1)
         end
     end
 

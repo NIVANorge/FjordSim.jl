@@ -7,10 +7,8 @@
 # whose *eastern* wall is still land: below 59.52°N Breiangen reaches past 10.50°E, so a closed
 # eastern wall would sit in open water across the mouth.
 #
-# The FileGDB and the NORA3 months are read from
-# `~/FjordSim_data/oslofjorden/` by absolute path, since Oslofjord's domain contains this one and both
-# downloaders skip a month already present. The boundary band and the NVE caches are not shared — see
-# their comments below.
+# Every file goes to this setup's own data root, `~/FjordSim_data/drammensfjorden/`, the Geonorge
+# FileGDB (4.5 GB, downloaded by `prepare_bathymetry` if it is missing) included.
 #
 # # Preparing and running it
 #
@@ -36,10 +34,8 @@ using Oceananigans.Units: days, hour, hours, minutes, second
 using Dates: DateTime
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using NumericalEarth: FreezingLimitedOceanTemperature
-using FjordSim.Bathymetry: GEONORGE_DYBDEDATA_GDB
 
 data_root = fjord_data_root("drammensfjorden")
-oslofjorden_data_root = fjord_data_root("oslofjorden")
 # Stated here and passed to the grid and to every model component below, rather than set on
 # `Oceananigans.defaults.FloatType` — see `EvenGrid`'s `float_type`.
 FT = Float32
@@ -70,8 +66,6 @@ FjordConfig(
         data_root             = data_root,
         output_file           = "bathymetry.nc",
         plot_file             = "bathymetry.png",
-        # Oslofjord's extracted copy of the national FileGDB, by absolute path.
-        geodatabase_file      = joinpath(oslofjorden_data_root, GEONORGE_DYBDEDATA_GDB),
         raw_resolution_factor = 2,
         padding_cells         = 2,
         include_contours      = false,
@@ -96,6 +90,9 @@ FjordConfig(
         # the native grid already resolves Svelvik, so `preserve_sills` holds it at 11.2 m.
         max_slope_factor      = 0.5,
         preserve_sills        = true,
+        # Where an open-edge column reaches a level the column inside it does not, the radiation
+        # condition stops acting on that face.
+        raise_boundary_pockets = true,
         geonorge_cache        = true,
         regrid_cache          = false,
     ),
@@ -161,9 +158,7 @@ FjordConfig(
     # download_atmosphere, prescribed_atmosphere and prescribed_radiation.
     atmosphere_config = NORA3Config(
         data_root        = data_root,
-        # Absolute: NORA3 is ~10000 OPeNDAP reads per year,
-        # and Oslofjord's subset already covers this domain.
-        output_directory = joinpath(oslofjorden_data_root, "nora3"),
+        output_directory = "nora3",
         output_file      = "atmosphere.nc",
         plot_file        = "atmosphere.png",
         resolution       = 0.02,
@@ -182,8 +177,9 @@ FjordConfig(
         closure            = BoundarySponge(
             base = (
                 # CATKE takes `w★ = sqrt(max(minimum_tke, e))`, so this floor, not the
-                # prognostic TKE, sets κ = 0.098·e_min/N over most of the column. See
-                # `oslofjorden.jl` for the measurements behind the value.
+                # prognostic TKE, sets κ = 0.098·e_min/N over most of the column.
+                # `oslofjorden.jl` has moved to 7e-7, measured there; whether this setup follows
+                # is open (TODO.md, "Vertical mixing is too strong").
                 CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6),
                 # A biharmonic coefficient is only meaningful against Δx⁴, and this grid's
                 # 99 m cell is a factor 14 smaller in Δx⁴ than Oslofjord's 193 m one. 1e3
@@ -197,10 +193,14 @@ FjordConfig(
             viscosity   = 13.0,
             diffusivity = 6.5,
         ),
-        # One scheme for every tracer: Oceananigans gives any tracer a NamedTuple omits the
-        # `Centered()` default, and CATKE contributes an `e` this setup never names, so
-        # `(T = WENO(), S = WENO())` left the TKE on an unbounded centered scheme.
-        tracer_advection   = WENO(FT),
+        # T and S upwinded horizontally around the river mouths, and salinity's WENO bounded, as in
+        # `oslofjorden.jl`, where both are argued. Oceananigans gives any tracer a NamedTuple omits
+        # the unbounded `Centered()` default, so it names CATKE's `e`.
+        tracer_advection   = (
+            T = RiverMouthAdvection(interior = WENO(FT), width_cells = 3),
+            S = RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 3),
+            e = WENO(FT),
+        ),
         momentum_advection = WENOVectorInvariant(FT),
         tracers            = (:T, :S),
         coriolis           = HydrostaticSphericalCoriolis(FT),

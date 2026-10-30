@@ -35,20 +35,19 @@
 #
 # # What follows `examples/oslofjorden_validation.jl`, and what does not
 #
-# The physics is `oslofjorden.jl`'s, scaled to this grid, except where the Oslofjord validation
-# measured a departure that is not specific to its own box. Four carry over: bounded WENO for
-# salinity, CATKE's `minimum_tke` at 7e-7, the biharmonic tracer diffusivity κ at 0, and 5.06 m
-# levels between 41 and 132 m. Each is argued beside its value. Two do not. Its boundary tide
-# correction was fitted to the Norkyst-v3 hindcast at Viker, while this box reads the operational
-# NorKyst-800m and holds no tide gauge. Its initial state is a previous run's, which a first run of
-# this box cannot have.
+# The physics is `oslofjorden.jl`'s, scaled to this grid, including what the Oslofjord validation
+# measured: bounded WENO for salinity, CATKE's `minimum_tke` at 7e-7, the biharmonic tracer
+# diffusivity κ at 0, and 5.06 m levels between 41 and 132 m. Each is argued beside its value. Two
+# things of the validation run do not carry over. Its boundary tide correction was fitted to the
+# Norkyst-v3 hindcast at Viker, while this box reads the operational NorKyst-800m and holds no tide
+# gauge. Its initial state is a previous run's, which a first run of this box cannot have.
 
 using FjordSim
 using Oceananigans
 using Oceananigans.Units
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using NumericalEarth: FreezingLimitedOceanTemperature
-using Dates: DateTime
+using Dates: DateTime, Month, Second
 
 data_root = fjord_data_root("lista")
 FT = Float32
@@ -56,12 +55,12 @@ FT = Float32
 # the boundary data can reach.
 years = [2024, 2025]
 # `oslofjorden.jl`'s levels from a 1 m surface cell stretching by 1.25, with 41-132 m split into
-# eighteen 5.06 m levels as in `examples/oslofjorden_validation.jl`. There `oslofjorden.jl`'s five
-# 11-27 m levels let WENO's implicit vertical diffusion, ~|w|Δz, mix the sill basins at 5-10 times
-# CATKE's κ, and the split cut the Drammensfjord's salt-budget diffusivity below 41 m by 2.6-7.7
-# times in 60 days. The mechanism is not specific to that grid. Here it acts wherever the levels are
-# thick, so on the sill basins of Fedafjorden and Rosfjorden where they reach below 41 m, and on the
-# coastal current's lower interface. Unmeasured on this grid.
+# eighteen 5.06 m levels as in `examples/oslofjorden_validation.jl`. There five 11-27 m levels let
+# WENO's implicit vertical diffusion, ~|w|Δz, mix the sill basins at 5-10 times CATKE's κ, and the
+# split cut the Drammensfjord's salt-budget diffusivity below 41 m by 2.6-7.7 times in 60 days. The
+# mechanism is not specific to that grid. Here it acts wherever the levels are thick, so on the sill
+# basins of Fedafjorden and Rosfjorden where they reach below 41 m, and on the coastal current's
+# lower interface. Unmeasured on this grid.
 #
 # Below 132 m, `oslofjorden.jl`'s 33.5 m layers rather than thicker ones, for the same reason: the
 # trench slope is where the coastal current meets the Atlantic water under it.
@@ -225,12 +224,12 @@ FjordConfig(
                 # there the floor hardly matters. It matters in the sill basins of Fedafjorden
                 # and Rosfjorden.
                 #
-                # 7e-7 rather than `oslofjorden.jl`'s 7e-6, as in
-                # `examples/oslofjorden_validation.jl`. There 7e-6 mixed the water columns
-                # towards uniform and freshened the sill basins. Over 640 days at 7e-7 the
-                # salinity RMSE against 216 casts was 1.73 g/kg and the temperature RMSE
-                # 1.22 °C, and summer heat no longer reached too deep. The cost was overheating
-                # in 2-3 m deep cells, which `minimum_depth = 5.0` keeps out of this box.
+                # 7e-7, as in `oslofjorden.jl`. In `examples/oslofjorden_validation.jl` 7e-6
+                # mixed the water columns towards uniform and freshened the sill basins. Over
+                # 640 days at 7e-7 the salinity RMSE against 216 casts was 1.73 g/kg and the
+                # temperature RMSE 1.22 °C, and summer heat no longer reached too deep. The cost
+                # was overheating in 2-3 m deep cells, which `minimum_depth = 5.0` keeps out of
+                # this box.
                 # Unmeasured here: check `e` against the floor in the snapshots.
                 CATKEVerticalDiffusivity(FT; minimum_tke = 7e-7),
                 # Oslofjord's ν = 2e4 m⁴ s⁻¹ scaled by (490/193)⁴. That keeps the same damping
@@ -293,14 +292,15 @@ FjordConfig(
                 interval           = 1day,
                 overwrite_existing = true,
             ),
-            # η goes to JLD2 because the NetCDF writer cannot write a (Center, Center, Nothing)
-            # output (see `FieldSnapshotWriter`). Hourly to resolve the tide, and only 2D, so it
-            # stays under 1 GB.
-            FieldSnapshotWriter(
+            # The top level of T, S, u and v, and `η`, hourly for the tide, one file per month:
+            # about 4 GB over the run.
+            SurfaceSnapshotWriter(
                 name               = :surface,
                 output_file        = "snapshots_surface.jld2",
-                variables          = (:η,),
+                variables          = (:η, :T, :S, :u, :v),
                 interval           = 1hour,
+                split_times        = [(DateTime(2024, 1, 1) + Month(month) - DateTime(2024, 1, 1)) /
+                                      Second(1) for month in 1:20],
                 overwrite_existing = true,
             ),
             CheckpointWriter(interval = 12hours, cleanup = true),

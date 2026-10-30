@@ -26,8 +26,8 @@ Tasks:
       example from the tracer variance budget, and compare it with CATKE's κ.
 - [ ] Revisit `HorizontalScalarBiharmonicDiffusivity`'s κ. NorKyst uses a 10 m² s⁻¹ harmonic κ on
       tracers.
-- [ ] Decide whether `examples/oslofjorden.jl` and `examples/drammensfjorden.jl` follow the example to 7e-7, and update
-      the rationale comments in the setups. The 640-day run at 7e-7 scores salinity RMSE 1.73 g/kg
+- [ ] Decide whether `examples/drammensfjorden.jl` follows `examples/oslofjorden.jl` to 7e-7, and
+      update its rationale comment. The 640-day run at 7e-7 scores salinity RMSE 1.73 g/kg
       and temperature RMSE 1.22 °C against 216 casts (FjordOs 2.79 and 2.34), unbiased in
       temperature, but 0.4–1.4 g/kg too fresh below 5 m and overheats the 2–3 m deep cells (see
       "Hot shallow cells").
@@ -40,24 +40,15 @@ bathymetry comments of `examples/oslofjorden.jl`. On the validation box the mode
 15 m of the casts except Im2 (165 against 201 m) in the narrow Drøbak Sound, and Drøbak is 23.5 m
 against the real ~20 m.
 
-- [ ] Re-run `prepare_bathymetry`, `add_rivers` and `prepare_boundary_data` for
-      `oslofjorden` and `drammensfjorden` on the linear gridding and `preserve_sills` (done for the
-      validation example). Their existing checkpoints are invalid.
+- [ ] Re-run `prepare_bathymetry`, `add_rivers` and `prepare_boundary_data` for every example but
+      `lista` and `moro`: all now set `raise_boundary_pockets`, `oslofjorden` and its variants have
+      the 39 levels, and `oslofjorden` and `drammensfjorden` predate the linear gridding and
+      `preserve_sills`. Their existing checkpoints are invalid.
 - [ ] Re-measure `examples/lista.jl`'s `z_faces` gate on the linear gridding.
-- [ ] Fill single-cell pits on open edges. The new validation bathymetry has five on the south edge:
-      wet edge cells whose east, west and inward neighbours are all below the seabed, so their only
-      side neighbour is the open boundary. On the 13 Oct full run, the two thinnest went to the
-      freezing point and were held there by the limiter: (255, 1, 17), a 3.6 m partial cell, at
-      day 25, and (277, 1, 16), 2.1 m, at day 27. Neither the boundary data nor the rivers caused
-      it; the boundary feeds 2.4–19 °C there. Unbounded WENO for T undershoots in such a small cell,
-      walled on three sides beside the edge. It is one cell at a time, inside the boundary sponge.
-      - Add a stage that raises such an open-edge column to the depth of its deepest neighbour, then
-        re-run the four prepares above. Bounded WENO for T would hide it without removing the pits.
-      - The other three pits are i = 76 and 84 at k = 11 (6 m of water) and i = 2 at k = 15 (8 m).
-      - Full run: the domain minimum is below −1.5 °C on 591 of 640 days, always on the southern row.
-        The cells are (84, 1, 11), (163, 1, 8), (144, 1, 9), (92, 1, 11), (76, 1, 11),
-        (277, 1, 16), (94, 1, 11) and (255, 1, 17). So i = 92, 94, 144 and 163 are pits too, and the
-        stage has to find them by the rule rather than from a list.
+- [ ] Check that `raise_boundary_pockets` removed the validation box's open-edge pits once its
+      bathymetry is re-prepared: wet southern-row cells walled off from the interior, where the
+      640-day run's domain minimum sat below −1.5 °C on 591 of 640 days, at i = 2, 76, 84, 92, 94,
+      144, 163, 255 and 277.
 
 ### Open-boundary tide
 

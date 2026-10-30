@@ -196,8 +196,8 @@ This is what lets the same setup run against a laptop's home directory and a clo
 disk without editing the setup: the roots are the only thing that differs between the two, since
 every other path resolves against them.
 
-A fjord that reads another's downloads passes that other name — `examples/drammensfjorden.jl` shares
-Oslofjord's bathymetry source as `fjord_data_root("oslofjorden")` — so a relocation moves both.
+A fjord that reads another's downloads passes that other name — `fjord_data_root("oslofjorden")` for
+Oslofjord's bathymetry source — so a relocation moves both.
 """
 fjord_data_root(fjord) =
     joinpath(get(ENV, "FJORDSIM_DATA_ROOT", joinpath(homedir(), "FjordSim_data")), fjord)

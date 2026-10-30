@@ -1,6 +1,10 @@
 # The Oslofjord setup: Geonorge Sjøkart Dybdedata bathymetry, a NorKyst-800m initial state, NVE
-# rivers, hourly NorKyst-800m data on the open southern edge and NORA3 atmosphere, on a 240 x 520 x 24
+# rivers, hourly NorKyst-800m data on the open southern edge and NORA3 atmosphere, on a 240 x 520 x 39
 # grid covering 10.2-11.02°E, 59.0-59.93°N.
+#
+# The physics is `oslofjorden_validation.jl`'s, measured there against the NIVA casts of 2014-15:
+# 5.06 m levels between 41 and 132 m, CATKE's `minimum_tke` at 7e-7, no biharmonic tracer diffusion
+# and bounded WENO for salinity. Each is argued beside its value.
 #
 # The rivers are **discovered**, not stated: `minimum_discharge = 0.5` has `add_rivers` read NVE's
 # ELVIS river network and REGINE catchments for this domain and place every mouth at or above that
@@ -63,6 +67,23 @@ data_root = fjord_data_root("oslofjorden")
 # Stated here and passed to the grid and to every model component below, rather than set on
 # `Oceananigans.defaults.FloatType` — see `EvenGrid`'s `float_type`.
 FT = Float32
+# A geometric stretch, ratio 1.25 capped at 33.5 m, from a 1 m surface cell to a deepest face at
+# -467 m, with 41-132 m split into eighteen 5.06 m levels. The deepest sounding is 463.0 m, in the
+# Hvaler trench on the southern edge, and the deepest cell `prepare_bathymetry` writes is 466.8 m, so
+# nothing is clipped and nothing is wasted. `limit_bottom_slope` only ever makes the deepest column
+# shallower, so that margin cannot close by itself; a change to the gridding or the box can, so
+# re-check the deepest cell in `bathymetry.nc` after one.
+#
+# The stretch alone has five 11-27 m levels between 41 and 132 m, and on them WENO's implicit
+# vertical diffusion, ~|w|Δz with the basins' 1-4e-4 m/s grid-scale w, mixed the sill basins at
+# 5-10x CATKE's κ. Over the first 60 days on `oslofjorden_validation.jl`'s box the split cut the
+# Drammensfjord salt-budget diffusivity below 41-105 m from 4.5e-5-3.8e-4 to 1.7e-5-7.0e-5 m²/s, and
+# the Inner Oslofjord's 1.4-5x below 41 m, at no cost in wet columns.
+z_faces = vcat(
+    [-467.0, -433.5, -400.0, -366.5, -333.0, -299.5, -266.0, -232.5, -199.0, -165.5],
+    range(-132.0, -41.0; length = 19),
+    [-32.0, -25.0, -19.0, -14.5, -10.8, -7.9, -5.5, -3.7, -2.2, -1.0, 0.0],
+)
 
 # FjordConfig holds every component side by side. Each step (prepare_forcing(), add_rivers(),
 # run_simulation(), ...) picks out the components it reads and hands them to a function that
@@ -73,37 +94,13 @@ FjordConfig(
     # which build_simulation reads the model grid through — both dispatching on this config's
     # type. Implemented here by wrapping LatitudeLongitudeGrid / ImmersedBoundaryGrid.
     grid_config = EvenGrid(
-        size      = (240, 520, 26),
+        size      = (240, 520, length(z_faces) - 1),
         halo      = (7, 7, 7),
         longitude = (10.2, 11.02),
         latitude  = (59.0, 59.93),
-        # A geometric stretch, ratio 1.25 capped at 33.5 m, from a 1 m surface cell to a
-        # deepest face at -467 m — the deepest sounding is 463.0 m, in the Hvaler trench on the
-        # southern edge, and the deepest cell `prepare_bathymetry` writes is 466.8 m, so nothing
-        # is clipped and nothing is wasted. The faces stopped at -400 m while the gridding
-        # averaged the trench down to 395.1 m. The predecessor's 18 levels ran to -450 m, where
-        # the first layer held no water at all, and reached the seabed in 25 m and 50 m steps: the median
-        # column's floor sat in a 25 m layer and 61% of columns were floored in a layer thicker
-        # than 20 m, so the deepest 25 m of a column was one cell with no vertical structure.
-        # That is where the tracer extremes of the 2020 run sat — 96% of them in a bottom cell,
-        # almost all at the two 25 m layers. Here the median floor layer is 9 m, 24% of columns
-        # exceed 20 m, and no two adjacent layers differ by more than a factor 1.33 (it was
-        # 2.50, at the 25 m to 10 m step); no level is never wet (it was one), and no bottom cell
-        # is a sliver `PartialCellBottom` has to clamp (it was 292).
-        #
-        # `limit_bottom_slope` only ever makes the deepest column shallower, so the -467 m margin
-        # cannot close by itself; a change to the gridding or the box can, so re-check the deepest
-        # cell in `bathymetry.nc` after one. More levels are not monotonically better: a finer grid
-        # gives the seabed more faces to cross, and laterally isolated bottom cells rose from 3.9 %
-        # to 5.5 % of columns at 24 levels. A ratio-1.20, 28-level stretch scores better still
-        # (median floor layer 8.4 m, no column floored in a layer over 30 m) at 56 % more cells
-        # than the 18 levels — the next step if the deep basins look under-resolved.
-        z_faces   = [
-            -467.0, -433.5,
-            -400.0, -366.5, -333.0, -299.5, -266.0, -232.5, -199.0, -165.5,
-            -132.0, -105.0, -83.0, -66.0, -52.0, -41.0, -32.0, -25.0,
-            -19.0, -14.5, -10.8, -7.9, -5.5, -3.7, -2.2, -1.0, 0.0,
-        ],
+        # See beside `z_faces` above. `z_faces` is written into `bathymetry.nc` and
+        # `simulation_grid` reads the file, so a change here needs `prepare_bathymetry` re-run.
+        z_faces   = z_faces,
         float_type = FT,
     ),
     # The basin depths these knobs give, measured on the `oslofjorden_validation` box (which takes
@@ -163,6 +160,10 @@ FjordConfig(
         # Regridding averages a channel narrower than a cell with its flanks: Svelvik came out
         # at 5.6 m against 11 m real. This restores each lost sill along one path of cells.
         preserve_sills        = true,
+        # The open southern edge crosses the Hvaler trench slope. On `oslofjorden_validation.jl`'s
+        # box its boundary row held cells walled off from the interior below some level, and the
+        # domain minimum sat below −1.5 °C in them on 591 of 640 days.
+        raise_boundary_pockets = true,
         geonorge_cache        = true,
         regrid_cache          = false,
     ),
@@ -324,56 +325,62 @@ FjordConfig(
         closure            = BoundarySponge(
             # `minimum_tke` is not a safety net on this grid — it *is* the vertical
             # closure over most of the column. CATKE takes `w★ = sqrt(max(minimum_tke, e))`,
-            # and measured on the 2020 run at day 20.5 the prognostic `e` sits below this
+            # and measured on the 2020 run at day 20.5 the prognostic `e` sat below a 7e-6
             # floor in 85 % of wet cells: 89 % below 6 m, 95-100 % below 9 m. So κ there is
             # the documented background κ = Cʰⁱᶜ·e_min/N = 0.098·e_min/N with
             # ν = 0.242·e_min/N, which the domain-median κᵤ/κᶜ of 2.38 against
             # Cʰⁱᵤ/Cʰⁱᶜ = 2.47 confirms.
             #
-            # 7e-6 is ROMS' `GLS_KMIN` default (7.6e-6), and it does *not* carry over
-            # unchanged: ROMS floors its length scale too (`GLS_PMIN`) where CATKE's is
-            # diagnostic and unfloored, so the same TKE floor buys a much larger κ. It is
-            # kept because it lands in the right place for *this* fjord, not because it came
-            # from ROMS. Median κᶜ at 94-118 m is 8-9e-5 m² s⁻¹ against basin-mean values
-            # measured here by density budget — 1.0-1.8e-4 in Bunnefjorden, 4.9-7.6e-4 in
-            # Vestfjorden, 2.5e-3 just inside the Drøbak sill (Gade 1970; Staalstrøm et al.
-            # 2012, Ocean Sci. 8, 525) — so the basin water is at the low end already and
-            # lowering the floor would slow the deep-water renewal this domain is judged on.
-            # The fjord relation is κ ∝ N^-1.5 (Stigebrandt & Aure 1989) where the floor
-            # gives κ ∝ N^-1, so one number cannot fit both the pycnocline and the basin;
-            # the basin is the one to fit.
+            # 7e-7 rather than ROMS' `GLS_KMIN` default (7.6e-6). Against the NIVA casts of
+            # 9 April 2014 on `oslofjorden_validation.jl`'s box, 7e-6 left the top 5 m too salty
+            # and too weakly stratified: salinity at 25 m minus 1 m was 7.3 at Ep1 and 6.2 at
+            # Dk1, against 11.0 and 9.4 observed and 9.3 and 7.4 at 7e-7. Over 640 days at 7e-7
+            # the salinity RMSE against 216 casts was 1.73 g/kg and the temperature RMSE
+            # 1.22 °C. The cost was overheating in 2-3 m deep cells.
             #
             # `Cᵇ` stays at Oceananigans' 0.28 rather than NumericalEarth's regional 0.01
             # (`default_ocean_closure`), deliberately: it scales the near-bottom mixing
             # length, and Stigebrandt attributed the high basin-mean diffusivity here to
             # exactly that boundary mixing.
             base = (
-                CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6),
+                CATKEVerticalDiffusivity(FT; minimum_tke = 7e-7),
                 # 2e4 m⁴ s⁻¹, down from 1e5. Biharmonic damping of the 2Δx mode goes as
                 # ν₄·16/Δx⁴, an e-folding of 14.5 min at 1e5 on this 193 m cell — the commit
                 # that raised it from 15 aimed at "~1.7 hours" and was out by 7x. 2e4 gives
                 # the 72 min it meant, keeps the scale selectivity that leaves an 8 km
                 # baroclinic eddy alone (56 h at 8Δx), and is still ~1300x what it replaced.
                 # For scale, Norkyst-800 — the ROMS system feeding this run — applies no
-                # explicit interior viscosity at all and a 10 m² s⁻¹ harmonic tracer
-                # diffusivity, where κ = 2e3 here is 0.2 m² s⁻¹ at 2Δx.
+                # explicit interior viscosity at all.
                 #
                 # It also matters for a stability limit nothing else watches: the explicit
                 # biharmonic needs Δt ≤ Δx⁴/32ν₄, which is 434 s at 1e5 and 2170 s here, and
                 # `AdaptiveTimeStep` measures only the advective CFL
                 # (`cell_advection_timescale_coupled_model`).
-                HorizontalScalarBiharmonicDiffusivity(FT; ν = 2e4, κ = 2e3),
+                #
+                # κ is 0. Over the first 60 days on `oslofjorden_validation.jl`'s box, κ = 2e3
+                # left the deep-basin salt budgets unchanged and the stations within 0.05 g/kg,
+                # but overshot at fronts, leaving 169 wet cells below 0 g/kg, against none at 0.
+                HorizontalScalarBiharmonicDiffusivity(FT; ν = 2e4, κ = 0),
             ),
             width_cells = 16,
             viscosity   = 30.0,
             diffusivity = 15.0,
         ),
-        # One scheme for every tracer, not a NamedTuple naming T and S. Oceananigans gives
-        # any tracer a NamedTuple omits the `Centered()` default, and CATKE contributes an
-        # `e` the setup never names — so `e` was being advected by an unbounded centered
-        # scheme, which makes the vertical diffusivity noisy exactly where the bottom cells
-        # were failing. A scalar covers whatever the closure adds, now and later.
-        tracer_advection   = WENO(FT),
+        # T and S upwinded horizontally around the river mouths: on the Møre og Romsdal setup
+        # WENO across a mouth's fresh front made water saltier than any source and a 2 m column
+        # −1 °C. Three cells is WENO5's stencil, so no face outside reconstructs across a river
+        # column.
+        #
+        # Salinity's WENO bounded: on `oslofjorden_validation.jl`'s box plain WENO drove the
+        # surface cells beside Numedalslågen's mouth below TEOS10's -32 psu floor at day 1.5.
+        #
+        # Oceananigans gives any tracer a NamedTuple omits the unbounded `Centered()` default,
+        # so it names CATKE's `e`, and a setup adding tracers must name those too.
+        tracer_advection   = (
+            T = RiverMouthAdvection(interior = WENO(FT), width_cells = 3),
+            S = RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 3),
+            e = WENO(FT),
+        ),
         momentum_advection = WENOVectorInvariant(FT),
         tracers            = (:T, :S),
         coriolis           = HydrostaticSphericalCoriolis(FT),

@@ -193,8 +193,8 @@ FjordConfig(
         buoyancy           = SeawaterBuoyancy(FT, equation_of_state = TEOS10EquationOfState(FT)),
         closure            = BoundarySponge(
             base = (
-                # 7e-7 rather than `oslofjorden.jl`'s 7e-6, as in `oslofjorden_validation.jl`,
-                # where 7e-6 mixed the columns towards uniform and freshened the sill basins.
+                # 7e-7, as in `oslofjorden.jl`. In `oslofjorden_validation.jl` 7e-6 mixed the
+                # columns towards uniform and freshened the sill basins.
                 # Over 640 days at 7e-7 the salinity RMSE against 216 casts was 1.73 g/kg and
                 # the temperature RMSE 1.22 °C. Unmeasured here: check `e` against the floor.
                 CATKEVerticalDiffusivity(FT; minimum_tke = 7e-7),

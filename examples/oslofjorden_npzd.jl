@@ -6,7 +6,7 @@
 # extends FjordSim, in increasing order of reach:
 #
 #   1. **Reuse.** `oslofjorden.jl` is included, and the pieces that need no change — the grid, the
-#      bathymetry, the atmosphere — are passed straight through.
+#      bathymetry, the atmosphere — are passed straight through, moved to this file's data root.
 #   2. **A new config subtype with a new hook method.** `NPZDRivers` and `NPZDBoundaries` subtype an
 #      `Abstract*Config`, hold the built-in config they extend, and delegate every hook but the one
 #      or two they mean to change; `NPZDBiogeochemistry` implements `AbstractBiogeochemistryConfig`'s
@@ -16,7 +16,7 @@
 #      dispatching on the config type, so `NPZDBoundaries` adds a method that runs the built-in
 #      pipeline and then *appends* the biogeochemical variables to the file it wrote.
 #
-# (2) and (3) are what buy everything else for free. Once `boundaries_npzd.nc` carries `south_N` and
+# (2) and (3) are what buy everything else for free. Once the boundary file carries `south_N` and
 # the river series carry `N`, two pieces of FjordSim that were written to be name-driven pick the new
 # tracers up with no further code:
 #
@@ -30,16 +30,16 @@
 # N, P, Z and D start from the same profiles, evaluated at `start_date` and given to
 # `initial_conditions` as functions of depth.
 #
-# The prepared files are new names under the shared `data_root`, so the downloads are reused and
-# `oslofjorden.jl`'s own `rivers_nve.nc` and `boundaries.nc` are left untouched:
+# Every file goes to this file's own data root, `fjord_data_root("oslofjorden_npzd")`, so nothing here
+# reads `oslofjorden.jl`'s data directory:
 #
-#   julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden.jl   # shared, if not run
-#   julia --project -m FjordSim download_boundary_data --config examples/oslofjorden.jl   # shared
-#   julia --project -m FjordSim download_atmosphere --config examples/oslofjorden.jl   # shared
-#   julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden.jl   # shared
-#   julia --project -m FjordSim add_rivers          --config examples/oslofjorden_npzd.jl
+#   julia --project -m FjordSim prepare_bathymetry     --config examples/oslofjorden_npzd.jl
+#   julia --project -m FjordSim add_rivers             --config examples/oslofjorden_npzd.jl
+#   julia --project -m FjordSim download_boundary_data --config examples/oslofjorden_npzd.jl
 #   julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden_npzd.jl
-#   julia --project -m FjordSim run_simulation      --config examples/oslofjorden_npzd.jl
+#   julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden_npzd.jl
+#   julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden_npzd.jl
+#   julia --project -m FjordSim run_simulation         --config examples/oslofjorden_npzd.jl
 #
 # `add_rivers` needs `NVE_API_KEY`, exactly as `oslofjorden.jl` does.
 
@@ -548,23 +548,30 @@ end
 
 # `oslofjorden.jl` is the whole science of this run — grid, bathymetry, closure, rivers, boundary
 # data, atmosphere, time stepping. Everything below either passes one of its pieces through
-# untouched or wraps exactly one of them. Built from the file beside this one.
+# untouched or wraps exactly one of them, moved to this file's own data root. Built from the file
+# beside this one; `include` evaluates it afresh, so moving its configs mutates nothing shared.
 base = include("oslofjorden.jl")
+data_root = fjord_data_root("oslofjorden_npzd")
 
-# `output_file` is a new name so `oslofjorden.jl`'s own `rivers_nve.nc` survives for comparison, and
-# so does every other file this example writes.
+bathymetry = base.bathymetry_config
+bathymetry.data_root = data_root
+
+atmosphere = base.atmosphere_config
+atmosphere.data_root = data_root
+
+base.river_config.data_root = data_root
 rivers = NPZDRivers(
     base.river_config,
-    output_file = "rivers_npzd.nc",
-    plot_file = "rivers_npzd.png",
+    output_file = base.river_config.output_file,
+    plot_file = base.river_config.plot_file,
 )
 
 boundaries = NPZDBoundaries(
     NorKystBoundaryDataConfig(
-        data_root = base.boundary_data_config.data_root,
+        data_root = data_root,
         output_directory = base.boundary_data_config.output_directory,
-        output_file = "boundaries_npzd.nc",
-        plot_file = "boundaries_npzd.png",
+        output_file = base.boundary_data_config.output_file,
+        plot_file = base.boundary_data_config.plot_file,
         open_edges = base.boundary_data_config.open_edges,
         margin = base.boundary_data_config.margin,
         architecture = base.boundary_data_config.architecture,
@@ -578,18 +585,21 @@ base_model = base.model_config
 
 FjordConfig(
     grid_config = base.grid_config,
-    bathymetry_config = base.bathymetry_config,
+    bathymetry_config = bathymetry,
     river_config = rivers,
     boundary_data_config = boundaries,
-    atmosphere_config = base.atmosphere_config,
+    atmosphere_config = atmosphere,
     # `oslofjorden.jl`'s model with the four tracers added.
     model_config = CoupledHydrostaticModel(
         buoyancy = base_model.buoyancy,
         closure = base_model.closure,
-        # `oslofjorden.jl`'s scalar `WENO()`, which was already chosen so that a tracer the setup
-        # does not enumerate — CATKE's `e` then, these four now — does not silently fall back to
-        # an unbounded centered scheme.
-        tracer_advection = base_model.tracer_advection,
+        # `oslofjorden.jl`'s schemes, plus temperature's for the four new tracers: a tracer its
+        # NamedTuple omits would fall back to Oceananigans' unbounded `Centered()`. River nitrate
+        # makes the same front at a mouth as river salinity does.
+        tracer_advection = merge(
+            base_model.tracer_advection,
+            map(_ -> base_model.tracer_advection.T, NPZD_PROFILES),
+        ),
         momentum_advection = base_model.momentum_advection,
         # Spelled out in full. Oceananigans merges a biogeochemical model's required tracers into
         # the model's own only when *none* of them is named already (`has_biogeochemical_tracers`),

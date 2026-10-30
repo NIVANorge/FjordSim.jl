@@ -27,8 +27,8 @@ julia --project -m FjordSim prepare_bathymetry --config path/to/hardangerfjorden
 Two ways to write one:
 
 - **From scratch**, or by copying the example closest to the new domain: `examples/oslofjorden.jl`
-  (inner fjord, open southern edge), `examples/drammensfjorden.jl` (a sub-domain sharing Oslofjord's
-  downloads), `examples/lista.jl` (open coast, three open edges), `examples/moro.jl` (coast, shelf
+  (inner fjord, open southern edge), `examples/drammensfjorden.jl` (a small sub-domain on
+  99 m cells), `examples/lista.jl` (open coast, three open edges), `examples/moro.jl` (coast, shelf
   and continental slope, open western and northern edges).
 - **As a variant of another setup**: `base = include("oslofjorden.jl")` resolves beside the
   including file and returns that setup's config, whose fields the variant then changes or wraps
@@ -77,9 +77,10 @@ A new data source is a new config type, not an edit to the pipeline: `docs/addin
 - **File names** (`output_file`, `plot_file`, `output_directory`, `geodatabase_file`) are relative
   to the config's own `data_root`; an absolute path relocates just that one.
 - **Sharing a download** with another fjord is an absolute path into that fjord's root, built from
-  `fjord_data_root("<other>")` so a relocation moves both — `examples/drammensfjorden.jl` shares
-  Oslofjord's FileGDB and NORA3 months this way. Share only from a domain that *contains* the new one, for the same years: a month missing from the shared directory is
-  downloaded subset to the smaller box and then shrinks the larger setup's own prepare step.
+  `fjord_data_root("<other>")` so a relocation moves both. Share only from a domain that
+  *contains* the new one, for the same years: a month missing from the shared directory is
+  downloaded subset to the smaller box and then shrinks the larger setup's own prepare step. The
+  examples share nothing: each downloads into its own root, so any one prepares and runs alone.
 - **Never shared:** prepared files (their names carry no fjord, so two setups would overwrite each
   other), the NVE caches (they record the domain they were fetched for under a fixed name), and the
   open-boundary band (it is cut along that setup's own edges).

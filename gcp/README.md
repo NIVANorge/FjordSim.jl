@@ -201,11 +201,11 @@ archived from.
 writes it to a mode-600 file on the VM rather than passing it as an argument, which would be
 world-readable in `ps`. Free key: https://hydapi.nve.no/Users
 
-`drammensfjorden` reads Oslofjord's FileGDB and NORA3 files by absolute path, so preparing it needs
-that fjord staged too:
+A setup that reads another fjord's downloads by absolute path (`docs/setups.md`, Paths) needs that
+fjord staged too:
 
 ```bash
-gcp/fjordsim-gcp run --config examples/drammensfjorden.jl --steps prepare_bathymetry \
+gcp/fjordsim-gcp run --config path/to/myfjord.jl --steps prepare_bathymetry \
     --stage oslofjorden --stage-all
 ```
 

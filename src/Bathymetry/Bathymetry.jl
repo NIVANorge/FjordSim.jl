@@ -1,8 +1,11 @@
 module Bathymetry
 
 export DybdedataConfig,
+    NVELakeBathymetryConfig,
     prepare_bathymetry
 
+using ArchGDAL
+using Downloads
 using NCDatasets
 using NumericalEarth
 using Oceananigans
@@ -13,11 +16,17 @@ using Printf: @printf
 using Statistics: mean, median
 
 using NumericalEarth.DataWrangling:
+    AbstractStaticBathymetry,
     Metadatum,
+    metadata_path
+
+import NumericalEarth.DataWrangling:
     dataset_variable_name,
+    default_download_directory,
     latitude_interfaces,
     longitude_interfaces,
-    metadata_path
+    metadata_filename,
+    reversed_vertical_axis
 
 using ..Configs:
     AbstractBathymetryConfig,
@@ -1342,6 +1351,239 @@ function expand_domain(domain, N, padding_cells)
     return (lower, upper)
 end
 
+# --- Raw bathymetry shared by the sources ---
+#
+# A source's `bathymetry_dataset` grids its own samples into a regional raw NetCDF on a regular
+# longitude-latitude grid (`write_raw_bathymetry`) and returns a `RawBathymetry` for
+# `NumericalEarth.regrid_bathymetry` to read. The gridding and rasterizing helpers read only the
+# config's `longitude`, `latitude` and `size`.
+
+# Linear interpolation on the Delaunay triangulation of the soundings, falling back to the nearest
+# sounding outside it. Shared by every source that grids a point cloud. A cell takes a weighted mean of the three soundings around it, so a basin
+# keeps the depth of its deepest sounding wherever a cell centre lies near it. The `invdistnn` this
+# replaced, with `smoothing=0.2` given in the degrees of EPSG:4326 — tens of kilometres against
+# soundings tens of metres apart — weighted its 16 nearest soundings almost equally, which is a
+# plain mean: on `oslofjorden_validation` it took 40 m off Bunnefjorden (154 m deepest sounding
+# within 2 km of Ep1, 114 m gridded) and 35 m off the Drøbak Sound, and the linear version keeps
+# both within 2 m. It also runs in about a minute at `raw_resolution_factor = 2`, where the old one
+# took three hours.
+const BATHYMETRY_GRIDDING_ALGORITHM = "linear:radius=-1:nodata=0"
+
+"""
+    RawBathymetry
+
+Static NumericalEarth-compatible metadata wrapper for a regional raw bathymetry NetCDF — `lon`,
+`lat` and a 2D `z` — written by a source's `bathymetry_dataset`. Every built-in source writes this
+same file shape, so they share the wrapper.
+
+# Fields
+- `metadata_filename`: Filename of the generated raw NetCDF.
+- `default_download_directory`: Directory containing the raw NetCDF.
+- `longitude_interfaces`: Native longitude bounds of the raw dataset.
+- `latitude_interfaces`: Native latitude bounds of the raw dataset.
+- `size`: Native `(Nx, Ny, Nz)` size consumed by `NumericalEarth.regrid_bathymetry`.
+"""
+struct RawBathymetry <: AbstractStaticBathymetry
+    metadata_filename::String
+    default_download_directory::String
+    longitude_interfaces::NTuple{2,Float64}
+    latitude_interfaces::NTuple{2,Float64}
+    size::NTuple{3,Int}
+end
+
+RawBathymetry(config) = RawBathymetry(
+    basename(config.raw_file),
+    dirname(config.raw_file),
+    config.longitude,
+    config.latitude,
+    config.size,
+)
+
+const RawBathymetryMetadatum = Metadatum{<:RawBathymetry}
+
+default_download_directory(dataset::RawBathymetry) = dataset.default_download_directory
+metadata_filename(dataset::RawBathymetry, args...) = dataset.metadata_filename
+longitude_interfaces(dataset::RawBathymetry) = dataset.longitude_interfaces
+latitude_interfaces(dataset::RawBathymetry) = dataset.latitude_interfaces
+reversed_vertical_axis(::RawBathymetry) = false
+Base.size(dataset::RawBathymetry) = dataset.size
+
+dataset_variable_name(::RawBathymetryMetadatum) = "z"
+
+"""
+    Downloads.download(metadata::RawBathymetryMetadatum)
+
+Return the generated regional raw bathymetry file.
+This dataset is materialized locally by `bathymetry_dataset`.
+"""
+function Downloads.download(metadata::RawBathymetryMetadatum)
+    filepath = metadata_path(metadata)
+    isfile(filepath) || error("Raw bathymetry file $filepath does not exist. Run prepare_bathymetry first.")
+    return filepath
+end
+
+"""
+    DepthSamples
+
+Accumulator for a sampled bathymetry point cloud: `xs` and `ys` in the coordinate reference
+system currently being read, and one bottom height per coordinate pair.
+"""
+struct DepthSamples
+    xs::Vector{Float64}
+    ys::Vector{Float64}
+    bottom_heights::Vector{Float64}
+end
+
+DepthSamples() = DepthSamples(Float64[], Float64[], Float64[])
+
+Base.length(samples::DepthSamples) = length(samples.xs)
+
+"""
+    add_point_features!(point_layer, samples::DepthSamples)
+
+Add one point feature per sample to `point_layer`, with its bottom height in the layer's `z` field —
+the layer `grid_point_dataset` grids. Returns the number of features added.
+"""
+function add_point_features!(point_layer, samples::DepthSamples)
+    z_field_index = ArchGDAL.findfieldindex(point_layer, "z", false)
+    for i = 1:length(samples)
+        ArchGDAL.createfeature(point_layer) do feature
+            ArchGDAL.setfield!(feature, z_field_index, samples.bottom_heights[i])
+            ArchGDAL.setgeom!(feature, 0, ArchGDAL.createpoint(samples.xs[i], samples.ys[i]))
+            return nothing
+        end
+    end
+
+    return length(samples)
+end
+
+"""
+    native_extent!(config, target_grid)
+
+Store on `config` the raw dataset's region for `target_grid`: `longitude` and `latitude` padded by
+`config.padding_cells` model cells, and a `size` `config.raw_resolution_factor` times finer than the
+model grid. Returns `config`.
+"""
+function native_extent!(config, target_grid)
+    config.raw_resolution_factor >= 1 || throw(ArgumentError("raw_resolution_factor must be >= 1"))
+    config.padding_cells >= 0 || throw(ArgumentError("padding_cells must be >= 0"))
+
+    Nx, Ny, _ = size(target_grid)
+    config.longitude = expand_domain(x_domain(target_grid), Nx, config.padding_cells)
+    config.latitude = expand_domain(y_domain(target_grid), Ny, config.padding_cells)
+    config.size = (
+        max(config.raw_resolution_factor * (Nx + 2 * config.padding_cells), MIN_NATIVE_BATHYMETRY_SIZE),
+        max(config.raw_resolution_factor * (Ny + 2 * config.padding_cells), MIN_NATIVE_BATHYMETRY_SIZE),
+        1,
+    )
+
+    return config
+end
+
+function write_raw_bathymetry(path, longitude_centers, latitude_centers, z_data)
+    isfile(path) && rm(path; force = true)
+
+    ds = NCDataset(path, "c")
+    try
+        defDim(ds, "lon", length(longitude_centers))
+        defDim(ds, "lat", length(latitude_centers))
+
+        lon = defVar(ds, "lon", Float64, ("lon",))
+        lat = defVar(ds, "lat", Float64, ("lat",))
+        z = defVar(ds, "z", Float32, ("lon", "lat"))
+
+        lon[:] = longitude_centers
+        lat[:] = latitude_centers
+        z[:, :] = z_data
+    finally
+        close(ds)
+    end
+
+    return path
+end
+
+function grid_point_dataset(point_dataset, config)
+    Nx, Ny, _ = config.size
+    options = [
+        "-of",
+        "MEM",
+        "-a",
+        BATHYMETRY_GRIDDING_ALGORITHM,
+        "-zfield",
+        "z",
+        "-txe",
+        string(config.longitude[1]),
+        string(config.longitude[2]),
+        "-tye",
+        string(config.latitude[1]),
+        string(config.latitude[2]),
+        "-outsize",
+        string(Nx),
+        string(Ny),
+        "-a_srs",
+        "EPSG:4326",
+        "-l",
+        "bathymetry_points",
+    ]
+
+    ArchGDAL.gdalgrid(point_dataset, options) do raster_dataset
+        band = ArchGDAL.getband(raster_dataset, 1)
+        raster_to_bottom_height(band, Nx, Ny)
+    end
+end
+
+function rasterize_layer(dataset, layer_name, config)
+    Nx, Ny, _ = config.size
+    options = [
+        "-of",
+        "MEM",
+        "-burn",
+        "1",
+        "-ot",
+        "Byte",
+        "-a_srs",
+        "EPSG:4326",
+        "-te",
+        string(config.longitude[1]),
+        string(config.latitude[1]),
+        string(config.longitude[2]),
+        string(config.latitude[2]),
+        "-outsize",
+        string(Nx),
+        string(Ny),
+        "-l",
+        layer_name,
+    ]
+
+    ArchGDAL.gdalrasterize(dataset, options) do raster_dataset
+        band = ArchGDAL.getband(raster_dataset, 1)
+        raster_to_mask(band, Nx, Ny)
+    end
+end
+
+function raster_to_bottom_height(band, Nx, Ny)
+    data = Array(ArchGDAL.read(band))
+    # ArchGDAL reads a band x-first, so `(Nx, Ny)` is checked first: on a square raster the
+    # transposed shape matches too, and transposing it would swap the axes.
+    if size(data) != (Nx, Ny)
+        size(data) == (Ny, Nx) ||
+            error("Unexpected raster shape $(size(data)); expected ($Nx, $Ny) or ($Ny, $Nx).")
+        data = permutedims(data, (2, 1))
+    end
+    return reverse(Float32.(data), dims = 2)
+end
+
+function raster_to_mask(band, Nx, Ny)
+    data = Array(ArchGDAL.read(band))
+    if size(data) != (Nx, Ny)
+        size(data) == (Ny, Nx) ||
+            error("Unexpected raster mask shape $(size(data)); expected ($Nx, $Ny) or ($Ny, $Nx).")
+        data = permutedims(data, (2, 1))
+    end
+    return reverse(data .> 0, dims = 2)
+end
+
 include("geonorge.jl")
+include("nve_lake.jl")
 
 end  # module Bathymetry

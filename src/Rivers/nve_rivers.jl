@@ -29,6 +29,7 @@ const NVE_API_KEY_VARIABLE = "NVE_API_KEY"
 # forcing could want; the full list is in the docstring of `NVERiversConfig`.
 const NVE_WATER_TEMPERATURE = 1003     # Vanntemperatur, °C
 const NVE_DISCHARGE = 1001             # Vannføring, m³/s
+const NVE_WATER_LEVEL = 1000           # Vannstand, m
 
 # The three resolutions HydAPI offers: 0 instantaneous, 60 hourly, 1440 daily. Daily is what the
 # river pipeline wants — `river_series` matches records by calendar date, so a finer axis would
@@ -42,6 +43,7 @@ const NVE_REQUEST_INTERVAL = 0.25
 
 # Seconds in a mean Julian year, for converting a normal annual runoff (millions of m³/yr) to m³/s.
 const NVE_SECONDS_PER_YEAR = 365.25 * 24 * 3600
+const NVE_SECONDS_PER_DAY = 24 * 3600
 
 # NVE's ArcGIS REST endpoint, which needs no key. The `nve.geodataonline.no` host that older NVE
 # documentation and Geonorge's own service register still name no longer resolves; this is the live
@@ -66,7 +68,7 @@ const NVE_MAP_PAGE_SIZE = 2000
 """
     NVERiver(; vassdragsnr = "", id = 0, name = "", longitude = NaN, latitude = NaN,
              temperature_station = "", discharge_station = "", mean_discharge = NaN,
-             discharge_fraction = 1.0)
+             discharge_fraction = 1.0, level_station = "", level_area = NaN)
 
 One river of an `NVERiversConfig`: where its **outlet** is, and which HydAPI stations describe it.
 
@@ -107,6 +109,14 @@ river that reaches the sea through more than one mouth. Glomma is the case: it d
 Kråkerøy into Østerelva and Vesterelva, ELVIS gives both mouths, and both take Solbergfoss's series
 scaled by a fraction. NVE publishes no split, so the fraction is the setup's stated assumption.
 
+`level_station` and `level_area` make this river a lake's **outlet**, with a discharge that closes
+the lake's water budget: on each date it removes everything the config's other rivers bring in, less
+what the lake stores, `−(ΣQ − level_area · dη/dt)`, with η the daily water level at the HydAPI
+station `level_station` and `level_area` the lake's surface area in m². The model's lake level then
+follows the observed one, whatever share of the catchment the other rivers' gauges miss. One river
+of a config may name a `level_station`, it needs a `level_area`, and its own discharge fields are not
+read. See `nve_outlet_discharge`.
+
 `catchment_discharge` is derived, not stated: `nve_outlets` fills it with what REGINE says the
 catchment's normal annual runoff is, and `nve_mean_discharge` falls back to it. A setup that wants
 to state a size uses `mean_discharge`, which outranks it.
@@ -122,6 +132,8 @@ struct NVERiver
     mean_discharge::Float64
     discharge_fraction::Float64
     catchment_discharge::Float64
+    level_station::String
+    level_area::Float64
 end
 
 function NVERiver(;
@@ -135,6 +147,8 @@ function NVERiver(;
     mean_discharge = NaN,
     discharge_fraction = 1.0,
     catchment_discharge = NaN,
+    level_station = "",
+    level_area = NaN,
 )
     river = NVERiver(
         String(vassdragsnr),
@@ -147,6 +161,15 @@ function NVERiver(;
         Float64(mean_discharge),
         Float64(discharge_fraction),
         Float64(catchment_discharge),
+        String(level_station),
+        Float64(level_area),
+    )
+
+    isempty(river.level_station) || river.level_area > 0 || throw(
+        ArgumentError(
+            "River \"$(river.name)\" names the level station $(river.level_station), which makes " *
+            "it a lake outlet, but no positive `level_area`. Give the lake's surface area in m².",
+        ),
     )
 
     isempty(river.vassdragsnr) &&
@@ -717,6 +740,8 @@ nve_river_with_id(river::NVERiver, id) = NVERiver(
     river.mean_discharge,
     river.discharge_fraction,
     river.catchment_discharge,
+    river.level_station,
+    river.level_area,
 )
 
 """
@@ -799,6 +824,8 @@ function nve_merge_override(outlet::NVERiver, config::NVERiversConfig)
         override.mean_discharge,
         override.discharge_fraction,
         outlet.catchment_discharge,
+        override.level_station,
+        override.level_area,
     )
 end
 
@@ -1037,6 +1064,8 @@ function nve_outlet_series(outlet::NVERiver)
         push!(series, (NVE_WATER_TEMPERATURE, outlet.temperature_station))
     isempty(outlet.discharge_station) ||
         push!(series, (NVE_DISCHARGE, outlet.discharge_station))
+    isempty(outlet.level_station) ||
+        push!(series, (NVE_WATER_LEVEL, outlet.level_station))
     return series
 end
 
@@ -1309,11 +1338,102 @@ function river_discharge(config::NVERiversConfig, times)
     dates = Date.(times)
     discharge = Matrix{Float64}(undef, length(outlets), length(dates))
 
+    lake_outlets = findall(outlet -> !isempty(outlet.level_station), outlets)
+    length(lake_outlets) <= 1 || error(
+        "Rivers $(join((outlets[row].name for row in lake_outlets), ", ")) all name a " *
+        "`level_station`. One river closes a lake's water budget, so only one may.",
+    )
+
     for (row, outlet) in enumerate(outlets)
+        row in lake_outlets && continue
         discharge[row, :] = nve_discharge_row(config, outlet, dates)
     end
 
+    for row in lake_outlets
+        others = setdiff(axes(discharge, 1), row)
+        inflow = vec(sum(view(discharge, others, :); dims = 1))
+        discharge[row, :] = nve_outlet_discharge(config, outlets[row], inflow, dates)
+    end
+
     return discharge
+end
+
+"""
+    nve_outlet_discharge(config, outlet, inflow, dates)
+
+The discharge of a lake's outlet on `dates`, in m³/s and negative: `−(inflow − A · dη/dt)`, what the
+other rivers bring in less what the lake stores, with `A` the outlet's `level_area` and η the daily
+water level at its `level_station`.
+
+η is linearly interpolated across missing days and held at its first and last record beyond them,
+and dη/dt is a centred difference, one-sided at the ends. A date on which the level rises faster
+than the inflows explain would need water *entering* through the outlet; it is set to zero instead,
+and the number of such dates is logged.
+"""
+function nve_outlet_discharge(config::NVERiversConfig, outlet::NVERiver, inflow, dates)
+    records = nve_station_series(config, outlet.level_station, NVE_WATER_LEVEL)
+    isempty(records) && error(
+        "Level station $(outlet.level_station) of $(outlet.name) has no records. Give the river " *
+        "config `years` covering the run window and re-run `fetch_rivers`.",
+    )
+    level = nve_interpolate_gaps([get(records, date, NaN) for date in dates])
+
+    seconds = [(date - first(dates)) / Day(1) * NVE_SECONDS_PER_DAY for date in dates]
+    storage = outlet.level_area .* centred_derivative(level, seconds)
+    discharge = -(inflow .- storage)
+
+    rising = count(>(0), discharge)
+    rising > 0 && @warn "$(outlet.name): the level at $(outlet.level_station) rises faster than " *
+                        "the inflows explain on $rising of $(length(dates)) days; the outlet " *
+                        "carries nothing on those days"
+    discharge = min.(discharge, 0.0)
+    @info "River $(outlet.id) ($(outlet.name)): lake outlet closing the water budget on the level " *
+          "at $(outlet.level_station), mean $(round(sum(discharge) / length(discharge), digits = 1)) m³/s"
+
+    return discharge
+end
+
+"""
+    nve_interpolate_gaps(row)
+
+`row` with each non-finite entry linearly interpolated between the finite ones around it, and held
+at the nearest finite one before the first and after the last.
+"""
+function nve_interpolate_gaps(row)
+    known = findall(isfinite, row)
+    isempty(known) && error("A level series has no finite record to interpolate from.")
+
+    filled = copy(row)
+    for index in eachindex(row)
+        isfinite(row[index]) && continue
+        after = searchsortedfirst(known, index)
+        if after == 1
+            filled[index] = row[first(known)]
+        elseif after > length(known)
+            filled[index] = row[last(known)]
+        else
+            i₀, i₁ = known[after - 1], known[after]
+            filled[index] = row[i₀] + (row[i₁] - row[i₀]) * (index - i₀) / (i₁ - i₀)
+        end
+    end
+
+    return filled
+end
+
+"""
+    centred_derivative(values, times)
+
+d(values)/d(times) at every entry: centred inside, one-sided at the two ends.
+"""
+function centred_derivative(values, times)
+    n = length(values)
+    n >= 2 || return zeros(n)
+    derivative = similar(values, Float64)
+    for i in 1:n
+        lower, upper = max(i - 1, 1), min(i + 1, n)
+        derivative[i] = (values[upper] - values[lower]) / (times[upper] - times[lower])
+    end
+    return derivative
 end
 
 """

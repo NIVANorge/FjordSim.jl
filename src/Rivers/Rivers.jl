@@ -132,7 +132,9 @@ function river_series end
 The discharge of each river, in m³/s, as a `(river, time)` matrix with one row per
 `river_locations` entry and one column per entry of `times`. Required hook for every
 `AbstractRiverConfig`: it is the volume a river adds, and so what moves the free surface and drives
-the estuarine circulation. Must be finite and non-negative throughout.
+the estuarine circulation. Must be finite throughout. A negative discharge is an *outlet*: the
+volume leaves through the surface of the river's columns carrying the water's own values there, so
+what `river_series` gives it is never used — a lake's outflowing river is one.
 """
 function river_discharge end
 
@@ -553,8 +555,7 @@ function place_rivers(target_grid, rivers::AbstractRiverConfig; coverage = nothi
             "(river, time) = $shape.",
         )
     end
-    all(value -> isfinite(value) && value >= 0, discharge) ||
-        error("`river_discharge` has to be finite and non-negative at every river and time.")
+    all(isfinite, discharge) || error("`river_discharge` has to be finite at every river and time.")
 
     maximum_velocity = river_maximum_inflow_velocity(rivers)
     maximum_velocity > 0 || throw(
@@ -563,7 +564,8 @@ function place_rivers(target_grid, rivers::AbstractRiverConfig; coverage = nothi
         ),
     )
 
-    peak_discharges = vec(maximum(discharge; dims = 2))
+    # An outlet's columns are sized by the most it removes, as an inflow's by the most it adds.
+    peak_discharges = vec(maximum(abs, discharge; dims = 2))
     mouths = river_mouths(
         target_grid, locations, river_search_radius(rivers), peak_discharges, maximum_velocity,
     )
@@ -631,7 +633,7 @@ function report_river_mouths(mouths, locations, discharge)
     for mouth in mouths
         series = view(discharge, rows[mouth.location.id], :)
         mean_discharge = sum(series) / length(series)
-        peak_discharge = maximum(series)
+        peak_discharge = series[argmax(abs.(series))]
         moved = iszero(mouth.distance) ? "" : " (moved $(round(mouth.distance, digits = 2)) cells)"
         @info "River $(mouth.location.id) ($(mouth.location.name)) at cell " *
               "($(mouth.i), $(mouth.j))$moved: $(length(mouth.columns)) column(s), " *
@@ -840,6 +842,9 @@ through that face, so the inflow arrives carrying the top cell's own value. This
 it carried with what the river carries, so the column gains exactly `Q c_r` — the same correction
 NumericalEarth applies through its surface boundary condition on a z-star grid.
 
+An outlet — negative inflow — gets no term: its water leaves through the top face carrying the
+cell's own value, which is the right one, so the column loses exactly `Q c`.
+
 Every tracer gets one, because a river column left carrying its own value is unstable: the inflow
 brings in `c` while upwind-biased WENO reconstructs the outflow faces of a local extremum at less
 than `c`, so the cell gains on every step and runs away — 9.5 to 15 °C in five hours in a
@@ -876,7 +881,7 @@ on_architecture(to, source::RiverTracerSource) = RiverTracerSource(
     rate = inflow * Az(i, j, k, grid, Center(), Center(), Center()) /
            volume(i, j, k, grid, Center(), Center(), Center())
     term = rate * (entering - value)
-    return ifelse((k == grid.Nz) & isfinite(term), term, zero(grid))
+    return ifelse((k == grid.Nz) & (inflow > 0) & isfinite(term), term, zero(grid))
 end
 
 """

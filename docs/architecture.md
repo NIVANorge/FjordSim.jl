@@ -126,12 +126,13 @@ supertype.
 
 `prepare_bathymetry` is regrid (NumericalEarth) → `smooth_bathymetry_gaps!` → write. The one
 source-specific step is `bathymetry_dataset`; `geonorge.jl` implements it for Geonorge Sjøkart
-Dybdedata.
+Dybdedata and `nve_lake.jl` for NVE's lake depth maps. Both grid their samples with the shared
+helpers in `Bathymetry.jl` into the same raw file shape, read back as a `RawBathymetry`.
 
 ### Gridding the soundings
 
 Soundings are gridded by linear interpolation on their Delaunay triangulation
-(`GEONORGE_GRIDDING_ALGORITHM`), so a basin keeps its deepest sounding. The `invdistnn` it replaced
+(`BATHYMETRY_GRIDDING_ALGORITHM`), so a basin keeps its deepest sounding. The `invdistnn` it replaced
 had `smoothing=0.2` in *degrees* — kilometres, against soundings metres apart — so it was a plain
 mean of 16 soundings that took 40 m off Bunnefjorden and 35 m off the Drøbak Sound before any
 smoothing ran. Linear takes about a minute at `raw_resolution_factor = 2` against three hours. The

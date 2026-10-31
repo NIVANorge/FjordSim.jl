@@ -69,11 +69,11 @@ and hands them to the work function, which dispatches on them.
 
 ### `AbstractBathymetryConfig`
 
-| Hook | Status | `DybdedataConfig` |
-|---|---|---|
-| `bathymetry_dataset` | required | ✓ |
-| `regrid_options` | optional | ✓ |
-| `smoothing_options` | optional | ✓ |
+| Hook | Status | `DybdedataConfig` | `NVELakeBathymetryConfig` |
+|---|---|---|---|
+| `bathymetry_dataset` | required | ✓ | ✓ |
+| `regrid_options` | optional | ✓ | ✓ |
+| `smoothing_options` | optional | ✓ | ✓ |
 
 ### `AbstractBiogeochemistryConfig`
 

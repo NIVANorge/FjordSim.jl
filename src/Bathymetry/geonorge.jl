@@ -4,19 +4,7 @@
 # Everything else comes from the generic core in Bathymetry.jl.
 
 using Scratch
-using ArchGDAL
-using Downloads
 using p7zip_jll
-
-using NumericalEarth.DataWrangling: AbstractStaticBathymetry
-
-import NumericalEarth.DataWrangling:
-    dataset_variable_name,
-    default_download_directory,
-    latitude_interfaces,
-    longitude_interfaces,
-    metadata_filename,
-    reversed_vertical_axis
 
 const GEONORGE_LAND_LAYERS = ("landareal", "skjer")
 # Geonorge serves complete-dataset FileGDB archives as static zip files. The archive
@@ -24,17 +12,6 @@ const GEONORGE_LAND_LAYERS = ("landareal", "skjer")
 # URL is derivable from the configured `geodatabase_file`.
 const GEONORGE_FGDB_BASE_URL = "https://nedlasting.geonorge.no/geonorge/Basisdata/Dybdedata/FGDB"
 const GEONORGE_DYBDEDATA_GDB = "Basisdata_0000_Norge_25833_Dybdedata_FGDB.gdb"
-# Linear interpolation on the Delaunay triangulation of the soundings, falling back to the nearest
-# sounding outside it. A cell takes a weighted mean of the three soundings around it, so a basin
-# keeps the depth of its deepest sounding wherever a cell centre lies near it. The `invdistnn` this
-# replaced, with `smoothing=0.2` given in the degrees of EPSG:4326 — tens of kilometres against
-# soundings tens of metres apart — weighted its 16 nearest soundings almost equally, which is a
-# plain mean: on `oslofjorden_validation` it took 40 m off Bunnefjorden (154 m deepest sounding
-# within 2 km of Ep1, 114 m gridded) and 35 m off the Drøbak Sound, and the linear version keeps
-# both within 2 m. It also runs in about a minute at `raw_resolution_factor = 2`, where the old one
-# took three hours.
-const GEONORGE_GRIDDING_ALGORITHM = "linear:radius=-1:nodata=0"
-
 download_bathymetry_cache::String = ""
 
 function __init__()
@@ -289,74 +266,6 @@ share one FileGDB copy across setups.
 geodatabase_path(config::DybdedataConfig) = joinpath(config.data_root, config.geodatabase_file)
 
 """
-    DepthSamples
-
-Accumulator for a sampled bathymetry point cloud: `xs` and `ys` in the coordinate reference
-system currently being read, and one bottom height per coordinate pair.
-"""
-struct DepthSamples
-    xs::Vector{Float64}
-    ys::Vector{Float64}
-    bottom_heights::Vector{Float64}
-end
-
-DepthSamples() = DepthSamples(Float64[], Float64[], Float64[])
-
-Base.length(samples::DepthSamples) = length(samples.xs)
-
-"""
-    GeonorgeBathymetry
-
-Static NumericalEarth-compatible metadata wrapper for a regional raw bathymetry
-NetCDF derived from Geonorge Sjøkart bathymetry data.
-
-# Fields
-- `metadata_filename`: Filename of the generated raw NetCDF.
-- `default_download_directory`: Directory containing the raw NetCDF.
-- `longitude_interfaces`: Native longitude bounds of the raw dataset.
-- `latitude_interfaces`: Native latitude bounds of the raw dataset.
-- `size`: Native `(Nx, Ny, Nz)` size consumed by `NumericalEarth.regrid_bathymetry`.
-"""
-struct GeonorgeBathymetry <: AbstractStaticBathymetry
-    metadata_filename::String
-    default_download_directory::String
-    longitude_interfaces::NTuple{2,Float64}
-    latitude_interfaces::NTuple{2,Float64}
-    size::NTuple{3,Int}
-end
-
-GeonorgeBathymetry(config::DybdedataConfig) = GeonorgeBathymetry(
-    basename(config.raw_file),
-    dirname(config.raw_file),
-    config.longitude,
-    config.latitude,
-    config.size,
-)
-
-const GeonorgeBathymetryMetadatum = Metadatum{<:GeonorgeBathymetry}
-
-default_download_directory(dataset::GeonorgeBathymetry) = dataset.default_download_directory
-metadata_filename(dataset::GeonorgeBathymetry, args...) = dataset.metadata_filename
-longitude_interfaces(dataset::GeonorgeBathymetry) = dataset.longitude_interfaces
-latitude_interfaces(dataset::GeonorgeBathymetry) = dataset.latitude_interfaces
-reversed_vertical_axis(::GeonorgeBathymetry) = false
-Base.size(dataset::GeonorgeBathymetry) = dataset.size
-
-dataset_variable_name(::GeonorgeBathymetryMetadatum) = "z"
-
-"""
-    Downloads.download(metadata::GeonorgeBathymetryMetadatum)
-
-Return the generated regional raw bathymetry file.
-This dataset is materialized locally by `bathymetry_dataset`.
-"""
-function Downloads.download(metadata::GeonorgeBathymetryMetadatum)
-    filepath = metadata_path(metadata)
-    isfile(filepath) || error("Raw bathymetry file $filepath does not exist. Run prepare_bathymetry first.")
-    return filepath
-end
-
-"""
     geonorge_geodatabase_url(geodatabase_file)
 
 Derive the Geonorge complete-dataset download URL for a local FileGDB path. The remote
@@ -428,18 +337,9 @@ padded longitude/latitude bounds, the native size, the EPSG:25833 spatial filter
 the raw NetCDF path on `config`. Returns `config`.
 """
 function native_region!(config::DybdedataConfig, target_grid)
-    config.raw_resolution_factor >= 1 || throw(ArgumentError("raw_resolution_factor must be >= 1"))
-    config.padding_cells >= 0 || throw(ArgumentError("padding_cells must be >= 0"))
     config.contour_stride >= 1 || throw(ArgumentError("contour_stride must be >= 1"))
 
-    Nx, Ny, _ = size(target_grid)
-    config.longitude = expand_domain(x_domain(target_grid), Nx, config.padding_cells)
-    config.latitude = expand_domain(y_domain(target_grid), Ny, config.padding_cells)
-    config.size = (
-        max(config.raw_resolution_factor * (Nx + 2 * config.padding_cells), MIN_NATIVE_BATHYMETRY_SIZE),
-        max(config.raw_resolution_factor * (Ny + 2 * config.padding_cells), MIN_NATIVE_BATHYMETRY_SIZE),
-        1,
-    )
+    native_extent!(config, target_grid)
     config.filter_bounds = transformed_filter_bounds(config.longitude, config.latitude)
     config.raw_file = joinpath(config.raw_directory, geonorge_raw_filename(config))
 
@@ -458,7 +358,7 @@ function geonorge_dataset(config::DybdedataConfig)
 
     isfinite(config.max_sounding_distance) && (config.raw_file = write_sounding_masked_bathymetry(config))
 
-    return GeonorgeBathymetry(config)
+    return RawBathymetry(config)
 end
 
 function write_native_bathymetry(config::DybdedataConfig)
@@ -472,28 +372,6 @@ function write_native_bathymetry(config::DybdedataConfig)
 
     @info "Finished writing native bathymetry file to $(config.raw_file)"
     return config.raw_file
-end
-
-function write_raw_bathymetry(path, longitude_centers, latitude_centers, z_data)
-    isfile(path) && rm(path; force = true)
-
-    ds = NCDataset(path, "c")
-    try
-        defDim(ds, "lon", length(longitude_centers))
-        defDim(ds, "lat", length(latitude_centers))
-
-        lon = defVar(ds, "lon", Float64, ("lon",))
-        lat = defVar(ds, "lat", Float64, ("lat",))
-        z = defVar(ds, "z", Float32, ("lon", "lat"))
-
-        lon[:] = longitude_centers
-        lat[:] = latitude_centers
-        z[:, :] = z_data
-    finally
-        close(ds)
-    end
-
-    return path
 end
 
 """
@@ -574,7 +452,7 @@ function build_native_bathymetry_data(config::DybdedataConfig)
 
                 land_mask = create_land_dataset(config, transform, target_srs) do land_dataset
                     @info "Rasterizing land features"
-                    rasterize_land_dataset(land_dataset, config)
+                    rasterize_layer(land_dataset, "land_features", config)
                 end
 
                 bathymetry[land_mask] .= 0.0f0
@@ -614,65 +492,6 @@ function create_land_dataset(f::Function, config::DybdedataConfig, transform, ta
     end
 end
 
-function grid_point_dataset(point_dataset, config::DybdedataConfig)
-    Nx, Ny, _ = config.size
-    options = [
-        "-of",
-        "MEM",
-        "-a",
-        GEONORGE_GRIDDING_ALGORITHM,
-        "-zfield",
-        "z",
-        "-txe",
-        string(config.longitude[1]),
-        string(config.longitude[2]),
-        "-tye",
-        string(config.latitude[1]),
-        string(config.latitude[2]),
-        "-outsize",
-        string(Nx),
-        string(Ny),
-        "-a_srs",
-        "EPSG:4326",
-        "-l",
-        "bathymetry_points",
-    ]
-
-    ArchGDAL.gdalgrid(point_dataset, options) do raster_dataset
-        band = ArchGDAL.getband(raster_dataset, 1)
-        raster_to_bottom_height(band, Nx, Ny)
-    end
-end
-
-function rasterize_land_dataset(land_dataset, config::DybdedataConfig)
-    Nx, Ny, _ = config.size
-    options = [
-        "-of",
-        "MEM",
-        "-burn",
-        "1",
-        "-ot",
-        "Byte",
-        "-a_srs",
-        "EPSG:4326",
-        "-te",
-        string(config.longitude[1]),
-        string(config.latitude[1]),
-        string(config.longitude[2]),
-        string(config.latitude[2]),
-        "-outsize",
-        string(Nx),
-        string(Ny),
-        "-l",
-        "land_features",
-    ]
-
-    ArchGDAL.gdalrasterize(land_dataset, options) do raster_dataset
-        band = ArchGDAL.getband(raster_dataset, 1)
-        raster_to_mask(band, Nx, Ny)
-    end
-end
-
 """
     depth_samples(config::DybdedataConfig, transform)
 
@@ -699,19 +518,7 @@ end
 function sample_bathymetry_points!(point_layer, config::DybdedataConfig, transform)
     samples = depth_samples(config, transform)
 
-    point_count = length(samples)
-    point_count > 0 || return 0
-
-    z_field_index = ArchGDAL.findfieldindex(point_layer, "z", false)
-    for i = 1:point_count
-        ArchGDAL.createfeature(point_layer) do feature
-            ArchGDAL.setfield!(feature, z_field_index, samples.bottom_heights[i])
-            ArchGDAL.setgeom!(feature, 0, ArchGDAL.createpoint(samples.xs[i], samples.ys[i]))
-            return nothing
-        end
-    end
-
-    return point_count
+    return add_point_features!(point_layer, samples)
 end
 
 function sample_land_features!(land_layer, config::DybdedataConfig, transform)
@@ -802,26 +609,6 @@ function contour_point_indices(n_points, stride)
     indices = collect(0:stride:last_index)
     isempty(indices) || last(indices) == last_index || push!(indices, last_index)
     return indices
-end
-
-function raster_to_bottom_height(band, Nx, Ny)
-    data = Array(ArchGDAL.read(band))
-    if size(data) == (Ny, Nx)
-        data = permutedims(data, (2, 1))
-    elseif size(data) != (Nx, Ny)
-        error("Unexpected raster shape $(size(data)); expected ($Nx, $Ny) or ($Ny, $Nx).")
-    end
-    return reverse(Float32.(data), dims = 2)
-end
-
-function raster_to_mask(band, Nx, Ny)
-    data = Array(ArchGDAL.read(band))
-    if size(data) == (Ny, Nx)
-        data = permutedims(data, (2, 1))
-    elseif size(data) != (Nx, Ny)
-        error("Unexpected raster mask shape $(size(data)); expected ($Nx, $Ny) or ($Ny, $Nx).")
-    end
-    return reverse(data .> 0, dims = 2)
 end
 
 function transformed_filter_bounds(longitude, latitude)

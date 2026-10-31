@@ -5,7 +5,7 @@
 
 Every pipeline is a generic function on the config supertype plus a small set of hooks. Add a
 source by subtyping and overloading the hooks — never by editing the generic function. The
-adapter files (`src/Bathymetry/geonorge.jl`, `src/Forcing/norkyst.jl`,
+adapter files (`src/Bathymetry/geonorge.jl`, `src/Bathymetry/nve_lake.jl`, `src/Forcing/norkyst.jl`,
 `src/InitialState/norkyst_initial_state.jl`, `src/Rivers/nve_rivers.jl`,
 `src/Boundaries/BoundaryData/norkyst_boundary_data.jl`) are the templates.
 
@@ -90,7 +90,7 @@ Rivers — `AbstractRiverConfig`, consumed by `add_rivers`:
 | Hook | Required | Default |
 |---|---|---|
 | `river_locations(config)` → `Vector{RiverLocation}` | yes | none |
-| `river_discharge(config, times)` → `(river, time)` matrix in m³/s, finite and non-negative | yes | none |
+| `river_discharge(config, times)` → `(river, time)` matrix in m³/s, finite; a negative value is an outlet, whose water leaves carrying the model's own values | yes | none |
 | `river_series(config, times)` → `Dict` FjordSim tracer name => `(river, time)` matrix of what the water carries; finite for every river the grid carries (no "ambient" value — unstable), and a tracer it omits enters at zero | yes | none |
 | `fetch_rivers(target_grid, config)` | only if it downloads | none |
 | `river_search_radius(config)` → cells to search for a coastal cell | no | `config.search_radius` |

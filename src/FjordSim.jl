@@ -23,6 +23,7 @@ export
     # built-in sources
     EvenGrid,
     DybdedataConfig,
+    NVELakeBathymetryConfig,
     NorKystConfig,
     NorKystHindcastConfig,
     NorKystInitialStateConfig,

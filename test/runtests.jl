@@ -78,6 +78,7 @@ end
             :validate_simulation,
             :EvenGrid,
             :DybdedataConfig,
+            :NVELakeBathymetryConfig,
             :NorKystConfig,
             :NorKystHindcastConfig,
             :NorKystInitialStateConfig,
@@ -2204,6 +2205,59 @@ end
         @test gridded[11, 11] == minimum(gridded)
     end
 
+    @testset "NVE lake depth map" begin
+        # A rectangular lake with a square island, one 20 m contour and one 100 m sounding, cached
+        # the way `fetch_lake_features` caches the map service's answers, so nothing is downloaded.
+        ring(λ₁, λ₂, φ₁, φ₂) = "[[$λ₁,$φ₁],[$λ₂,$φ₁],[$λ₂,$φ₂],[$λ₁,$φ₂],[$λ₁,$φ₁]]"
+        collection(features...) = """{"type":"FeatureCollection","features":[$(join(features, ","))]}"""
+        feature(geometry, properties) = """{"type":"Feature","geometry":$geometry,"properties":$properties}"""
+
+        mktempdir() do tmp
+            config = NVELakeBathymetryConfig(
+                data_root = tmp, output_file = "bathymetry.nc", plot_file = "bathymetry.png",
+                lake_number = 7, raw_resolution_factor = 2,
+            )
+            mkpath(FjordSim.Bathymetry.lake_directory(config))
+            path(kind) = FjordSim.Bathymetry.lake_feature_path(config, kind)
+            write(path(:outline), collection(feature(
+                """{"type":"Polygon","coordinates":[$(ring(10.0, 10.4, 59.0, 59.2)),$(ring(10.25, 10.3, 59.08, 59.12))]}""",
+                """{"vatnlnr":7}""",
+            )))
+            write(path(:contours), collection(feature(
+                """{"type":"LineString","coordinates":$(ring(10.05, 10.35, 59.03, 59.17))}""",
+                """{"vatnlnr":7,"dybde_m":20.0}""",
+            )))
+            write(path(:points), collection(feature(
+                """{"type":"Point","coordinates":[10.1,59.1]}""",
+                """{"vatnlnr":7,"dybde_m":100.0}""",
+            )))
+
+            grid = LatitudeLongitudeGrid(
+                CPU(); size = (25, 25, 1), longitude = (9.95, 10.45), latitude = (58.975, 59.225), z = (-200, 0),
+            )
+            dataset = bathymetry_dataset(grid, config)
+            @test dataset isa FjordSim.Bathymetry.RawBathymetry
+            @test size(dataset) == (50, 50, 1)
+
+            longitude, latitude, z = NCDataset(config.raw_file) do ds
+                Array(ds["lon"]), Array(ds["lat"]), Array(ds["z"])
+            end
+            inside(λ, φ, λ₁, λ₂, φ₁, φ₂) = λ₁ < λ < λ₂ && φ₁ < φ < φ₂
+            lake = [inside(λ, φ, 10.0, 10.4, 59.0, 59.2) for λ in longitude, φ in latitude]
+            island = [inside(λ, φ, 10.25, 10.3, 59.08, 59.12) for λ in longitude, φ in latitude]
+
+            # Everything outside the shore, and the island, is land, and all the lake is water —
+            # including any triangle the shore's own vertices span alone, which interpolates to 0 m.
+            @test all(iszero, z[.!lake])
+            @test all(iszero, z[island])
+            @test all(<(0), z[lake .& .!island])
+            # The deepest cell is the one by the sounding, and nothing is deeper than it.
+            deepest = argmin(z)
+            @test abs(longitude[deepest[1]] - 10.1) < 0.01 && abs(latitude[deepest[2]] - 59.1) < 0.005
+            @test -100 <= minimum(z) < -90
+        end
+    end
+
     @testset "point sampling" begin
         # Synthetic dybdepunkt/dybdekurve-like layers in EPSG:25833, built on a Memory
         # dataset so this test needs no real Geonorge FileGDB.
@@ -2898,6 +2952,56 @@ end
             @test river_discharge(quiet, times) == fill(3.0, 1, 3)
             @test Rivers.nve_mean_discharge(quiet, akerselva) == (3.0, "the config")
 
+            # A lake outlet removes what the other rivers bring in, less what the lake stores: the
+            # level rises 0.1 m a day, with the middle day missing and interpolated.
+            level_response = """
+            {"apiVersion":"1.0","itemCount":1,
+             "data":[{"stationId":"2.101.0","parameter":1000,"unit":"m","observationCount":3,
+               "observations":[
+                 {"time":"2020-01-01T11:00:00Z","value":120.0,"correction":0,"quality":1},
+                 {"time":"2020-01-02T11:00:00Z","value":null,"correction":0,"quality":1},
+                 {"time":"2020-01-03T11:00:00Z","value":120.2,"correction":0,"quality":1}]}]}
+            """
+            write(
+                Rivers.nve_observations_path(cached, "2.101.0", Rivers.NVE_WATER_LEVEL, 2020),
+                level_response,
+            )
+            area = 1.0e6
+            outlet = NVERiver(
+                id = 2, name = "Outlet", longitude = 10.6, latitude = 59.6,
+                level_station = "2.101.0", level_area = area,
+            )
+            @test (Rivers.NVE_WATER_LEVEL, "2.101.0") in Rivers.nve_outlet_series(outlet)
+            lake = NVERiversConfig(
+                data_root = tmp, outlets = [akerselva, outlet], years = [2020], api_key = "stated",
+                maximum_inflow_velocity = 1.0e-3,
+            )
+            storage = area * 0.1 / 86400
+            @test river_discharge(lake, times) ≈ [fill(3.0, 1, 3); fill(storage - 3.0, 1, 3)]
+
+            # A level rising faster than the inflows explain would need water entering through the
+            # outlet, which it does not carry.
+            dry = NVERiversConfig(
+                data_root = tmp,
+                outlets = [
+                    NVERiver(id = 1, name = "Trickle", longitude = 10.5, latitude = 59.5, mean_discharge = 1.0),
+                    outlet,
+                ],
+                years = [2020], api_key = "stated", maximum_inflow_velocity = 1.0e-3,
+            )
+            @test (@test_logs (:warn, r"rises faster") match_mode = :any river_discharge(dry, times))[2, :] ==
+                  zeros(3)
+
+            # An outlet needs the lake's area, and a config closes one budget.
+            @test_throws ArgumentError NVERiver(
+                id = 3, name = "No area", longitude = 10.6, latitude = 59.6, level_station = "2.101.0",
+            )
+            twice = NVERiversConfig(
+                data_root = tmp, outlets = [outlet, Rivers.nve_river_with_id(outlet, 3)], years = [2020],
+                api_key = "stated", maximum_inflow_velocity = 1.0e-3,
+            )
+            @test_throws "only one may" river_discharge(twice, times)
+
             # With neither, the catchment normal the outlet was discovered with, constant in time —
             # what lets a river with no gauge still enter at its own size.
             normal = NVERiversConfig(
@@ -3449,12 +3553,12 @@ end
             # The axis comes from the run window, so a setup with no run config has none.
             @test_throws ErrorException place_rivers(grid, rivers)
 
-            # A discharge of the wrong shape, or one that would take water out, is refused rather
-            # than written; so is an inflow speed that could never be met.
+            # A discharge of the wrong shape, or a non-finite one, is refused rather than written;
+            # so is an inflow speed that could never be met. A negative one is an outlet.
             short = StubRivers(tmp, "short.nc", rivers.locations, [10.0 20.0], rivers.series)
             @test_throws ErrorException place_rivers(grid, short; coverage)
-            negative = StubRivers(tmp, "negative.nc", rivers.locations, [10.0 -1.0 0.0], rivers.series)
-            @test_throws ErrorException place_rivers(grid, negative; coverage)
+            undefined = StubRivers(tmp, "undefined.nc", rivers.locations, [10.0 NaN 0.0], rivers.series)
+            @test_throws ErrorException place_rivers(grid, undefined; coverage)
             still = StubRivers(
                 tmp, "still.nc", rivers.locations, discharge, rivers.series; maximum_inflow_velocity = 0.0,
             )
@@ -3535,6 +3639,18 @@ end
             @test forcing.e(1, 2, Nz, grid, clock, (; T, S, e)) ≈ w * (0 - 2) / Δz rtol = 1e-6
             @test forcing.e(4, 2, Nz, grid, clock, (; T, S, e)) == 0
 
+            # An outlet — negative discharge — lowers the free surface and adds no tracer term,
+            # whatever its series says: its water leaves carrying the cell's own value.
+            outlet = StubRivers(
+                tmp, "outlet.nc", [location], [-10.0 -10.0],
+                Dict("T" => Float32[3 5], "S" => Float32[0 0]); maximum_inflow_velocity = Inf,
+            )
+            outlet_mouth = only(place_rivers(grid, outlet; coverage).mouths)
+            drain = river_forcing(outlet, grid, river_forcing_path(outlet), (:T, :S), start)
+            @test drain.η(1, 2, Nz + 1, grid, clock, nothing) ≈ -10.0 / outlet_mouth.area rtol = 1e-6
+            @test drain.S(1, 2, Nz, grid, clock, fields) == 0
+            @test drain.T(1, 2, Nz, grid, clock, fields) == 0
+
             # A river whose value is `NaN` would carry the water it enters, which is unstable, so
             # the file is refused rather than written.
             ambient = StubRivers(
@@ -3582,12 +3698,16 @@ end
             areas = FjordSim.Rivers.column_areas(grid) .* [wet(i, j, Nz) for i in 1:Nx, j in 1:Ny]
             water = volumes .> 0
 
-            function run_river(name, river_values)
+            function run_river(name, river_values; discharges = [discharge])
+                river_count = length(discharges)
                 rivers = StubRivers(
                     tmp, name,
-                    [FjordSim.Rivers.RiverLocation(1, "river", longitudes[2], latitudes[4])],
-                    fill(discharge, 1, 2),
-                    Dict(key => fill(Float32(value), 1, 2) for (key, value) in river_values),
+                    [
+                        FjordSim.Rivers.RiverLocation(n, "river $n", longitudes[2], latitudes[2 + 2n])
+                        for n in 1:river_count
+                    ],
+                    repeat(discharges, 1, 2),
+                    Dict(key => fill(Float32(value), river_count, 2) for (key, value) in river_values),
                 )
                 place_rivers(
                     grid, rivers;
@@ -3630,6 +3750,20 @@ end
             @test sum(S .* volumes) - S₀ * sum(volumes) ≈ -S₀ * discharge * elapsed rtol = 1e-2
             @test minimum(S[water]) < S₀
             @test all(≈(T₀; rtol = 1e-12), T[water])
+
+            # A lake: an outlet removing what an ambient inflow adds keeps the volume, and S and T
+            # stay uniform.
+            S, T, η = run_river("through.nc", ("S" => S₀, "T" => T₀); discharges = [discharge, -discharge])
+            @test abs(sum(η .* areas)) < 1e-6 * discharge * elapsed
+            @test all(≈(S₀; rtol = 1e-10), S[water])
+            @test all(≈(T₀; rtol = 1e-10), T[water])
+
+            # An outlet alone takes the volume out and, whatever its series says, carries away the
+            # water's own values, so the basin stays uniform.
+            S, T, η = run_river("outlet.nc", ("S" => 0.0, "T" => 0.0); discharges = [-discharge])
+            @test sum(η .* areas) ≈ -discharge * elapsed rtol = 1e-6
+            @test all(≈(S₀; rtol = 1e-10), S[water])
+            @test all(≈(T₀; rtol = 1e-10), T[water])
         end
     end
 end

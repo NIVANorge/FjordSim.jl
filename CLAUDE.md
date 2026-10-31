@@ -125,8 +125,8 @@ The modules, in `include` order from `src/FjordSim.jl`:
 
 No setup is part of the package. A setup is a script whose last expression is a `FjordConfig`,
 passed by path to `--config` and loaded by `fjord_config`; `examples/` holds the worked ones
-(`oslofjorden.jl`, `drammensfjorden.jl`, `lista.jl`, `moro.jl`, and variants that
-`include("oslofjorden.jl")`). Adding a fjord is one new file. `CoupledHydrostaticModel`,
+(`oslofjorden.jl`, `drammensfjorden.jl`, `lista.jl`, `moro.jl`, `mjosa.jl` — a closed lake — and
+variants that `include("oslofjorden.jl")`). Adding a fjord is one new file. `CoupledHydrostaticModel`,
 `RunConfig` and everything they nest have **no defaults** — every field is a scientific
 choice a setup must state. How to write
 one is `docs/setups.md`; why a setup has the values it has belongs in its own comments.

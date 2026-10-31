@@ -223,6 +223,18 @@ columns. No observations cover those bays.
 - [ ] `fjordsim-gcp logs` runs `tail -f` and never returns. Add a `--lines N` mode that prints and
       exits.
 
+## `examples/mjosa.jl`
+
+- [ ] Bring it up: `add_rivers`, the NORA3 steps and a short GPU run (the bathymetry is prepared and
+      `z_faces` fitted to its 443.3 m deepest cell). Check the Vorma outlet's mean against the
+      ~344 m³/s at Ertesekken, η against the 120.3–123.0 m observed at Hamar in 2025, and that T
+      stays smooth in the outlet's columns.
+- [ ] Gudbrandsdalslågen, three quarters of the inflow, has no 2025 water temperature after August
+      (Hovdefossen `2.656.0` ends 2025-08-19), so it carries Glomma's at Glomstadfoss. Replace the
+      proxy if NVE fills the series.
+- [ ] No ice model: winter heat loss and wind mixing are too strong wherever the lake freezes.
+- [ ] Score the run against NIVA's Mjøsa monitoring profiles (Skreia, Brøttum, Furnes) in Vannmiljø.
+
 ## Design
 
 `docs/dispatch-map.md` lists every supertype's hooks and which built-in types implement them. These

@@ -29,7 +29,8 @@ Two ways to write one:
 - **From scratch**, or by copying the example closest to the new domain: `examples/oslofjorden.jl`
   (inner fjord, open southern edge), `examples/drammensfjorden.jl` (a small sub-domain on
   99 m cells), `examples/lista.jl` (open coast, three open edges), `examples/moro.jl` (coast, shelf
-  and continental slope, open western and northern edges).
+  and continental slope, open western and northern edges), `examples/mjosa.jl` (a closed freshwater
+  lake: NVE depth-map bathymetry, no open edge, an outflowing river closing the water budget).
 - **As a variant of another setup**: `base = include("oslofjorden.jl")` resolves beside the
   including file and returns that setup's config, whose fields the variant then changes or wraps
   (`examples/oslofjorden_validation.jl`, `examples/oslofjorden_npzd.jl`). The included script's
@@ -49,7 +50,7 @@ step whose config is `nothing` is a no-op. A setup naming a `run_config` must al
 | Field | Built-in config | Steps | Prepared file | Needed for |
 |---|---|---|---|---|
 | `grid_config` | `EvenGrid` | — | — | always |
-| `bathymetry_config` | `DybdedataConfig` (Geonorge) | `prepare_bathymetry` | `bathymetry.nc` | always: it *is* the model grid |
+| `bathymetry_config` | `DybdedataConfig` (Geonorge, sea), `NVELakeBathymetryConfig` (NVE, one lake) | `prepare_bathymetry` | `bathymetry.nc` | always: it *is* the model grid |
 | `forcing_config` | `NorKystConfig`, `NorKystHindcastConfig` | `download_forcing`, `prepare_forcing` | `forcing.nc` | `FromForcing` initial conditions |
 | `initial_state_config` | `NorKystInitialStateConfig` | `download_initial_state`, `prepare_initial_state` | `initial_state.nc` | `FromInitialState` initial conditions |
 | `river_config` | `NVERiversConfig` | `add_rivers` | `rivers_nve.nc` | river inflow; `RiverMouthMixing`, `RiverMouthAdvection` |
@@ -168,7 +169,10 @@ spacing have to be worked out for the new grid rather than copied:
   `w·Δt/Δz` through the top cell: at 1e-3 m/s, a 1 m top cell and a 180 s `max_time_step` it is
   0.18. `minimum_discharge` defaults to `Inf`, meaning no discovery: `outlets` must then state every
   river and its mouth. A discharge in m³/s instead discovers every mouth at or above it from NVE's
-  river network, and `outlets` become overrides that attach gauges.
+  river network, and `outlets` become overrides that attach gauges. Discovery finds only mouths
+  draining to the sea, so a lake states its rivers. A river naming a `level_station` and
+  `level_area` is a lake's outlet: its discharge is negative, removing what the other rivers bring
+  in less what the observed level says the lake stored.
 - **Open boundaries.** `OpenLateralBoundaryFromData`'s `inflow_timescale` relaxes by `Δt/τ` per step;
   compare that with the advective rate into the boundary cell, `u/Δx`, or the nudging does nothing.
   Too strong an inflow nudge reflects. A `BoundarySponge` damps what the open edges radiate.

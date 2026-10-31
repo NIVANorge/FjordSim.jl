@@ -12,6 +12,20 @@ Providing new structs and overloading existing/new methods on them, a user can c
 At the same time, since the entire simulation is a config type file, all the parts are in one place,
 compact, and readable.
 
+## Examples
+
+[`examples/oslofjorden.jl`](examples/oslofjorden.jl): April 2014 to December 2015.
+
+![Oslofjorden surface temperature, salinity and currents](artifacts/oslofjorden_surface.gif)
+
+[`examples/moro.jl`](examples/moro.jl): Møre og Romsdal, January 2023.
+
+![Møre og Romsdal surface temperature, salinity and currents](artifacts/moro_surface.gif)
+
+[`examples/lista.jl`](examples/lista.jl): 2024.
+
+![Lista surface temperature, salinity and currents](artifacts/lista_surface.gif)
+
 ## Installation
 
 ```bash

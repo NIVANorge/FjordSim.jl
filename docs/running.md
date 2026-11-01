@@ -40,6 +40,8 @@ julia --project -e 'using FjordSim; FjordSim.main(ARGS)' -- prepare_bathymetry -
 
 `scripts/surface_videos.jl` turns one file of a `SurfaceSnapshotWriter` (and, with `--sea-ice`, the
 matching `SeaIceSnapshotWriter` file) into one MP4 per variable; its header has the usage.
+`scripts/section_videos.jl` makes one MP4 of a `SnapshotWriter`'s records (all its parts, e.g. a
+year of daily snapshots) along a section that follows the deepest water between given points.
 
 ### From the REPL, and debugging a step
 

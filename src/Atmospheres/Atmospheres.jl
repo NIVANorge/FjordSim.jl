@@ -58,16 +58,22 @@ const ATMOSPHERE_VARIABLES = (
     (name = "lwrad", units = "W m-2", long_name = "Surface downwelling longwave radiation"),
 )
 
+# The optional solid precipitation. A file holding it holds liquid precipitation alone as
+# `precipitation`, since NumericalEarth adds the two.
+const SNOWFALL_VARIABLE =
+    (name = "snowfall", units = "kg m-2 s-1", long_name = "Solid precipitation flux")
+
 """
     atmosphere_variable_attributes(name)
 
 The `units` and `long_name` the prepared file records for `name`, or no attributes for a variable
-outside `ATMOSPHERE_VARIABLES`.
+outside `ATMOSPHERE_VARIABLES` and `SNOWFALL_VARIABLE`.
 """
 function atmosphere_variable_attributes(name)
-    index = findfirst(variable -> variable.name == name, ATMOSPHERE_VARIABLES)
+    variables = (ATMOSPHERE_VARIABLES..., SNOWFALL_VARIABLE)
+    index = findfirst(variable -> variable.name == name, variables)
     isnothing(index) && return Pair{String,String}[]
-    variable = ATMOSPHERE_VARIABLES[index]
+    variable = variables[index]
 
     return ["units" => variable.units, "long_name" => variable.long_name]
 end

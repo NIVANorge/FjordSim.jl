@@ -90,12 +90,14 @@ end
             :RunConfig,
             :CoupledHydrostaticModel,
             :SplitExplicitFreeSurfaceConfig,
+            :SlabSeaIce,
             :BoundarySponge,
             :RiverMouthMixing,
             :RiverMouthAdvection,
             :SnapshotWriter,
             :FieldSnapshotWriter,
             :SurfaceSnapshotWriter,
+            :SeaIceSnapshotWriter,
             :Station,
             :StationWriter,
             :FieldStationWriter,
@@ -2895,6 +2897,27 @@ end
             )
             @test_throws "temperature_station" river_series(quiet, times)
 
+            # A reading below fresh water's freezing point is a sensor under ice, not liquid water,
+            # and is raised to 0 °C; the rest of the series is untouched.
+            frozen_response = replace(
+                replace(replace(response, "2.1087.0" => "2.43.0"), "\"value\":4.5" => "\"value\":-1.3"),
+                "\"value\":null" => "\"value\":0.4",
+            )
+            write(
+                Rivers.nve_observations_path(cached, "2.43.0", Rivers.NVE_WATER_TEMPERATURE, 2020),
+                frozen_response,
+            )
+            frozen = NVERiversConfig(
+                data_root = tmp,
+                outlets = [NVERiver(
+                    id = 1, name = "Glomstadfoss", longitude = 11.3, latitude = 60.8,
+                    temperature_station = "2.43.0", mean_discharge = 100.0,
+                )],
+                years = [2020], api_key = "stated", maximum_inflow_velocity = 1.0e-3,
+            )
+            series = @test_logs (:info, r"Glomstadfoss: 1 daily temperature below 0 °C") river_series(frozen, times)
+            @test series["T"][1, :] == Float32[0, 0.4, 6.5]
+
             # A missing cache names the step that fills it rather than failing on a JSON read.
             absent = NVERiversConfig(
                 data_root = tmp, outlets = [glomma], years = [2019], api_key = "stated",
@@ -4243,6 +4266,13 @@ end
               "https://thredds.met.no/thredds/dodsC/nora3/2020/01/01/00/fc2020010100_004_fp.nc"
         @test atmospheres.nora3_monthly_filename(config, 2020, 3) == "NORA3_202003.nc"
 
+        # Snowfall is opt-in, and its monthly files keep the name.
+        snowy = test_atmosphere_config(snowfall = true)
+        @test atmospheres.nora3_monthly_filename(snowy, 2020, 3) == "NORA3_202003.nc"
+        @test !haskey(atmosphere_variable_names(config), "snowfall")
+        @test atmosphere_variable_names(snowy)["snowfall"] == "snowfall"
+        @test atmospheres.nora3_accumulated_variables(snowy)["snowfall"] == "snowfall_amount_acc"
+
         # A lead is one DAP2 request: the constraint is zero-based and percent-encoded, and the
         # response's arrays come back in file order, not the requested one, with the fill as NaN.
         subset = atmospheres.NORA3Subset(2:3, 5:7, zeros(2), zeros(3), zeros(2, 3), zeros(2, 3), zeros(2, 3))
@@ -4263,6 +4293,40 @@ end
         @test slabs["b"][1, 1] == 11
         @test isnan(slabs["b"][2, 3])
         @test_throws ErrorException atmospheres.parse_dods(response, ["a", "c"], subset)
+
+        # One hour accumulating 3 kg/m² of precipitation, 2 of it solid: with snowfall the liquid
+        # part is written as precipitation, floored at zero where rounding puts solid above total;
+        # without, precipitation is the total.
+        mktempdir() do tmp
+            for (case, expected_precipitation) in ((config, 3), (snowy, 1))
+                accumulated = atmospheres.nora3_accumulated_variables(case)
+                slab(value) = fill(Float32(value), 2, 3)
+                previous = Dict(source => slab(0) for source in values(accumulated))
+                slabs = Dict(source => slab(3600) for source in values(accumulated))
+                slabs["precipitation_amount_acc"] = slab(3 * 3600)
+                slabs[atmospheres.NORA3_SNOWFALL_SOURCE] = slab(2 * 3600)
+                slabs[atmospheres.NORA3_SNOWFALL_SOURCE][1, 1] = 3 * 3600 + 1
+                for source in values(atmospheres.NORA3_INSTANTANEOUS_VARIABLES)
+                    slabs[source] = slab(1)
+                end
+                slabs[atmospheres.NORA3_EASTWARD_SOURCE] = slab(1)
+                slabs[atmospheres.NORA3_NORTHWARD_SOURCE] = slab(0)
+
+                NCDataset(joinpath(tmp, "$(case.snowfall).nc"), "c") do output
+                    variables = atmospheres.nora3_prepared_variables(case)
+                    atmospheres.define_monthly_file!(output, subset, [DateTime(2020, 1, 1)], variables)
+                    atmospheres.write_step!(output, 1, slabs, previous, subset, accumulated)
+
+                    @test output["precipitation"][2, 2, 1] == expected_precipitation
+                    @test output["swrad"][2, 2, 1] == 1
+                    @test haskey(output, "snowfall") == case.snowfall
+                    if case.snowfall
+                        @test output["snowfall"][2, 2, 1] == 2
+                        @test output["precipitation"][1, 1, 1] == 0
+                    end
+                end
+            end
+        end
 
         # The rotation angle is measured from east to the source grid's local x axis.
         east_aligned_longitude = [10.0 10.0; 10.1 10.1; 10.2 10.2]
@@ -4440,6 +4504,50 @@ end
             @test dataset.all_dates == dates
             @test_nowarn NORA3PrescribedAtmosphere(CPU(), Float32; dataset)
             @test_nowarn NORA3PrescribedRadiation(CPU(), Float32; dataset)
+            # In the grid's float type: Float64 beside a Float32 grid leaves NumericalEarth's air–ice
+            # skin temperature uninferable, which fails the GPU compile.
+            surfaces = NORA3PrescribedRadiation(CPU(), Float32; dataset).surface_properties
+            @test surfaces.sea_ice.albedo isa Float32 && surfaces.sea_ice.emissivity isa Float32
+            @test surfaces.ocean.albedo isa Float32 && surfaces.ocean.emissivity isa Float32
+            @test isnothing(prescribed_atmosphere(config, CPU()).precipitation_flux.snow)
+
+            # A month holding total precipitation is refused by a snowfall config, and a month
+            # holding snowfall by a config without, since either would get the snow wrong.
+            @test_throws ErrorException regrid_atmosphere(
+                grid,
+                test_atmosphere_config(data_root = tmp, snowfall = true, output_file = "snowy.nc"),
+            )
+            snowy = test_atmosphere_config(;
+                data_root = tmp,
+                output_directory = "nora3_snow",
+                snowfall = true,
+                output_file = "snowy.nc",
+            )
+            mkpath(atmosphere_directory(snowy))
+            snowy_source = joinpath(atmosphere_directory(snowy), "NORA3_202001.nc")
+            cp(source_file, snowy_source)
+            NCDataset(snowy_source, "a") do ds
+                written = defVar(ds, "snowfall", Float32, ("x", "y", "time"))
+                for step in 1:length(dates)
+                    written[:, :, step] = Float32.(analytic.(x_matrix, y_matrix) .+ 100step)
+                end
+            end
+            @test atmospheres.nora3_month_matches(snowy, snowy_source)
+            @test !atmospheres.nora3_month_matches(config, snowy_source)
+            @test_throws ErrorException regrid_atmosphere(
+                grid,
+                test_atmosphere_config(data_root = tmp, output_directory = "nora3_snow"),
+            )
+
+            # ...and a snowfall config reading its own months prepares `snowfall`, which the
+            # atmosphere carries as snow.
+            snowy_result = regrid_atmosphere(grid, snowy)
+            @test "snowfall" in snowy_result.variables
+            snow = prescribed_atmosphere(snowy, CPU()).precipitation_flux.snow
+            @test snow isa FieldTimeSeries
+            prepared_snowfall = NCDataset(ds -> Float32.(ds["snowfall"][:, :, 1]), atmosphere_path(snowy))
+            @test interior(snow, :, :, 1, 1) ≈ prepared_snowfall
+            @test prepared_snowfall ≉ NCDataset(ds -> Float32.(ds["precipitation"][:, :, 1]), atmosphere_path(snowy))
 
             nora3 = FjordSim.Atmospheres.NORA3
             series(; kw...) = nora3.NORA3FieldTimeSeries(
@@ -4969,6 +5077,93 @@ end
         rewind_clock!(ClockHolder(clock))
         @test clock.time == 0
         @test clock.iteration == 0
+    end
+
+    @testset "slab sea ice" begin
+        model_sea_ice = FjordSim.Simulations.model_sea_ice
+        time_step! = Oceananigans.TimeSteppers.time_step!
+
+        # A plain component passes through untouched.
+        liquidus = FreezingLimitedOceanTemperature()
+        @test model_sea_ice(liquidus, nothing, nothing) === liquidus
+
+        # Float32, because `sea_ice_simulation`'s own default heat flux is in the global float type
+        # and fails against the snow slab on such a grid.
+        grid = LatitudeLongitudeGrid(
+            CPU(), Float32;
+            size = (4, 4, 2),
+            halo = (4, 4, 4),
+            longitude = (10, 11),
+            latitude = (60, 61),
+            z = (-20, 0),
+        )
+        ocean = ocean_simulation(
+            grid;
+            momentum_advection = nothing,
+            tracer_advection = nothing,
+            closure = nothing,
+            coriolis = nothing,
+        )
+        sea_ice = model_sea_ice(SlabSeaIce(ice_salinity = 0, conductivity = 2), grid, ocean)
+        @test sea_ice.model.ice_thermodynamics.internal_heat_flux.conductivity === 2.0f0
+        @test eltype(sea_ice.model.ice_consolidation_thickness) === Float32
+        @test eltype(sea_ice.model.sea_ice_density) === Float32
+        @test eltype(sea_ice.model.snow_density) === Float32
+        @test isnothing(sea_ice.model.dynamics)
+        @test sea_ice.model.clock isa Oceananigans.TimeSteppers.Clock{Float64}
+
+        # Fresh water supercooled after the first step, since supercooling present when the coupled
+        # model initializes is not passed to the ice. Freezing it back to 0 °C must turn all the
+        # released heat into ice and take no salt from the water.
+        coupled = OceanSeaIceModel(ocean, sea_ice)
+        set!(ocean.model; T = 1, S = 0)
+        time_step!(coupled, 600)
+        supercooling = 0.5
+        set!(ocean.model; T = -supercooling, S = 0)
+        for _ in 1:3
+            time_step!(coupled, 600)
+        end
+
+        ocean_properties = coupled.interfaces.ocean_properties
+        phase_transitions = sea_ice.model.phase_transitions
+        released = ocean_properties.reference_density * ocean_properties.heat_capacity * supercooling * 20
+        ice_volume = interior(sea_ice.model.ice_thickness) .* interior(sea_ice.model.ice_concentration)
+        expected = released / (phase_transitions.density * phase_transitions.reference_latent_heat)
+        @test all(isapprox.(ice_volume, expected; rtol = 0.01))
+        @test all(iszero, interior(ocean.model.tracers.S))
+        @test all(iszero, interior(ocean.model.tracers.T))
+
+        # The sea-ice snapshot writer goes on the sea-ice simulation, which the coupled model steps,
+        # and splits its file as Oceananigans names the parts: the first renamed `_part1` at the
+        # split, the next `_part2`. The VM's sync relies on those names to find finished parts.
+        writer = SeaIceSnapshotWriter(
+            name = :sea_ice,
+            output_file = "snapshots_sea_ice.jld2",
+            variables = (:h, :ℵ),
+            interval = 600,
+            split_times = [sea_ice.model.clock.time + 900],
+            overwrite_existing = true,
+        )
+        @test_throws ArgumentError FjordSim.Simulations.sea_ice_simulation_of(liquidus, writer)
+        mktempdir() do tmp
+            run_config = test_run_config(; results_root = tmp)
+            simulation = Simulation(coupled; Δt = 600, verbose = false)
+            attach_writer!(simulation, writer, run_config, 1)
+            @test haskey(sea_ice.output_writers, :sea_ice)
+            for _ in 1:3
+                time_step!(simulation)
+            end
+
+            filepath = FjordSim.Simulations.loop_output_path(writer, run_config, 1)
+            stem = splitext(filepath)[1]
+            @test !isfile(filepath)
+            @test isfile(stem * "_part1.jld2")
+            jldopen(stem * "_part2.jld2") do file
+                iterations = sort(parse.(Int, filter(name -> all(isdigit, name), keys(file["timeseries/h"]))))
+                @test !isempty(iterations)
+                @test file["timeseries/h/$(last(iterations))"] ≈ interior(sea_ice.model.ice_thickness)
+            end
+        end
     end
 
     @testset "initial conditions" begin

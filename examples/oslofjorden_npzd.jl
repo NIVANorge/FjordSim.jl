@@ -633,6 +633,7 @@ FjordConfig(
                 # *auxiliary* field rather than a model field, so it is not nameable here.
                 variables = (:T, :S, :u, :v, :e, :N, :P, :Z, :D),
                 interval = 3hour,
+                split_times        = Float64[],
                 overwrite_existing = true,
             ),
             FieldSnapshotWriter(

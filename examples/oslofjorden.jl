@@ -444,6 +444,7 @@ FjordConfig(
                 # upstream bug in the user-output path, not a configuration mistake.
                 variables          = (:T, :S, :u, :v, :e),
                 interval           = 3hour,
+                split_times        = Float64[],
                 overwrite_existing = true,
             ),
             # `η` in JLD2 because it cannot go in the NetCDF file: Oceananigans' NetCDF writer

@@ -260,8 +260,11 @@ gcp/fjordsim-gcp up && gcp/fjordsim-gcp bootstrap
 gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020 --resume
 ```
 
-`--resume` stages `results/<fjord>/` back down and sets `pickup = true` (`gcp/resume.jl`), so the
-run continues from the newest checkpoint rather than restarting. This only works if the setup names
+`--resume` stages the newest checkpoint in `results/<fjord>/` back down and sets `pickup = true`
+(`gcp/resume.jl`), so the run continues from it rather than restarting. Nothing else is staged: the
+resumed writers start files of their own, and the finished output stays in the bucket. The sync
+keeps only the two newest checkpoints in the bucket — the newest, and one in case its upload is
+incomplete — since every one of `mjosa`'s is 580 MB. This only works if the setup names
 a `CheckpointWriter` — `examples/oslofjorden.jl` and `examples/drammensfjorden.jl` both do.
 
 Checkpoint filenames carry no run tag and are scoped to `results_root`, so **two live runs must not
@@ -284,7 +287,11 @@ gcp/fjordsim-gcp ssh               # the VM is a normal box; docker ps, nvidia-s
 ```
 
 Results sync up every 10 minutes while the run is in flight, so `pull-results` mid-run gives you
-something to plot.
+something to plot. A writer with `split_times` starts a new file part at each of them, and every
+part whose successor exists is finished: the sync uploads it and deletes it from the VM's disk, so
+the disk holds only the parts being written. A year of output in one file fills the 200 GB disk —
+`mjosa`'s 3-hourly 3D snapshots reached 110 GB in 185 days — so give a long run's writers
+`split_times` (monthly in `examples/mjosa.jl`).
 
 ### When a run finishes
 

@@ -636,6 +636,7 @@ FjordConfig(
                 output_file        = "snapshots_ocean.nc",
                 variables          = (:T, :S, :u, :v, :e),
                 interval           = 1day,
+                split_times        = Float64[],
                 overwrite_existing = true,
             ),
             FieldSnapshotWriter(

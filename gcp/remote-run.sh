@@ -45,6 +45,54 @@ sync_results() {
     gcloud storage rsync -r "$RESULTS/$FJORD" "$BUCKET/results/$FJORD" --quiet
 }
 
+# Keep the two newest checkpoints in the bucket and delete the rest. A resume reads only the newest;
+# the other stands in should that upload be incomplete. Unpruned, `mjosa`'s year left 18 of them,
+# 9.8 GB. `sort -V` orders the loop first, then the iteration, as `resume_loop` picks them.
+prune_bucket_checkpoints() {
+    owns_results || return 0
+    local checkpoints
+    mapfile -t checkpoints < <(gcloud storage ls "$BUCKET/results/$FJORD/checkpoint_*.jld2" 2>/dev/null | sort -V)
+    (( ${#checkpoints[@]} > 2 )) || return 0
+    gcloud storage rm "${checkpoints[@]:0:$(( ${#checkpoints[@]} - 2 ))}" --quiet
+}
+
+# Output files a writer has finished. Oceananigans splits a writer's file at its `split_times` by
+# renaming `<name>.<ext>` to `<name>_part1.<ext>` and writing `_part2`, `_part3`, ..., so a part
+# whose successor exists is complete.
+completed_parts() {
+    local file stem part extension
+    for file in "$RESULTS/$FJORD"/*_part*.nc "$RESULTS/$FJORD"/*_part*.jld2; do
+        [[ -f "$file" ]] || continue
+        extension="${file##*.}"
+        stem="${file%_part*}"
+        part="${file##*_part}"
+        part="${part%.*}"
+        [[ "$part" =~ ^[0-9]+$ ]] || continue
+        [[ -f "${stem}_part$((part + 1)).$extension" ]] && printf '%s\n' "$file"
+    done
+}
+
+# Upload each completed part and delete it from the VM's disk, which a year of output can fill:
+# `mjosa`'s 3-hourly 3D snapshots reach 110 GB in 185 days, on a 200 GB disk. A part that fails to
+# upload stays for the next round. The first part was synced under its unsuffixed
+# name before the split renamed it, so that partial copy goes from the bucket.
+free_completed_parts() {
+    owns_results || return 0
+    [[ -d "$RESULTS/$FJORD" ]] || return 0
+    local parts file extension stem
+    mapfile -t parts < <(completed_parts)
+    for file in "${parts[@]}"; do
+        gcloud storage cp "$file" "$BUCKET/results/$FJORD/" --quiet || continue
+        sudo rm -f "$file"
+        echo "moved $(basename "$file") to $BUCKET/results/$FJORD"
+        if [[ "$file" == *_part1.* ]]; then
+            extension="${file##*.}"
+            stem="$(basename "${file%_part1.*}")"
+            gcloud storage rm "$BUCKET/results/$FJORD/$stem.$extension" --quiet 2>/dev/null || true
+        fi
+    done
+}
+
 # Raw downloads, mid-job, so a preemption loses minutes of them rather than the whole job. Files in
 # subdirectories are complete once they have their final name: every downloader writes `<name>.tmp`
 # and renames it, and the Geonorge archive is unpacked in a `*_staging` directory. Top-level
@@ -62,6 +110,7 @@ finish() {
 
     echo "=== final stage-out ==="
     sync_results || true
+    prune_bucket_checkpoints || true
     # Newly prepared inputs are a product too: a prep job exists to put them in the bucket.
     local data_synced=false
     gcloud storage rsync -r "$DATA/$FJORD" "$BUCKET/data/$FJORD" --quiet && data_synced=true
@@ -128,7 +177,13 @@ if [[ "$RESUME" == "true" ]]; then
     # The container writes as root, so a directory an earlier launch left on this disk — a VM
     # restarted rather than recreated, as after host maintenance — refuses the stage-in otherwise.
     [[ -d "$RESULTS/$FJORD" ]] && sudo chown -R "$(id -u):$(id -g)" "$RESULTS/$FJORD"
-    stage_in "$BUCKET/results/$FJORD" "$RESULTS/$FJORD"
+    # Only the newest checkpoint: a resume reads nothing else, and its writers start files of their
+    # own, so the finished output stays in the bucket rather than refilling this disk.
+    newest_checkpoint="$(gcloud storage ls "$BUCKET/results/$FJORD/checkpoint_*.jld2" 2>/dev/null | sort -V | tail -1)"
+    [[ -n "$newest_checkpoint" ]] || { echo "no checkpoint under $BUCKET/results/$FJORD to resume" >&2; exit 1; }
+    mkdir -p "$RESULTS/$FJORD"
+    echo "staging $newest_checkpoint -> $RESULTS/$FJORD"
+    gcloud storage cp "$newest_checkpoint" "$RESULTS/$FJORD/" --quiet
 elif [[ "$STEPS" == *run_simulation* ]]; then
     # A fresh run starts from an empty results directory. What an earlier run left on this disk was
     # synced when it finished, and `fjordsim-gcp run` has checked that the bucket holds no
@@ -174,7 +229,13 @@ if [[ "$USE_GPU" == "true" ]]; then
         --project=/workspace /workspace/gcp/preflight.jl
 fi
 
-( while true; do sleep 600; sync_results || true; sync_downloads || true; done ) &
+( while true; do
+    sleep 600
+    free_completed_parts || true
+    sync_results || true
+    prune_bucket_checkpoints || true
+    sync_downloads || true
+done ) &
 SYNC_PID=$!
 
 for step in ${STEPS//,/ }; do

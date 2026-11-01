@@ -48,6 +48,7 @@ const NORA3_variable_names = (
     :temperature,
     :eastward_velocity,
     :northward_velocity,
+    :snowfall_flux,
 )
 
 # NumericalEarth's variable symbol => the prepared file's variable name. The prepared names are
@@ -62,6 +63,7 @@ const NORA3_dataset_variable_names = Dict(
     :temperature => "air_temperature_2m",
     :eastward_velocity => "u_wind_10m",
     :northward_velocity => "v_wind_10m",
+    :snowfall_flux => "snowfall",
 )
 
 """
@@ -320,6 +322,7 @@ end
                               time_indexing = Cyclical(),
                               reference_date = nothing,
                               surface_layer_height = 10,
+                              snowfall = false,
                               other_kw...)
 
 Return a `PrescribedAtmosphere` backed by the six prepared NORA3 surface fields.
@@ -327,7 +330,8 @@ Return a `PrescribedAtmosphere` backed by the six prepared NORA3 surface fields.
 `start_date` and `end_date` select which records to load; `reference_date` sets the instant the
 time axis is zeroed at, defaulting to the first selected record. `surface_layer_height` is the
 elevation the prescribed variables are taken to sit at, which the similarity-theory solver reads
-as the height of its lowest atmospheric level.
+as the height of its lowest atmospheric level. `snowfall = true` reads the file's `snowfall` as
+snow, its `precipitation` then being the liquid part.
 """
 function NORA3PrescribedAtmosphere(
     architecture = CPU(),
@@ -339,6 +343,7 @@ function NORA3PrescribedAtmosphere(
     time_indexing = Cyclical(),
     reference_date = nothing,
     surface_layer_height = 10,  # meters
+    snowfall = false,
     other_kw...,
 )
 
@@ -357,9 +362,11 @@ function NORA3PrescribedAtmosphere(
 
     velocities = (u = ua, v = va)
 
-    # NORA3 carries rain only, and `PrescribedPrecipitationFlux` reads a `nothing` snow component as
-    # "this dataset does not represent snowfall", so there is no placeholder field to build.
-    precipitation_flux = PrescribedPrecipitationFlux(; rain = Fra)
+    # Without `snowfall` the prepared `precipitation` is the total, read as rain, and
+    # `PrescribedPrecipitationFlux` reads a `nothing` snow component as "this dataset does not
+    # represent snowfall", so there is no placeholder field to build.
+    snow = snowfall ? NORA3FieldTimeSeries(:snowfall_flux, architecture, FT; kw...) : nothing
+    precipitation_flux = PrescribedPrecipitationFlux(; rain = Fra, snow)
 
     surface_layer_height = convert(FT, surface_layer_height)
 
@@ -388,8 +395,8 @@ end # function
                              backend = NORA3NetCDFBackend(10),
                              time_indexing = Cyclical(),
                              reference_date = nothing,
-                             ocean_surface = SurfaceRadiationProperties(0.05, 0.97),
-                             sea_ice_surface = SurfaceRadiationProperties(0.7, 1.0),
+                             ocean_surface = SurfaceRadiationProperties(FT(0.05), FT(0.97)),
+                             sea_ice_surface = SurfaceRadiationProperties(FT(0.7), FT(1)),
                              stefan_boltzmann_constant = default_stefan_boltzmann_constant,
                              other_kw...)
 
@@ -399,6 +406,10 @@ longwave `NORA3FieldTimeSeries`.
 Both fluxes are downwelling, not net: `PrescribedRadiation` applies `ocean_surface`'s own albedo
 and emissivity, so a net flux would count the albedo twice. `reference_date` zeroes the time axis
 exactly as it does for `NORA3PrescribedAtmosphere`.
+
+The surfaces' albedo and emissivity are in `FT`. As Float64 beside a Float32 grid they make the
+sea-ice skin temperature a `Union` NumericalEarth's air–ice kernel cannot infer, and the GPU compile
+fails on a dynamic `+`.
 """
 function NORA3PrescribedRadiation(
     architecture = CPU(),
@@ -409,8 +420,8 @@ function NORA3PrescribedRadiation(
     backend = NORA3NetCDFBackend(10),
     time_indexing = Cyclical(),
     reference_date = nothing,
-    ocean_surface = SurfaceRadiationProperties(0.05, 0.97),
-    sea_ice_surface = SurfaceRadiationProperties(0.7, 1.0),
+    ocean_surface = SurfaceRadiationProperties(FT(0.05), FT(0.97)),
+    sea_ice_surface = SurfaceRadiationProperties(FT(0.7), FT(1)),
     stefan_boltzmann_constant = default_stefan_boltzmann_constant,
     other_kw...,
 )

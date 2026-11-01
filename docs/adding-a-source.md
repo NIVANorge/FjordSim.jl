@@ -202,27 +202,29 @@ each:
 | Supertype | Accessor | Required hooks |
 |---|---|---|
 | `AbstractCallbackConfig` | `callbacks` (a tuple) | `attach_callback!(simulation, callback, config)` |
-| `AbstractWriterConfig` | `writers` (a tuple) | `attach_writer!(simulation, writer, config, loop)`; optionally `checkpoint_trait`, `output_path_trait` and `station_output`, all defaulting to the negative. `SnapshotWriter` (NetCDF), `FieldSnapshotWriter` (JLD2, for z-reduced fields NetCDF rejects), `SurfaceSnapshotWriter` (JLD2, the top level only, split into file parts) and `CheckpointWriter` are the built-ins; `StationWriter` and `FieldStationWriter`, whose `station_output` is `true`, are what `validate_simulation` scores |
+| `AbstractWriterConfig` | `writers` (a tuple) | `attach_writer!(simulation, writer, config, loop)`; optionally `checkpoint_trait`, `output_path_trait` and `station_output`, all defaulting to the negative. `SnapshotWriter` (NetCDF), `FieldSnapshotWriter` (JLD2, for z-reduced fields NetCDF rejects), `SurfaceSnapshotWriter` (JLD2, the top level only, split into file parts), `SeaIceSnapshotWriter` (JLD2, the sea-ice model's fields) and `CheckpointWriter` are the built-ins; `StationWriter` and `FieldStationWriter`, whose `station_output` is `true`, are what `validate_simulation` scores |
 | `AbstractTimeSteppingConfig` | `time_stepping` | `attach_time_stepping!(simulation, config)`, `initial_time_step(config)` |
 | `AbstractInitialConditionsConfig` | `initial_conditions` (or a plain `NamedTuple`) | `resolve_initial_conditions(initial_conditions, grid, config, tracers)` → the `NamedTuple` `set!` takes. `config` is the whole setup, so a source reads whichever component holds its data. `FromForcing`, `FromInitialState` and `FromResults` are the built-ins |
 
 A writer needs an `output_file` field only when its `output_path_trait` is `NamesOutputFile`; on any
 other, `results_path` raises a stated `ArgumentError` rather than failing on a missing field.
 
-`CoupledHydrostaticModel`, the built-in `AbstractModelConfig`, nests two further supertypes of its
-own, so a different free surface or closure is a new subtype and a new method, not an edit to
-`coupled_model`:
+`CoupledHydrostaticModel`, the built-in `AbstractModelConfig`, nests three further supertypes of its
+own, so a different free surface, closure or sea ice is a new subtype and a new method, not an edit
+to `coupled_model`:
 
 | Supertype | Field | Required hook | Built-in |
 |---|---|---|---|
 | `AbstractFreeSurfaceConfig` | `free_surface` | `free_surface(config, grid)` → the free-surface object `coupled_model` passes to `HydrostaticFreeSurfaceModel` | `SplitExplicitFreeSurfaceConfig` |
 | `AbstractClosureConfig` | `closure` | `model_closure(config, grid, boundary_data_config, river_columns)` → the closure, or tuple of closures, it passes | `BoundarySponge`, `RiverMouthMixing` |
+| `AbstractSeaIceConfig` | `sea_ice` | `model_sea_ice(config, grid, ocean)` → the sea-ice component it passes to `OceanSeaIceModel`, built next to the ocean simulation `ocean` | `SlabSeaIce` |
 
 They differ in one way that matters. `free_surface` is *always* a config — there is nothing else
 it could hold. `closure` holds a config **or** a pre-built Oceananigans closure, and usually the
 latter; `model_closure`'s fallback is the identity, so the two shapes are resolved by dispatch and a
-setup naming a plain closure needs no change and never sees the hook. `model_biogeochemistry` has the
-same identity fallback, so a `nothing` biogeochemistry passes through. Same pattern as
+setup naming a plain closure needs no change and never sees the hook. `sea_ice` is the same:
+`model_sea_ice`'s fallback passes a `FreezingLimitedOceanTemperature` through.
+`model_biogeochemistry` has the same identity fallback, so a `nothing` biogeochemistry passes through. Same pattern as
 `initial_conditions` and `resolve_initial_conditions`.
 
 `model_closure` takes `boundary_data_config` as well as the grid because a closure may act on the open

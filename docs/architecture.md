@@ -311,6 +311,15 @@ CF `time`, the eight names and units in `ATMOSPHERE_VARIABLES`. Air temperature 
 both radiative fluxes are **downwelling**: `PrescribedRadiation` applies its own albedo, so a net
 flux would count it twice.
 
+`SNOWFALL_VARIABLE` is the one optional addition. NumericalEarth adds rain and snow, so a file
+holding `snowfall` holds only the liquid part as `precipitation`. `NORA3Config(snowfall = true)`
+reads NORA3's `snowfall_amount_acc` (snow, graupel and hail, accumulated like
+`precipitation_amount_acc`, which includes them) and writes rain as the difference, floored at zero.
+Its monthly files keep their names, so `nora3_month_matches` reads whether each holds `snowfall`: the
+download fetches a month with the other setting again, and the prepare refuses one, since total
+precipitation read as rain beside a snowfall counts the snow twice and liquid read as the total
+loses it.
+
 Interpolation is deliberately not shared with `Regridding`: that machinery is 3D, masked and
 depth-oriented, atmospheric fields are 2D and defined over land, and the prepared grid is ~50x60.
 The cost is ~15 duplicated lines of ArchGDAL transform.
@@ -653,6 +662,32 @@ points at the setup file.
 
 `free_surface` is a config with its own hook because `SplitExplicitFreeSurface` needs the grid.
 
+### `sea_ice` and `SlabSeaIce`
+
+`sea_ice` holds a built component or an `AbstractSeaIceConfig`, resolved by
+`model_sea_ice(sea_ice, grid, ocean)` whose fallback is the identity. `SlabSeaIce` is NumericalEarth's
+`sea_ice_simulation` without dynamics. Its arguments are fixed rather than defaulted:
+
+- `internal_heat_flux` in the grid's float type: upstream's default is in
+  `Oceananigans.defaults.FloatType`, and on a Float32 grid the coupled model's constructor then fails
+  with a `MethodError` in `IceSnowConductiveFlux`.
+- Every scalar — ice salinity, consolidation thickness (0.05 m), ice and snow density (900 and
+  330 kg m⁻³, NumericalEarth's defaults) — in the grid's float type, since ClimaSeaIce keeps each
+  one's own type in its `ConstantField`.
+- The clock, `model_clock()`, the ocean's: Float64 time and kernel time.
+- `dynamics = nothing`. The ice then exerts no stress on the water; the atmosphere's stress reaches
+  only the open fraction of each cell.
+
+On the GPU, a Float64 beside Float32 values in NumericalEarth's air–ice kernel fails the compile
+with `InvalidIRError` (a dynamic `+`): the skin-temperature solve's `ifelse` then joins a Float32
+and a Float64 into a `Union` inference gives up on. Float64 albedo and emissivity do this, so
+`NORA3PrescribedRadiation` builds them in `FT`. The ice–ocean flux's Float64 coefficients infer
+concretely and do not.
+
+Any supercooling in the ocean before the coupled model's first step is reset to freezing without
+reaching the ice, so a run must start at or above freezing. From then on frazil heat goes into ice
+exactly: 20 m of fresh water 0.5 °C below freezing froze to 0.135 m, the test's balance within 1 %.
+
 ### `closure` and `BoundarySponge`
 
 `closure` holds a built Oceananigans closure or an `AbstractClosureConfig`, resolved by
@@ -723,6 +758,9 @@ the first.
   asks for a `z_aaf` the grid already owns, and `create_spatial_dimensions!` raises.
   `FieldSnapshotWriter` and `FieldStationWriter` write the same thing to JLD2. The split is by what a
   format can hold.
+- **`SeaIceSnapshotWriter`** is `FieldSnapshotWriter` on the sea-ice simulation, whose fields (`h`,
+  `ℵ`, `hs`, …) the ocean model does not hold. The coupled model steps that simulation with
+  `time_step!(sea_ice, Δt)`, which runs its writers as the ocean's run.
 - **`StationWriter`** writes whole-column profiles at named positions, one file per station
   (Oceananigans takes one `indices` per file), at the cadence validation needs: 150 MB of station
   series beside 59 GB of daily 3D fields on the Oslofjord validation run. A dry station cell searches

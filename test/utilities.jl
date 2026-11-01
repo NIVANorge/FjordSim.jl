@@ -330,8 +330,9 @@ test_snapshot_writer(;
     output_file = "snapshots_test.nc",
     variables = (:T, :S, :u, :v),
     interval = 1hour,
+    split_times = Float64[],
     overwrite_existing = true,
-) = SnapshotWriter(; name, output_file, variables, interval, overwrite_existing)
+) = SnapshotWriter(; name, output_file, variables, interval, split_times, overwrite_existing)
 
 test_checkpoint_writer(; interval = 30days, cleanup = true) =
     CheckpointWriter(; interval, cleanup)

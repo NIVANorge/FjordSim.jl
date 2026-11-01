@@ -231,8 +231,15 @@ columns. No observations cover those bays.
       stays smooth in the outlet's columns.
 - [ ] Gudbrandsdalslågen, three quarters of the inflow, has no 2025 water temperature after August
       (Hovdefossen `2.656.0` ends 2025-08-19), so it carries Glomma's at Glomstadfoss. Replace the
-      proxy if NVE fills the series.
-- [ ] No ice model: winter heat loss and wind mixing are too strong wherever the lake freezes.
+      proxy if NVE fills the series. Glomma reads down to −1.3 °C in winter; `add_rivers` raises every
+      river temperature below 0 °C to 0 °C.
+- [ ] Ice: the setup runs `SlabSeaIce` (no drift) under NORA3 snowfall, which froze the Mjøsa grid
+      on CPU from a near-freezing surface layer under 2025-01-01 NORA3. Still to do:
+  - [ ] Re-download 2025 for `snowfall = true` (every month is fetched again, ~1.5 h on a laptop)
+        and re-prepare the atmosphere.
+  - [ ] A GPU test: real sea ice takes NumericalEarth's own flux path, not the
+        `NoSeaIceInterfaceModel` copy in `src/FjordSim.jl`.
+  - [ ] Score the ice against NVE's freeze-up and break-up dates.
 - [ ] Score the run against NIVA's Mjøsa monitoring profiles (Skreia, Brøttum, Furnes) in Vannmiljø.
 
 ## Design

@@ -5,8 +5,7 @@
 #
 # z = 0 is the lake surface, 123 m above sea level and regulated between about 120 and 123 m; the
 # depth map's depths are below it. No edge is open, and the water is fresh (S = 0 throughout).
-# There is no ice model: `FreezingLimitedOceanTemperature` keeps the water at or above 0 °C but does
-# not insulate it, so winter heat loss and wind mixing are too strong wherever the lake freezes.
+# Ice is a slab that grows and melts in place under NORA3's snowfall; it never drifts.
 #
 # # Preparing and running it
 #
@@ -24,13 +23,15 @@ using Oceananigans:
     WENO,
     WENOVectorInvariant
 using Oceananigans.TurbulenceClosures: HorizontalScalarBiharmonicDiffusivity
-using Oceananigans.Units: days, hour, hours, minutes, second
-using Dates: DateTime
+using Oceananigans.Units: day, days, hour, hours, minutes, second
+using Dates: DateTime, Second
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
-using NumericalEarth: FreezingLimitedOceanTemperature
 
 data_root = fjord_data_root("mjosa")
 FT = Float32
+start_date = DateTime(2025, 1, 1)
+# Every writer starts a new file on the 1st of each month, so a finished month can leave the VM.
+monthly_splits = [(DateTime(2025, month, 1) - start_date) / Second(1) for month in 2:12]
 
 # Every gauge below is scaled by one factor, so the gauged rivers carry the whole 16 186 km² of
 # land draining to the lake (16 555 km² catchment less the 369 km² lake) rather than the 13 079 km²
@@ -141,6 +142,8 @@ FjordConfig(
         resolution       = 0.02,
         padding          = 0.1,
         years            = [2025],
+        # Snow on the ice, which insulates it far better than ice does.
+        snowfall         = true,
     ),
     model_config = CoupledHydrostaticModel(
         # TEOS-10 at S = 0 has fresh water's density maximum near 4 °C.
@@ -164,7 +167,8 @@ FjordConfig(
         momentum_advection = WENOVectorInvariant(FT),
         tracers            = (:T, :S),
         coriolis           = HydrostaticSphericalCoriolis(FT),
-        sea_ice            = FreezingLimitedOceanTemperature(FT),
+        # Fresh ice, so freezing takes no salt from the lake; 2 W m⁻¹ K⁻¹ is ClimaSeaIce's value.
+        sea_ice            = SlabSeaIce(ice_salinity = 0, conductivity = 2),
         free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),
         extra_kwargs       = (;),
     ),
@@ -176,18 +180,31 @@ FjordConfig(
         results_root       = fjord_results_root("mjosa"),
         architecture       = :auto,
         writers = (
+            # Daily: one record of the four 3D fields is 74 MB, so ~2.2 GB a month.
             SnapshotWriter(
                 name               = :ocean,
                 output_file        = "snapshots_ocean.nc",
                 variables          = (:T, :S, :u, :v),
-                interval           = 3hours,
+                interval           = 1day,
+                split_times        = monthly_splits,
                 overwrite_existing = true,
             ),
-            FieldSnapshotWriter(
+            # The top level of T, u and v, and `η`, hourly: ~1.4 GB a month. S is 0 in the lake.
+            SurfaceSnapshotWriter(
                 name               = :surface,
                 output_file        = "snapshots_surface.jld2",
-                variables          = (:η,),
-                interval           = 3hours,
+                variables          = (:η, :T, :u, :v),
+                interval           = 1hour,
+                split_times        = monthly_splits,
+                overwrite_existing = true,
+            ),
+            # Ice and snow thickness and ice concentration, hourly: ~1.1 GB a month.
+            SeaIceSnapshotWriter(
+                name               = :sea_ice,
+                output_file        = "snapshots_sea_ice.jld2",
+                variables          = (:h, :ℵ, :hs),
+                interval           = 1hour,
+                split_times        = monthly_splits,
                 overwrite_existing = true,
             ),
             CheckpointWriter(interval = 12hours, cleanup = true),
@@ -202,7 +219,7 @@ FjordConfig(
         # At rest and uniform: on 1 January a deep dimictic lake is near-isothermal, its deep
         # water at 3.5-4 °C, and no open source has a lake-wide profile for the day.
         initial_conditions = (T = 3.5, S = 0.0),
-        start_date         = DateTime(2025, 1, 1),
+        start_date         = start_date,
         stop_time          = 365days,
         loops              = 1,
         pickup             = false,

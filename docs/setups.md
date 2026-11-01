@@ -172,7 +172,13 @@ spacing have to be worked out for the new grid rather than copied:
   river network, and `outlets` become overrides that attach gauges. Discovery finds only mouths
   draining to the sea, so a lake states its rivers. A river naming a `level_station` and
   `level_area` is a lake's outlet: its discharge is negative, removing what the other rivers bring
-  in less what the observed level says the lake stored.
+  in less what the observed level says the lake stored. A river temperature below 0 °C, a sensor under ice,
+  is raised to 0 °C.
+- **Sea ice.** `sea_ice = FreezingLimitedOceanTemperature(FT)` only holds the water at or above
+  freezing. `SlabSeaIce(ice_salinity = ..., conductivity = ...)` grows ice that insulates the water
+  and shields it from the wind, without drifting. In fresh water `ice_salinity` must be 0, or freezing
+  drives the salinity negative. Without snow the ice grows too thick, so set
+  `NORA3Config(snowfall = true)` too, which needs its own download.
 - **Open boundaries.** `OpenLateralBoundaryFromData`'s `inflow_timescale` relaxes by `Δt/τ` per step;
   compare that with the advective rate into the boundary cell, `u/Δx`, or the nudging does nothing.
   Too strong an inflow nudge reflects. A `BoundarySponge` damps what the open edges radiate.

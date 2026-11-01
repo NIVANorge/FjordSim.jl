@@ -57,6 +57,10 @@ const NORA3_ACCUMULATED_VARIABLES = Dict(
     "precipitation" => "precipitation_amount_acc",
 )
 
+# Solid precipitation (snow, graupel and hail), accumulated like `precipitation_amount_acc`, which
+# includes it. Read only for a config with `snowfall = true`.
+const NORA3_SNOWFALL_SOURCE = "snowfall_amount_acc"
+
 # Wind components relative to the Lambert grid axes, rotated to eastward/northward on the source
 # grid by `rotate_to_east_north` before anything is interpolated.
 const NORA3_EASTWARD_SOURCE = "x_wind_10m"
@@ -70,14 +74,15 @@ const NORA3_NORTHWARD_NAME = "v_wind_10m"
 Atmosphere configuration for the MET Norway NORA3 reanalysis, served per forecast lead hour over
 OPeNDAP from `thredds.met.no`.
 
-Only `opendap_url` is defaulted among the source's own settings, being NORA3's public endpoint.
+Only `opendap_url`, NORA3's public endpoint, and `snowfall` are defaulted among the source's own
+settings.
 `data_root`, `output_directory` and `years` have no defaults, so a setup that forgets one gets an
 `UndefKeywordError` rather than a silent fallback.
 
 The download normalizes NORA3's forecast structure away: it selects the forecast lead supplying
 each hour, de-accumulates the accumulated fluxes *within* a run, rotates the winds to
-eastward/northward, and writes one gap-free hourly file per month already carrying the eight
-prepared variable names. `prepare_atmosphere` is then a pure regrid.
+eastward/northward, and writes one gap-free hourly file per month already carrying the prepared
+variable names. `prepare_atmosphere` is then a pure regrid.
 
 Two deliberate differences from the reference Python pipeline this ports, and therefore from a
 file it produced: `swrad` here is the downwelling shortwave flux rather than the net one, and the
@@ -94,6 +99,8 @@ repeating the first step.
 - `padding`: Degrees of margin added around the ocean domain.
 - `years`: Calendar years to prepare. Hours 00:00 to 03:00 of 1 January come from the 18Z run of
   31 December of the preceding year, which is fetched automatically.
+- `snowfall`: Also fetch solid precipitation and prepare it as `snowfall`, leaving `precipitation`
+  the liquid part. A month downloaded with the other setting is fetched again.
 
 A relative `output_file`, `plot_file` or `output_directory` resolves against `data_root`; an
 absolute one relocates just that file.
@@ -107,6 +114,7 @@ Base.@kwdef mutable struct NORA3Config <: AbstractAtmosphereConfig
     resolution::Float64 = 0.02
     padding::Float64 = 0.1
     years::Vector{Int}
+    snowfall::Bool = false
 end
 
 """
@@ -115,6 +123,31 @@ end
 Name of the downloaded file holding one month of hourly NORA3 data.
 """
 nora3_monthly_filename(config::NORA3Config, year, month) = "NORA3_$(year)$(lpad(month, 2, '0')).nc"
+
+"""
+    nora3_month_matches(config, filepath)
+
+Whether a downloaded month holds snowfall exactly when the config asks for it. A month without
+`snowfall` holds total precipitation and one with it the liquid part, under the same name, so a
+mismatch either loses the snow or counts it twice.
+"""
+nora3_month_matches(config::NORA3Config, filepath) =
+    NCDataset(ds -> haskey(ds, SNOWFALL_VARIABLE.name) == config.snowfall, filepath)
+
+"""
+    nora3_accumulated_variables(config)
+    nora3_prepared_variables(config)
+
+The accumulated fluxes the download reads, as prepared name => source variable, and the variables
+it writes, as `ATMOSPHERE_VARIABLES` entries. Both gain snowfall for a config with `snowfall = true`.
+"""
+function nora3_accumulated_variables(config::NORA3Config)
+    config.snowfall || return NORA3_ACCUMULATED_VARIABLES
+    return merge(NORA3_ACCUMULATED_VARIABLES, Dict(SNOWFALL_VARIABLE.name => NORA3_SNOWFALL_SOURCE))
+end
+
+nora3_prepared_variables(config::NORA3Config) =
+    config.snowfall ? (ATMOSPHERE_VARIABLES..., SNOWFALL_VARIABLE) : ATMOSPHERE_VARIABLES
 
 nora3_monthly_path(config::NORA3Config, year, month) =
     joinpath(atmosphere_directory(config), nora3_monthly_filename(config, year, month))
@@ -143,7 +176,7 @@ de-accumulated fluxes), so there is no source variable left to rename at this st
 whose download carries the source's own names through would return a real mapping here.
 """
 atmosphere_variable_names(config::NORA3Config) =
-    Dict(variable.name => variable.name for variable in ATMOSPHERE_VARIABLES)
+    Dict(variable.name => variable.name for variable in nora3_prepared_variables(config))
 
 """
     atmosphere_time_steps(config::NORA3Config)
@@ -161,6 +194,11 @@ function atmosphere_time_steps(config::NORA3Config)
     for year in config.years, month = 1:12
         filepath = nora3_monthly_path(config, year, month)
         isfile(filepath) || continue
+        nora3_month_matches(config, filepath) || error(
+            "$filepath was downloaded $(config.snowfall ? "without" : "with") snowfall, but the " *
+            "setup sets `snowfall = $(config.snowfall)`. Re-run " *
+            "`julia --project -m FjordSim download_atmosphere` for this setup first.",
+        )
 
         NCDataset(filepath) do ds
             for (index, date) in enumerate(ds["time"][:])
@@ -226,10 +264,16 @@ Read the setup's own prepared NORA3 file back at simulation time.
 
 `MultiYearNORA3(config)` resolves `atmosphere_path(config)` rather than the shared
 `~/FjordSim_data/NORA3/NORA3.nc` the bare constructors default to, and errors naming
-`prepare_atmosphere` if that file is missing — so neither method needs its own check.
+`prepare_atmosphere` if that file is missing — so neither method needs its own check. A config
+with `snowfall = true` reads the prepared `snowfall` as the atmosphere's snow.
 """
 prescribed_atmosphere(config::NORA3Config, architecture; reference_date = nothing) =
-    NORA3PrescribedAtmosphere(architecture; dataset = MultiYearNORA3(config), reference_date)
+    NORA3PrescribedAtmosphere(
+        architecture;
+        dataset = MultiYearNORA3(config),
+        reference_date,
+        snowfall = config.snowfall,
+    )
 
 prescribed_radiation(config::NORA3Config, architecture; reference_date = nothing) =
     NORA3PrescribedRadiation(architecture; dataset = MultiYearNORA3(config), reference_date)
@@ -266,7 +310,8 @@ function fetch_atmosphere(target_grid, config::NORA3Config)
     longitude, latitude = atmosphere_target_axes(target_grid, config)
     pending = [
         (year, month) for year in config.years, month = 1:12 if
-        !isfile(nora3_monthly_path(config, year, month))
+        !isfile(nora3_monthly_path(config, year, month)) ||
+        !nora3_month_matches(config, nora3_monthly_path(config, year, month))
     ]
 
     if isempty(pending)
@@ -447,7 +492,7 @@ function process_month(year, month, subset::NORA3Subset, config::NORA3Config)
     isfile(temporary_path) && rm(temporary_path)
     output = NCDataset(temporary_path, "c")
     try
-        define_monthly_file!(output, subset, dates)
+        define_monthly_file!(output, subset, dates, nora3_prepared_variables(config))
 
         for run_time in nora3_runs(year, month)
             process_run(output, run_time, subset, config, time_index)
@@ -466,12 +511,12 @@ function process_month(year, month, subset::NORA3Subset, config::NORA3Config)
 end
 
 """
-    define_monthly_file!(ds, subset::NORA3Subset, dates)
+    define_monthly_file!(ds, subset::NORA3Subset, dates, variables)
 
 Define the downloaded file: the subset's projected and geographic coordinates, its projection,
-the hourly time axis, and the eight prepared variables.
+the hourly time axis, and the prepared `variables`.
 """
-function define_monthly_file!(ds, subset::NORA3Subset, dates)
+function define_monthly_file!(ds, subset::NORA3Subset, dates, variables)
     Nx = length(subset.x)
     Ny = length(subset.y)
 
@@ -494,7 +539,7 @@ function define_monthly_file!(ds, subset::NORA3Subset, dates)
         attrib = ["grid_mapping_name" => "lambert_conformal_conic", "proj4" => NORA3_PROJ4],
     )
 
-    for variable in ATMOSPHERE_VARIABLES
+    for variable in variables
         defVar(
             ds,
             variable.name,
@@ -526,15 +571,17 @@ midpoint instead and so needs a second `time_acc` axis, which the simulation-tim
 consume — it reads one `time`.
 """
 function process_run(output, run_time, subset::NORA3Subset, config::NORA3Config, time_index)
-    previous_accumulated = read_lead(nora3_url(config, run_time, NORA3_FIRST_LEAD), subset; instantaneous = false)
+    accumulated = nora3_accumulated_variables(config)
+    previous_accumulated =
+        read_lead(nora3_url(config, run_time, NORA3_FIRST_LEAD), subset, accumulated; instantaneous = false)
 
     for lead = (NORA3_FIRST_LEAD+1):NORA3_LAST_LEAD
         date = run_time + Hour(lead)
         index = get(time_index, date, 0)
-        slabs = read_lead(nora3_url(config, run_time, lead), subset; instantaneous = index != 0)
+        slabs = read_lead(nora3_url(config, run_time, lead), subset, accumulated; instantaneous = index != 0)
 
         if index != 0
-            write_step!(output, index, slabs, previous_accumulated, subset)
+            write_step!(output, index, slabs, previous_accumulated, subset, accumulated)
         end
 
         previous_accumulated = slabs
@@ -544,16 +591,16 @@ function process_run(output, run_time, subset::NORA3Subset, config::NORA3Config,
 end
 
 """
-    read_lead(url, subset::NORA3Subset; instantaneous = true)
+    read_lead(url, subset::NORA3Subset, accumulated; instantaneous = true)
 
 One forecast lead's slabs over the subset, as source variable name => `Float32` matrix, fetched in
 a single DAP2 request rather than NetCDF's one per variable plus metadata.
 
-`instantaneous = false` reads only the accumulated fluxes, which is all that is needed of a lead
-whose own hour lies outside the month being written.
+`accumulated` is `nora3_accumulated_variables`. `instantaneous = false` reads only those fluxes,
+which is all that is needed of a lead whose own hour lies outside the month being written.
 """
-function read_lead(url, subset::NORA3Subset; instantaneous = true)
-    names = collect(values(NORA3_ACCUMULATED_VARIABLES))
+function read_lead(url, subset::NORA3Subset, accumulated; instantaneous = true)
+    names = collect(values(accumulated))
     instantaneous && append!(
         names,
         values(NORA3_INSTANTANEOUS_VARIABLES),
@@ -626,19 +673,27 @@ function parse_dods(bytes, names, subset::NORA3Subset)
 end
 
 """
-    write_step!(output, index, slabs, previous_accumulated, subset::NORA3Subset)
+    write_step!(output, index, slabs, previous_accumulated, subset::NORA3Subset, accumulated)
 
-Write one hourly step: the instantaneous fields as they come, the accumulated fluxes as the mean
-rate over the hour ending at this step, and the winds rotated to eastward/northward.
+Write one hourly step: the instantaneous fields as they come, the `accumulated` fluxes as the mean
+rate over the hour ending at this step, and the winds rotated to eastward/northward. With snowfall
+among them, `precipitation` is written as the liquid part, total less solid, floored at zero
+against rounding.
 """
-function write_step!(output, index, slabs, previous_accumulated, subset::NORA3Subset)
+function write_step!(output, index, slabs, previous_accumulated, subset::NORA3Subset, accumulated)
     for (name, source_name) in NORA3_INSTANTANEOUS_VARIABLES
         output[name][:, :, index] = slabs[source_name]
     end
 
-    for (name, source_name) in NORA3_ACCUMULATED_VARIABLES
-        output[name][:, :, index] =
-            (slabs[source_name] .- previous_accumulated[source_name]) ./ NORA3_SECONDS_PER_LEAD
+    rates = Dict(
+        name => (slabs[source_name] .- previous_accumulated[source_name]) ./ NORA3_SECONDS_PER_LEAD
+        for (name, source_name) in accumulated
+    )
+    if haskey(rates, SNOWFALL_VARIABLE.name)
+        rates["precipitation"] = max.(0, rates["precipitation"] .- rates[SNOWFALL_VARIABLE.name])
+    end
+    for (name, rate) in rates
+        output[name][:, :, index] = rate
     end
 
     eastward, northward = rotate_to_east_north(

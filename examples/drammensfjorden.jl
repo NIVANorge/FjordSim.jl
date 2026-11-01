@@ -239,6 +239,7 @@ FjordConfig(
                 output_file        = "snapshots_ocean.nc",
                 variables          = (:T, :S, :u, :v),
                 interval           = 3hours,
+                split_times        = Float64[],
                 overwrite_existing = true,
             ),
             CheckpointWriter(interval = 12hours, cleanup = true),

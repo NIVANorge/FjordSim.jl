@@ -30,7 +30,7 @@ flowchart LR
     AbstractRunConfig -- initial_conditions --> AbstractInitialConditionsConfig
 ```
 
-Not reached through an accessor: `AbstractClosureConfig`, `AbstractFreeSurfaceConfig`, `AbstractObservationConfig`.
+Not reached through an accessor: `AbstractClosureConfig`, `AbstractFreeSurfaceConfig`, `AbstractObservationConfig`, `AbstractSeaIceConfig`.
 
 ## Steps
 
@@ -212,6 +212,12 @@ No built-in implementation.
 | `loops` | required | ✓ |
 | `pickup` | required | ✓ |
 
+### `AbstractSeaIceConfig`
+
+| Hook | Status | `SlabSeaIce` |
+|---|---|---|
+| `model_sea_ice` | required | ✓ |
+
 ### `AbstractTimeSteppingConfig`
 
 | Hook | Status | `AdaptiveTimeStep` |
@@ -221,8 +227,8 @@ No built-in implementation.
 
 ### `AbstractWriterConfig`
 
-| Hook | Status | `CheckpointWriter` | `FieldSnapshotWriter` | `FieldStationWriter` | `SectionWriter` | `SnapshotWriter` | `StationWriter` | `SurfaceSnapshotWriter` |
-|---|---|---|---|---|---|---|---|---|
-| `attach_writer!` | required | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `FjordSim.Simulations.checkpoint_trait` | optional | ✓ | default | default | default | default | default | default |
-| `FjordSim.Simulations.output_path_trait` | optional | default | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Hook | Status | `CheckpointWriter` | `FieldSnapshotWriter` | `FieldStationWriter` | `SeaIceSnapshotWriter` | `SectionWriter` | `SnapshotWriter` | `StationWriter` | `SurfaceSnapshotWriter` |
+|---|---|---|---|---|---|---|---|---|---|
+| `attach_writer!` | required | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `FjordSim.Simulations.checkpoint_trait` | optional | ✓ | default | default | default | default | default | default | default |
+| `FjordSim.Simulations.output_path_trait` | optional | default | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |

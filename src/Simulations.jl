@@ -3,11 +3,13 @@ module Simulations
 export RunConfig,
     CoupledHydrostaticModel,
     SplitExplicitFreeSurfaceConfig,
+    SlabSeaIce,
     BoundarySponge,
     RiverMouthMixing,
     SnapshotWriter,
     FieldSnapshotWriter,
     SurfaceSnapshotWriter,
+    SeaIceSnapshotWriter,
     Station,
     StationWriter,
     FieldStationWriter,
@@ -31,6 +33,7 @@ using Oceananigans.Grids: x_domain, y_domain, node, λnodes, φnodes, znodes, Ce
 using Oceananigans.Fields: location
 using Oceananigans.AbstractOperations: @at
 using NumericalEarth
+using ClimaSeaIce: ConductiveFlux
 using Dates: DateTime, Millisecond, Second, format, now
 using Printf: @sprintf
 using NCDatasets
@@ -42,6 +45,7 @@ using ..Configs:
     AbstractInitialConditionsConfig,
     AbstractModelConfig,
     AbstractFreeSurfaceConfig,
+    AbstractSeaIceConfig,
     AbstractClosureConfig,
     AbstractWriterConfig,
     AbstractCallbackConfig,
@@ -104,6 +108,56 @@ Build the `SplitExplicitFreeSurface` `coupled_model` passes to `HydrostaticFreeS
 """
 free_surface(config::SplitExplicitFreeSurfaceConfig, grid) =
     SplitExplicitFreeSurface(grid, cfl = config.cfl)
+
+"""
+    SlabSeaIce(; ice_salinity, conductivity)
+
+The built-in `AbstractSeaIceConfig`: NumericalEarth's `sea_ice_simulation`, ClimaSeaIce slab
+thermodynamics under a snow slab, without dynamics, so ice grows and melts where it forms and never
+drifts. Its other parameters are NumericalEarth's defaults.
+
+- `ice_salinity`: the ice's bulk salinity (g/kg). Freezing takes it from the water, so in fresh
+  water anything above 0 drives the salinity negative.
+- `conductivity`: the ice's thermal conductivity (W m⁻¹ K⁻¹).
+
+With no dynamics the ice exerts no stress on the water, and the atmosphere's stress reaches only
+the ice-free fraction of each cell.
+"""
+struct SlabSeaIce <: AbstractSeaIceConfig
+    ice_salinity::Float64
+    conductivity::Float64
+end
+
+SlabSeaIce(; ice_salinity, conductivity) = SlabSeaIce(Float64(ice_salinity), Float64(conductivity))
+
+"""
+    model_sea_ice(sea_ice, grid, ocean)
+
+The sea-ice component `coupled_model` passes to `OceanSeaIceModel`, built from a model config's
+`sea_ice` on `grid` next to the ocean simulation `ocean`. The fallback returns `sea_ice` unchanged,
+for components needing neither, such as `FreezingLimitedOceanTemperature`.
+"""
+model_sea_ice(sea_ice, grid, ocean) = sea_ice
+
+# Every number is in the grid's float type. `sea_ice_simulation` builds its default heat flux in
+# `Oceananigans.defaults.FloatType`, which fails against the snow slab's conductivity on a Float32
+# grid, and ClimaSeaIce keeps each scalar's own type in its `ConstantField`; mixed into Float32
+# kernels those make types NumericalEarth's GPU kernels cannot infer. The consolidation thickness
+# and the densities are NumericalEarth's defaults.
+function model_sea_ice(config::SlabSeaIce, grid, ocean)
+    FT = eltype(grid)
+    return sea_ice_simulation(
+        grid,
+        ocean;
+        dynamics = nothing,
+        ice_salinity = convert(FT, config.ice_salinity),
+        ice_consolidation_thickness = convert(FT, 0.05),
+        sea_ice_density = convert(FT, 900),
+        snow_density = convert(FT, 330),
+        internal_heat_flux = ConductiveFlux(FT; conductivity = config.conductivity),
+        clock = model_clock(),
+    )
+end
 
 """
     model_closure(closure, grid, boundary_data_config, river_columns)
@@ -389,9 +443,10 @@ Holds the components that depend on neither the grid nor the device, so they are
 objects `coupled_model` consumes rather than as knobs it has to interpret. `free_surface` is the one
 exception: it is itself an `AbstractFreeSurfaceConfig`, built by its own `free_surface(config, grid)`
 hook, because `SplitExplicitFreeSurface` needs the grid, which only exists once `coupled_model` is
-called. `closure` may be an `AbstractClosureConfig` too, resolved by `model_closure`. The
-biogeochemistry is not a field: it is the setup's `biogeochemistry_config`, a component of its own,
-and reaches `coupled_model` as a keyword.
+called. `closure` may be an `AbstractClosureConfig` too, resolved by `model_closure`, and `sea_ice`
+an `AbstractSeaIceConfig`, resolved by `model_sea_ice`. The biogeochemistry is not a field: it is
+the setup's `biogeochemistry_config`, a component of its own, and reaches `coupled_model` as a
+keyword.
 
 **No field has a default**, deliberately. Every one is a scientific choice about a particular fjord,
 and a default would let the next setup silently inherit it, so a setup that forgets one gets an
@@ -622,7 +677,7 @@ function tagged_path(writer::AbstractWriterConfig, config::AbstractRunConfig, ta
 end
 
 """
-    SnapshotWriter(; name, output_file, variables, interval, overwrite_existing)
+    SnapshotWriter(; name, output_file, variables, interval, split_times, overwrite_existing)
 
 A NetCDF snapshot of named ocean fields, on a `TimeInterval` schedule.
 
@@ -636,16 +691,20 @@ A NetCDF snapshot of named ocean fields, on a `TimeInterval` schedule.
   `snapshot_outputs`. Anything `Oceananigans.fields` exposes — velocities, tracers, the free
   surface, auxiliaries — so a setup that adds a biogeochemical tracer writes it by naming it.
 - `interval`, `overwrite_existing`: the schedule and the clobber policy.
+- `split_times`: model times, in seconds, at which a new file part starts, as Oceananigans names
+  them: the first part is renamed `<name>_part1.nc` at the first split and the next is
+  `<name>_part2.nc`. Empty for one file.
 """
 struct SnapshotWriter{V<:Tuple{Vararg{Symbol}}} <: AbstractWriterConfig
     name::Symbol
     output_file::String
     variables::V
     interval::Float64
+    split_times::Vector{Float64}
     overwrite_existing::Bool
 end
 
-function SnapshotWriter(; name, output_file, variables, interval, overwrite_existing)
+function SnapshotWriter(; name, output_file, variables, interval, split_times, overwrite_existing)
     interval > 0 || throw(
         ArgumentError("A snapshot writer's `interval` must be positive, got $interval."),
     )
@@ -657,6 +716,7 @@ function SnapshotWriter(; name, output_file, variables, interval, overwrite_exis
         String(output_file),
         Tuple(Symbol(variable) for variable in variables),
         Float64(interval),
+        Float64.(split_times),
         Bool(overwrite_existing),
     )
 end
@@ -740,6 +800,40 @@ function SurfaceSnapshotWriter(;
         throw(ArgumentError("Surface snapshot writer :$name names no `variables` to write."))
 
     return SurfaceSnapshotWriter(
+        Symbol(name),
+        String(output_file),
+        Tuple(Symbol(variable) for variable in variables),
+        Float64(interval),
+        Float64.(split_times),
+        Bool(overwrite_existing),
+    )
+end
+
+"""
+    SeaIceSnapshotWriter(; name, output_file, variables, interval, split_times, overwrite_existing)
+
+`FieldSnapshotWriter` for the sea-ice component, with the same JLD2 layout: `variables` name fields
+of the sea-ice model, such as ClimaSeaIce's ice thickness `h`, ice concentration `ℵ` and snow
+thickness `hs`. Needs a sea-ice component that is a simulation, such as `SlabSeaIce`'s. A new file
+part starts at each of `split_times`, as for `SurfaceSnapshotWriter`.
+"""
+struct SeaIceSnapshotWriter{V<:Tuple{Vararg{Symbol}}} <: AbstractWriterConfig
+    name::Symbol
+    output_file::String
+    variables::V
+    interval::Float64
+    split_times::Vector{Float64}
+    overwrite_existing::Bool
+end
+
+function SeaIceSnapshotWriter(; name, output_file, variables, interval, split_times, overwrite_existing)
+    interval > 0 || throw(
+        ArgumentError("A sea-ice snapshot writer's `interval` must be positive, got $interval."),
+    )
+    isempty(variables) &&
+        throw(ArgumentError("Sea-ice snapshot writer :$name names no `variables` to write."))
+
+    return SeaIceSnapshotWriter(
         Symbol(name),
         String(output_file),
         Tuple(Symbol(variable) for variable in variables),
@@ -1650,6 +1744,7 @@ output_path_trait(::AbstractWriterConfig) = NamesNoOutputFile()
 output_path_trait(::SnapshotWriter) = NamesOutputFile()
 output_path_trait(::FieldSnapshotWriter) = NamesOutputFile()
 output_path_trait(::SurfaceSnapshotWriter) = NamesOutputFile()
+output_path_trait(::SeaIceSnapshotWriter) = NamesOutputFile()
 output_path_trait(::StationWriter) = NamesOutputFile()
 output_path_trait(::FieldStationWriter) = NamesOutputFile()
 output_path_trait(::SectionWriter) = NamesOutputFile()
@@ -1797,9 +1892,10 @@ function attach_writers!(simulation, config::AbstractRunConfig, loop)
 end
 
 """
-    snapshot_outputs(writer, ocean_model)
+    snapshot_outputs(writer, model)
 
-The fields `writer.variables` names, as the `NamedTuple` an output writer consumes.
+The fields `writer.variables` names, as the `NamedTuple` an output writer consumes. `model` is the
+ocean model, or the sea-ice model for a `SeaIceSnapshotWriter`.
 
 Shared by all four output writers: which names a model has, and the error naming the ones it does
 not, are the same question whatever the file format and whatever part of the domain is written.
@@ -1819,19 +1915,20 @@ function snapshot_outputs(
         SnapshotWriter,
         FieldSnapshotWriter,
         SurfaceSnapshotWriter,
+        SeaIceSnapshotWriter,
         StationWriter,
         FieldStationWriter,
         SectionWriter,
     },
-    ocean_model,
+    model,
 )
-    available = fields(ocean_model)
+    available = fields(model)
     unknown = filter(name -> !haskey(available, name), writer.variables)
 
     isempty(unknown) || throw(
         ArgumentError(
-            "Snapshot writer :$(writer.name) names $(join(unknown, ", ")), which the ocean model " *
-            "does not have. Available: $(join(keys(available), ", ")).",
+            "Snapshot writer :$(writer.name) names $(join(unknown, ", ")), which the " *
+            "$(nameof(typeof(model))) does not have. Available: $(join(keys(available), ", ")).",
         ),
     )
 
@@ -1871,6 +1968,7 @@ function attach_writer!(simulation, writer::SnapshotWriter, config::AbstractRunC
         snapshot_outputs(writer, ocean_sim.model);
         filename = filepath,
         schedule = TimeInterval(writer.interval),
+        file_splitting = SpecifiedTimes(writer.split_times),
         overwrite_files = writer.overwrite_existing,
         global_attributes = Dict(RESULTS_START_DATE_ATTRIBUTE => string(start_date(config))),
     )
@@ -1919,6 +2017,47 @@ end
 # A view of the top level shares the model's memory. A field one level deep — `η`, which
 # `SplitExplicitFreeSurface` keeps on the top face alone — is already its own surface.
 top_level(field) = size(field, 3) == 1 ? field : view(field, :, :, size(field, 3))
+
+"""
+    attach_writer!(simulation, writer::SeaIceSnapshotWriter, config, loop)
+
+`FieldSnapshotWriter`'s attach, on the sea-ice simulation, which the coupled model steps and so
+runs the writer, splitting the file at `writer.split_times`.
+"""
+function attach_writer!(
+    simulation,
+    writer::SeaIceSnapshotWriter,
+    config::AbstractRunConfig,
+    loop,
+)
+    sea_ice = sea_ice_simulation_of(simulation.model.sea_ice, writer)
+
+    haskey(sea_ice.output_writers, writer.name) &&
+        close(pop!(sea_ice.output_writers, writer.name))
+
+    filepath = loop_output_path(writer, config, loop)
+    mkpath(dirname(filepath))
+
+    sea_ice.output_writers[writer.name] = JLD2Writer(
+        sea_ice.model,
+        snapshot_outputs(writer, sea_ice.model);
+        filename = filepath,
+        schedule = TimeInterval(writer.interval),
+        file_splitting = SpecifiedTimes(writer.split_times),
+        overwrite_files = writer.overwrite_existing,
+        with_halos = false,
+    )
+
+    return simulation
+end
+
+sea_ice_simulation_of(sea_ice::Simulation, writer) = sea_ice
+sea_ice_simulation_of(sea_ice, writer) = throw(
+    ArgumentError(
+        "Sea-ice snapshot writer :$(writer.name) needs a sea-ice component that is a simulation, " *
+        "such as `SlabSeaIce`'s, not a $(nameof(typeof(sea_ice))).",
+    ),
+)
 
 """
     attach_writer!(simulation, writer::SurfaceSnapshotWriter, config, loop)
@@ -2757,6 +2896,17 @@ function run_loops(simulation, run::AbstractRunConfig)
 end
 
 """
+    model_clock()
+
+A clock for one coupled-model component, starting at zero.
+
+Kernels otherwise get the time in the grid's float type (Float32 here) while the host pages each
+`FieldTimeSeries` window from the Float64 clock. Near an exact hour the two round to different
+slices, so the kernel indexes outside the window and faults on the GPU.
+"""
+model_clock() = Clock{Float64}(time = 0, kernel_time_type = Float64)
+
+"""
     coupled_model(model, grid; forcing, boundary_conditions, initial_conditions, biogeochemistry,
                   atmosphere, radiation, boundary_data_config, river_columns, stop_time,
                   initial_time_step)
@@ -2774,6 +2924,8 @@ the grid, and `model.closure` through `model_closure`, because a closure may nee
 edges *and* the river columns. The fallback of `model_closure` is the identity, so a plain
 Oceananigans closure passes through untouched. `model.tracer_advection` goes through
 `model_tracer_advection` the same way, for `RiverMouthAdvection`, which needs the river columns.
+`model.sea_ice` goes through `model_sea_ice`, whose identity fallback passes a plain component
+through, because a sea-ice model needs the grid and the ocean simulation.
 
 `OceanSeaIceModel` takes the ocean as a `Simulation`, which is why this needs `stop_time` and
 `initial_time_step`; the outer `Simulation` stepping the coupled model is `build_simulation`'s.
@@ -2808,10 +2960,7 @@ function coupled_model(
         forcing = forcing,
         boundary_conditions = boundary_conditions,
         biogeochemistry = biogeochemistry,
-        # Kernels otherwise get the time in the grid's float type (Float32 here) while the host pages
-        # each `FieldTimeSeries` window from the Float64 clock. Near an exact hour the two round to
-        # different slices, so the kernel indexes outside the window and faults on the GPU.
-        clock = Clock{Float64}(time = 0, kernel_time_type = Float64),
+        clock = model_clock(),
         extra_kwargs(model, :ocean_model)...,
     )
     @info "Compiled HydrostaticFreeSurfaceModel"
@@ -2826,7 +2975,7 @@ function coupled_model(
     )
     ocean_sea_ice_model = OceanSeaIceModel(
         ocean_simulation,
-        model.sea_ice;
+        model_sea_ice(model.sea_ice, grid, ocean_simulation);
         atmosphere,
         radiation,
         extra_kwargs(model, :coupled_model)...,

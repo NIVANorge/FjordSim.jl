@@ -31,6 +31,9 @@ const NVE_WATER_TEMPERATURE = 1003     # Vanntemperatur, °C
 const NVE_DISCHARGE = 1001             # Vannføring, m³/s
 const NVE_WATER_LEVEL = 1000           # Vannstand, m
 
+# Fresh water's freezing point, °C: no liquid river water is colder.
+const NVE_FRESHWATER_FREEZING_TEMPERATURE = 0.0f0
+
 # The three resolutions HydAPI offers: 0 instantaneous, 60 hourly, 1440 daily. Daily is what the
 # river pipeline wants — `river_series` matches records by calendar date, so a finer axis would
 # only ask for the same day repeatedly.
@@ -1225,7 +1228,8 @@ a daily mean at 11:00 UTC while a prepared forcing file's axis sits wherever its
 A date no response covers is filled from the nearest date by `nve_fill_gaps!`, since a river
 blinking out of its temperature for one day of a year is noise rather than information. A river
 with no temperature station, or none with records in the window, then carries the mean of the
-gauged ones — `nve_fill_temperatures!`.
+gauged ones — `nve_fill_temperatures!`. Every temperature is at least fresh water's freezing point
+(`nve_floor_at_freezing!`).
 """
 function river_series(config::NVERiversConfig, times)
     outlets = nve_outlets(config)
@@ -1243,6 +1247,7 @@ function river_series(config::NVERiversConfig, times)
         nve_fill_gaps!(view(temperatures, row, :), "$(outlet.name) temperature")
     end
     nve_fill_temperatures!(temperatures, outlets)
+    nve_floor_at_freezing!(temperatures, outlets)
 
     series = Dict{String,Matrix{Float32}}(config.temperature_name => temperatures)
     for (name, value) in config.constants
@@ -1275,6 +1280,27 @@ function nve_fill_temperatures!(temperatures, outlets)
         temperatures[row, :] .= regional
         @info "River $(outlets[row].name) has no temperature record; it carries the mean of the " *
               "$(length(gauged)) gauged rivers"
+    end
+
+    return temperatures
+end
+
+"""
+    nve_floor_at_freezing!(temperatures, outlets)
+
+Raise every temperature below fresh water's freezing point to it, in place. Liquid river water is
+never colder, so a lower reading is a sensor under ice: Glomma at Glomstadfoss (`2.43.0`) reads down
+to −1.3 °C in February 2025. Carried into a model with ice, the deficit freezes at the mouth all
+winter: it built 7.8 m of ice at Mjøsa's Lillehammer mouth in 52 days.
+"""
+function nve_floor_at_freezing!(temperatures, outlets)
+    for row in axes(temperatures, 1)
+        values = view(temperatures, row, :)
+        below = count(<(NVE_FRESHWATER_FREEZING_TEMPERATURE), values)
+        below == 0 && continue
+        @info "River $(outlets[row].name): $below daily temperature$(below == 1 ? "" : "s") below " *
+              "0 °C, down to $(minimum(values)) °C, raised to 0 °C"
+        values .= max.(values, NVE_FRESHWATER_FREEZING_TEMPERATURE)
     end
 
     return temperatures

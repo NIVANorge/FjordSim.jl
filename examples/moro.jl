@@ -255,6 +255,7 @@ FjordConfig(
                 output_file        = "snapshots_ocean.nc",
                 variables          = (:T, :S, :u, :v, :e),
                 interval           = 1day,
+                split_times        = Float64[],
                 overwrite_existing = true,
             ),
             # The top level of T, S, u and v, and `η`, hourly for the tide, one file per month.

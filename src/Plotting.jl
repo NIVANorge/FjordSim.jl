@@ -70,6 +70,7 @@ const ATMOSPHERE_PLOT_PANELS = (
     (name = "specific_humidity_2m", label = "Specific humidity (kg kg⁻¹)", colormap = :viridis),
     (name = "air_pressure_at_sea_level", label = "Sea level pressure (Pa)", colormap = :viridis),
     (name = "precipitation", label = "Precipitation (kg m⁻² s⁻¹)", colormap = :dense),
+    (name = "snowfall", label = "Snowfall (kg m⁻² s⁻¹)", colormap = :dense),
     (name = "u_wind_10m", label = "u wind (m s⁻¹)", colormap = :balance),
     (name = "v_wind_10m", label = "v wind (m s⁻¹)", colormap = :balance),
     (name = "swrad", label = "Downwelling shortwave (W m⁻²)", colormap = :solar),

@@ -384,6 +384,25 @@ needs the grid, which does not exist until `coupled_model` is called.
 abstract type AbstractFreeSurfaceConfig end
 
 """
+    AbstractSeaIceConfig
+
+Supertype for sea-ice configurations. A concrete subtype names a sea-ice model's knobs, and its
+`model_sea_ice(config, grid, ocean)` method builds the component `coupled_model` passes to
+`OceanSeaIceModel`.
+
+A config rather than the built object because a sea-ice model needs the grid and the ocean
+simulation, neither of which exists until `coupled_model` is called. A model config's `sea_ice` may
+also be a plain object needing neither, such as NumericalEarth's `FreezingLimitedOceanTemperature`,
+which the fallback `model_sea_ice` passes through unchanged.
+
+# Methods a subtype provides
+- `model_sea_ice(config, grid, ocean)`: build the sea-ice component. Required.
+
+`FjordSim.Simulations.SlabSeaIce` is the built-in implementation.
+"""
+abstract type AbstractSeaIceConfig end
+
+"""
     AbstractClosureConfig
 
 Supertype for *closure* configurations. A concrete subtype names a turbulence closure's knobs, and

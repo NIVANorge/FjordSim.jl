@@ -38,6 +38,9 @@ The same without `-m`, Julia 1.12's package entry point:
 julia --project -e 'using FjordSim; FjordSim.main(ARGS)' -- prepare_bathymetry --config examples/oslofjorden.jl
 ```
 
+`scripts/surface_videos.jl` turns one file of a `SurfaceSnapshotWriter` (and, with `--sea-ice`, the
+matching `SeaIceSnapshotWriter` file) into one MP4 per variable; its header has the usage.
+
 ### From the REPL, and debugging a step
 
 Each subcommand is a method on the generic function of the same name, taking the whole setup:

@@ -898,8 +898,8 @@ schedule. One file per station.
 The counterpart of `SnapshotWriter` for validation rather than for maps. A snapshot of the full
 domain costs `Nx * Ny * Nz` per record, so the cadence a model-observation comparison needs — hourly
 for a current meter, ten-minutely for a tide gauge — is unaffordable over a multi-year window,
-while the same cadence at a dozen points is nothing. `examples/oslofjorden/oslofjorden_validation.jl` writes
-59 GB of daily 3D fields and about 150 MB of station series beside them.
+while the same cadence at a dozen points is nothing. `examples/oslofjorden/oslofjorden.jl` writes
+164 GB of daily 3D fields over two years and about 170 MB of station series beside them.
 
 One `NetCDFWriter` per station rather than one for all of them, because Oceananigans takes a single
 `indices` per file and a station is `indices = (i, j, :)`. So this writer occupies one

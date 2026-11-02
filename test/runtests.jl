@@ -82,10 +82,12 @@ end
             :NorKystConfig,
             :NorKystHindcastConfig,
             :NorKystInitialStateConfig,
+            :NorKystV3InitialStateConfig,
             :NVERiversConfig,
             :NVERiver,
             :NorKystBoundaryDataConfig,
             :NorKystHindcastBoundaryDataConfig,
+            :NorKystV3BoundaryDataConfig,
             :NORA3Config,
             :RunConfig,
             :CoupledHydrostaticModel,
@@ -6649,4 +6651,106 @@ end
         )
     end
 
+end
+
+@testset "Operational Norkyst-v3 adapters" begin
+    # Offline: the catalog parsing, URL and filename arithmetic, the configs, and the two array
+    # helpers the downloads use. Anything that would touch THREDDS is left to the integration check.
+    NorKyst = FjordSim.NorKyst
+    depth_mean = FjordSim.Regridding.depth_mean
+    nested_slab = FjordSim.Regridding.nested_slab
+
+    @testset "catalog and URLs" begin
+        catalog = """
+            <catalogRef xlink:href="02/catalog.xml" xlink:title="02" ID="x/02" name="02"/>
+            <catalogRef xlink:href="01/catalog.xml" xlink:title="01" ID="x/01" name="01"/>
+            <catalogRef xlink:href="scripts/catalog.xml" xlink:title="scripts" name="scripts"/>
+            """
+        @test NorKyst.parse_v3_days(catalog) == [1, 2]
+        @test NorKyst.norkyst_v3_url("https://h/d", "160", "m71", DateTime(2025, 3, 4, 5)) ==
+              "https://h/d/2025/03/04/norkyst160_his_zdepth_20250304T00Z_m71_AN.nc"
+    end
+
+    @testset "boundary config" begin
+        parameters = ["temperature", "u_eastward", "v_northward", "zeta", "ubar_eastward", "vbar_northward"]
+        config = NorKystV3BoundaryDataConfig(
+            data_root = "/x", output_directory = "y", open_edges = :south, member = "m71",
+            parameters = parameters, years = [2025],
+        )
+        @test config isa FjordSim.BoundaryData.AbstractNorKystBoundaryDataConfig
+        @test open_edges(config) == [:south]
+        @test FjordSim.BoundaryData.boundary_monthly_filename(config, 2025, 3) ==
+              "Norkyst-v3-operational_m71_boundary_202503.nc"
+        names = boundary_variable_names(config)
+        @test names["ubar_eastward"] == "ubar"
+        @test names["vbar_northward"] == "vbar"
+        @test names["zeta"] == "eta"
+        # A depth mean needs its z-level component downloaded beside it.
+        @test_throws "u_eastward" NorKystV3BoundaryDataConfig(
+            data_root = "/x", output_directory = "y", open_edges = :south, member = "m00",
+            parameters = ["ubar_eastward"], years = [2025],
+        )
+        @test_throws ArgumentError NorKystV3BoundaryDataConfig(
+            data_root = "/x", output_directory = "y", open_edges = Symbol[], member = "m00",
+            parameters = String[], years = Int[],
+        )
+    end
+
+    @testset "initial-state config" begin
+        config = NorKystV3InitialStateConfig(
+            data_root = "/x", output_directory = "y", nest_member = "m71", parent_member = "m00",
+            parameters = ["temperature"],
+        )
+        @test config isa FjordSim.Configs.AbstractInitialStateConfig
+        @test FjordSim.InitialState.initial_state_filename(config, DateTime(2024, 10, 1)) ==
+              "Norkyst-v3-operational_m71_in_m00_20241001T00.nc"
+        @test FjordSim.InitialState.initial_state_variable_names(config)["temperature"] == "T"
+        @test_throws "download_initial_state" FjordSim.InitialState.initial_state_record(
+            config, DateTime(2024, 10, 1),
+        )
+    end
+
+    @testset "depth_mean" begin
+        depths = [0.0, 10.0, 20.0, 50.0]
+        values = fill(NaN32, 3, 1, 4, 1)
+        # Linear between levels and constant below the deepest valid one, down to the bottom: the
+        # 50 m level lies below the 30 m bottom and is ignored whatever it holds.
+        values[1, 1, :, 1] = [1, 1, 3, 100]
+        values[2, 1, :, 1] = [1, 1, 3, 100]      # a land column, h = 0
+        bottom_depth = [30.0 0.0 30.0]'
+        mean = depth_mean(values, depths, reshape(bottom_depth, 3, 1))
+        @test size(mean) == (3, 1, 1)
+        @test mean[1, 1, 1] ≈ (10 + 20 + 30) / 30
+        @test isnan(mean[2, 1, 1])
+        @test isnan(mean[3, 1, 1])                # no valid level
+    end
+
+    @testset "nested_slab" begin
+        coarse_x = [0.0, 800.0, 1600.0]
+        coarse_y = [0.0, 800.0, 1600.0]
+        coarse = Float32[x + y for x in coarse_x, y in coarse_y, _ in 1:2]
+        coarse[2, 1, :] .= NaN32
+        fine_x = [800.0, 960.0, 1120.0]
+        fine_y = [800.0, 960.0, 1120.0]
+        fine = fill(-1.0f0, 3, 3, 2)
+        fine[1, 1, 2] = NaN32
+        x = collect(0.0:160.0:1600.0)
+        y = collect(0.0:160.0:1600.0)
+
+        slab = nested_slab(coarse, coarse_x, coarse_y, fine, fine_x, fine_y, x, y)
+        @test size(slab) == (11, 11, 2)
+        # Inside the nest's extent: the nest, its NaN included.
+        @test all(slab[6:8, 6:8, 1] .== -1)
+        @test isnan(slab[6, 6, 2])
+        # Outside: the parent, bilinearly — exact for a linear field.
+        @test slab[11, 11, 1] ≈ 3200
+        @test slab[3, 11, 1] ≈ 320 + 1600
+        # A NaN parent node poisons the nodes it weighs on, and only those.
+        @test slab[1, 1, 1] ≈ 0
+        @test isnan(slab[2, 1, 1])
+
+        @test_throws ArgumentError nested_slab(
+            coarse, coarse_x, coarse_y, fine, fine_x .+ 80, fine_y, x, y,
+        )
+    end
 end

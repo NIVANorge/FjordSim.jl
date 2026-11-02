@@ -1,9 +1,9 @@
 # TODO
 
-## Validation of `examples/oslofjorden/oslofjorden_validation.jl`
+## Validation of the 2014-15 Oslofjord run
 
-Code changes found while validating `examples/oslofjorden/oslofjorden_validation.jl` against the NIVA CTD casts,
-NorKyst v3 and FjordOs. Unless a section says otherwise, numbers quote the full 640-day run (stamp
+Code changes found while validating the Oslofjord setup, on its present box at 193 m, against the
+NIVA CTD casts, NorKyst v3 and FjordOs. Unless a section says otherwise, numbers quote the full 640-day run (stamp
 20261014T142318, 2014-04-01 to 2015-12-31), archived as `oslofjorden_validation_2026-10-16`; its
 report and scripts are in that results directory under `validation/report_full/`.
 
@@ -78,13 +78,16 @@ Full run, harmonic fits from 2014-05-01 to 2015-12-31, amplitudes in cm:
   (r = 0.90), but its standard deviation is 14–16 % too small and the largest surges are
   18–25 % too low. That is worth a look at the boundary's subtidal `zeta` too, separately.
 
-The correction is implemented in `examples/oslofjorden/oslofjorden_validation.jl` only: `TideCorrectedBoundaries`
-wraps the hindcast boundary config and rescales each constituent by `VIKER_TIDE_GAINS` after the
+The correction is implemented in `examples/oslofjorden/oslofjorden.jl` only: `TideCorrectedBoundaries`
+wraps the Norkyst-v3 boundary config and rescales each constituent by `VIKER_TIDE_GAINS` after the
 regrid (`correct_boundary_tide!`), velocities by the same complex gain as the sea level.
 
-- [ ] Re-run `prepare_boundary_data` for the example, then a 60-day run. Check M2 and S2 at the three
-      gauges, and the Km1 current (expected about 2.3 cm/s from the M2 factor alone). The interior
-      M2 phase error (11° ahead at Oscarsborg and Oslo, 3° at Viker) will remain.
+- [ ] Measure the operational Norkyst-v3's gains with `scripts/measure_boundary_tide.jl` once the
+      boundary is downloaded; `prepare_boundary_data` refuses to run until they are stated. One
+      month (2024-10) gave M2 x0.705 -2.4° and S2 x2.5, the hindcast's M2 bias again; the weaker
+      constituents need the full record. Then check M2 and S2 at the three gauges in the first
+      60 days, and the Km1 current. The interior M2 phase error (11° ahead at Oscarsborg and Oslo,
+      3° at Viker) will remain.
 
 ### Sill basins are not renewed
 
@@ -222,6 +225,17 @@ columns. No observations cover those bays.
       station files from the periodic sync and upload them at exit.
 - [ ] `fjordsim-gcp logs` runs `tail -f` and never returns. Add a `--lines N` mode that prints and
       exits.
+
+## `examples/oslofjorden/oslofjorden.jl` at 160 m, 2024-10 to 2026-10
+
+- [ ] Bring it up: every prepare step (nothing is prepared at 160 m), then check the deepest cell
+      against `z_faces`' −467 m (the box's deepest sounding is 470 m) and whether
+      `max_island_cells = 6`, chosen on 193 m cells, still deletes only one-cell ridges.
+- [ ] Check the eight gauge overrides have daily values on HydAPI over 2024–2026; they were chosen for
+      2020.
+- [ ] Observations for 2024–2026: NIVA CTD exports for `validate_simulation` (the cached ones are
+      2014-15); Kartverket water level it fetches itself.
+- [ ] `oslofjorden_npzd.jl` now runs 2024–2026 with nutrient profiles measured in 2020.
 
 ## `examples/mjosa/mjosa.jl`
 

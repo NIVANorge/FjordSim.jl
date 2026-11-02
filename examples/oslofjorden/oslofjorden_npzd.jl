@@ -566,18 +566,25 @@ rivers = NPZDRivers(
     plot_file = base.river_config.plot_file,
 )
 
-boundaries = NPZDBoundaries(
-    NorKystBoundaryDataConfig(
-        data_root = data_root,
-        output_directory = base.boundary_data_config.output_directory,
-        output_file = base.boundary_data_config.output_file,
-        plot_file = base.boundary_data_config.plot_file,
-        open_edges = base.boundary_data_config.open_edges,
-        margin = base.boundary_data_config.margin,
-        architecture = base.boundary_data_config.architecture,
-        parameters = base.boundary_data_config.parameters,
-        years = base.boundary_data_config.years,
+# `oslofjorden.jl`'s boundary data is its Norkyst-v3 config inside `TideCorrectedBoundaries`. The
+# NPZD variables go on the Norkyst-v3 file and the tide correction on top, which leaves them alone.
+source = base.boundary_data_config.source
+boundaries = TideCorrectedBoundaries(
+    NPZDBoundaries(
+        NorKystV3BoundaryDataConfig(
+            data_root = data_root,
+            output_directory = source.output_directory,
+            output_file = source.output_file,
+            plot_file = source.plot_file,
+            open_edges = source.open_edges,
+            margin = source.margin,
+            architecture = source.architecture,
+            member = source.member,
+            parameters = source.parameters,
+            years = source.years,
+        ),
     ),
+    base.boundary_data_config.gains,
 )
 
 base_run = base.run_config

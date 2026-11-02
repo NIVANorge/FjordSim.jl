@@ -33,7 +33,7 @@
 #    edge wet for 93 % of its length (to 352 m) and the eastern edge for its southern 31 % (to 357 m),
 #    and the northern edge dry. Check them against the land mask in `bathymetry.png`.
 #
-# # What follows `examples/oslofjorden/oslofjorden_validation.jl`, and what does not
+# # What follows `examples/oslofjorden/oslofjorden.jl`, and what does not
 #
 # The physics is `oslofjorden.jl`'s, scaled to this grid, including what the Oslofjord validation
 # measured: bounded WENO for salinity, CATKE's `minimum_tke` at 7e-7, the biharmonic tracer
@@ -55,7 +55,7 @@ FT = Float32
 # the boundary data can reach.
 years = [2024, 2025]
 # `oslofjorden.jl`'s levels from a 1 m surface cell stretching by 1.25, with 41-132 m split into
-# eighteen 5.06 m levels as in `examples/oslofjorden/oslofjorden_validation.jl`. There five 11-27 m levels let
+# eighteen 5.06 m levels as in `examples/oslofjorden/oslofjorden.jl`. There five 11-27 m levels let
 # WENO's implicit vertical diffusion, ~|w|Δz, mix the sill basins at 5-10 times CATKE's κ, and the
 # split cut the Drammensfjord's salt-budget diffusivity below 41 m by 2.6-7.7 times in 60 days. The
 # mechanism is not specific to that grid. Here it acts wherever the levels are thick, so on the sill
@@ -224,7 +224,7 @@ FjordConfig(
                 # there the floor hardly matters. It matters in the sill basins of Fedafjorden
                 # and Rosfjorden.
                 #
-                # 7e-7, as in `oslofjorden.jl`. In `examples/oslofjorden/oslofjorden_validation.jl` 7e-6
+                # 7e-7, as in `oslofjorden.jl`. In the Oslofjord's 2014-15 validation run 7e-6
                 # mixed the water columns towards uniform and freshened the sill basins. Over
                 # 640 days at 7e-7 the salinity RMSE against 216 casts was 1.73 g/kg and the
                 # temperature RMSE 1.22 °C, and summer heat no longer reached too deep. The cost
@@ -236,7 +236,7 @@ FjordConfig(
                 # times: about 74 min for the 2Δx mode and about 52 h for an 8Δx (4 km) eddy. The
                 # explicit limit Δt ≤ Δx⁴/32ν₄ is 2200 s.
                 #
-                # κ is 0, as in `examples/oslofjorden/oslofjorden_validation.jl`. There κ = 2e3 left the
+                # κ is 0, as in `examples/oslofjorden/oslofjorden.jl`. There κ = 2e3 left the
                 # deep-basin salt budgets and the stations unchanged over 60 days, but
                 # overshot at fronts and left 169 wet cells below 0 g/kg, against none at κ = 0.
                 HorizontalScalarBiharmonicDiffusivity(FT; ν = 8e5, κ = 0),
@@ -249,7 +249,7 @@ FjordConfig(
             viscosity   = 100.0,
             diffusivity = 50.0,
         ),
-        # Salinity bounded, as in `examples/oslofjorden/oslofjorden_validation.jl`. Plain WENO drove
+        # Salinity bounded, as in `examples/oslofjorden/oslofjorden.jl`. Plain WENO drove
         # salinity below TEOS10's -32 psu floor beside a large river entering shallow
         # columns, and Kvina and Lygna enter at the heads of narrow fjords, Sira into a small bay. A
         # NamedTuple has to name `e`, or CATKE's TKE falls back to `Centered()`.

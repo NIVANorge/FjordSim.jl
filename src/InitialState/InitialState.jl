@@ -6,7 +6,8 @@ module InitialState
 
 export download_initial_state,
     prepare_initial_state,
-    NorKystInitialStateConfig
+    NorKystInitialStateConfig,
+    NorKystV3InitialStateConfig
 
 using Oceananigans
 using NCDatasets
@@ -248,5 +249,6 @@ function write_initial_state_file(filepath, target_grid, names, record, source, 
 end
 
 include("norkyst_initial_state.jl")
+include("norkyst_v3_initial_state.jl")
 
 end # module

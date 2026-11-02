@@ -511,6 +511,111 @@ function rotate_to_east_north(angle, u, v)
 end
 
 """
+    depth_mean(values, depths, bottom_depth)
+
+The depth mean of `values`, `(X, Y, level, time)` on z levels at `depths` (metres, positive down,
+increasing), over each column's `bottom_depth` `(X, Y)`: an `(X, Y, time)` array, `NaN` where a
+column has no valid level or no positive depth.
+
+The profile is linear between valid levels and constant above the shallowest and below the
+deepest, down to the bottom; a level at or below the bottom is ignored. For a source that publishes
+z-level velocities but no barotropic pair.
+"""
+function depth_mean(values, depths, bottom_depth)
+    NX, NY, _, NT = size(values)
+    mean = fill(NaN32, NX, NY, NT)
+
+    for t = 1:NT, j = 1:NY, i = 1:NX
+        mean[i, j, t] = column_mean(view(values, i, j, :, t), depths, bottom_depth[i, j])
+    end
+
+    return mean
+end
+
+function column_mean(column, depths, bottom)
+    bottom > 0 || return NaN32
+    integral = 0.0
+    previous_depth = 0.0
+    previous_value = NaN
+
+    for k in eachindex(column, depths)
+        value = column[k]
+        depth = depths[k]
+        (isfinite(value) && depth < bottom) || continue
+        integral += isnan(previous_value) ? value * depth :
+                    (previous_value + value) / 2 * (depth - previous_depth)
+        previous_depth = depth
+        previous_value = value
+    end
+
+    isnan(previous_value) && return NaN32
+    integral += previous_value * (bottom - previous_depth)
+
+    return Float32(integral / bottom)
+end
+
+"""
+    nested_slab(coarse, coarse_x, coarse_y, fine, fine_x, fine_y, x, y)
+
+One `(length(x), length(y), levels)` slab on the regular nodes `x`, `y`: `fine` wherever a node
+lies inside the fine grid's extent, its `NaN`s included, and `coarse` interpolated bilinearly
+everywhere else. All three grids are in the same projected coordinates, and every node inside the
+fine extent must be one of the fine grid's own nodes.
+
+Made for a nested model: inside the nest its own coastline decides what is water, and outside it
+the parent fills in. A bilinear neighbour that is `NaN` makes the node `NaN` unless its weight is
+zero, so the parent's coast stays where the parent put it.
+"""
+function nested_slab(coarse, coarse_x, coarse_y, fine, fine_x, fine_y, x, y)
+    size(coarse, 3) == size(fine, 3) ||
+        throw(DimensionMismatch("coarse and fine slabs have different level counts"))
+    Δfine_x = fine_x[2] - fine_x[1]
+    Δfine_y = fine_y[2] - fine_y[1]
+    output = fill(NaN32, length(x), length(y), size(coarse, 3))
+
+    for j in eachindex(y), i in eachindex(x)
+        fine_i = (x[i] - fine_x[1]) / Δfine_x + 1
+        fine_j = (y[j] - fine_y[1]) / Δfine_y + 1
+        if 1 <= fine_i <= length(fine_x) && 1 <= fine_j <= length(fine_y)
+            isinteger(fine_i) && isinteger(fine_j) || throw(
+                ArgumentError("node ($(x[i]), $(y[j])) lies inside the fine grid but off its nodes"),
+            )
+            output[i, j, :] .= @view fine[Int(fine_i), Int(fine_j), :]
+        else
+            bilinear_column!(view(output, i, j, :), coarse, coarse_x, coarse_y, x[i], y[j])
+        end
+    end
+
+    return output
+end
+
+function bilinear_column!(column, coarse, coarse_x, coarse_y, x, y)
+    position_x = clamp((x - coarse_x[1]) / (coarse_x[2] - coarse_x[1]) + 1, 1, length(coarse_x))
+    position_y = clamp((y - coarse_y[1]) / (coarse_y[2] - coarse_y[1]) + 1, 1, length(coarse_y))
+    i = min(floor(Int, position_x), length(coarse_x) - 1)
+    j = min(floor(Int, position_y), length(coarse_y) - 1)
+    weight_x = position_x - i
+    weight_y = position_y - j
+    corners = (
+        (i, j, (1 - weight_x) * (1 - weight_y)),
+        (i + 1, j, weight_x * (1 - weight_y)),
+        (i, j + 1, (1 - weight_x) * weight_y),
+        (i + 1, j + 1, weight_x * weight_y),
+    )
+
+    for k in eachindex(column)
+        value = 0.0
+        for (corner_i, corner_j, weight) in corners
+            iszero(weight) && continue
+            value += weight * coarse[corner_i, corner_j, k]
+        end
+        column[k] = value
+    end
+
+    return column
+end
+
+"""
     source_validity(filepath, source_name)
 
 Whether each source cell holds data, taken from the first time step. Source land cells and

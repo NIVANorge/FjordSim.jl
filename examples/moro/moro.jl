@@ -19,7 +19,7 @@
 # `~/FjordSim_data/moro/`, the Geonorge FileGDB to its own directory there, `geonorge/`, downloaded
 # (4.5 GB) by `prepare_bathymetry` if it is missing. Results go to `~/FjordSim_results/moro/`.
 #
-# # What follows `examples/oslofjorden/oslofjorden_validation.jl`, and what does not
+# # What follows `examples/oslofjorden/oslofjorden.jl`, and what does not
 #
 # The physics is the validation run's, with every coefficient that depends on grid spacing scaled
 # from 193 m to 500 m: bounded WENO for salinity, CATKE's `minimum_tke` at 7e-7, the biharmonic
@@ -49,7 +49,7 @@ FT = Float32
 years = [2023]
 
 # `oslofjorden.jl`'s top levels down to 41 m, then 10 m levels to 131 m and five levels thickening
-# from 13 to 28.5 m down to 232.5 m. `examples/oslofjorden/oslofjorden_validation.jl` splits 41-132 m into
+# from 13 to 28.5 m down to 232.5 m. `examples/oslofjorden/oslofjorden.jl` splits 41-132 m into
 # eighteen 5.06 m levels, which cut the Drammensfjord's salt-budget diffusivity below 41 m by
 # 2.6-7.7 times in 60 days (WENO's implicit vertical diffusion goes as |w|Δz). Here those levels set
 # the time step instead: flow up the steep slopes drives a single-column w of 2-5 cm/s in the bottom
@@ -76,7 +76,7 @@ FjordConfig(
     grid_config = EvenGrid(
         # 0.0098° by 0.00454°: 512 m by 505 m at 62.0°N and 488 m by 505 m at 63.43°N, 2.6 times
         # Oslofjord's 193 m. Every coefficient below that depends on grid spacing is scaled from
-        # `oslofjorden_validation.jl` by Δx = 500 m, not copied.
+        # the Oslofjord's 193 m values by Δx = 500 m, not copied.
         size       = (396, 315, length(z_faces) - 1),
         halo       = (7, 7, 7),
         longitude  = (5.12, 9.0),
@@ -193,7 +193,7 @@ FjordConfig(
         buoyancy           = SeawaterBuoyancy(FT, equation_of_state = TEOS10EquationOfState(FT)),
         closure            = BoundarySponge(
             base = (
-                # 7e-7, as in `oslofjorden.jl`. In `oslofjorden_validation.jl` 7e-6 mixed the
+                # 7e-7, as in `oslofjorden.jl`. In the Oslofjord's 2014-15 validation run 7e-6 mixed the
                 # columns towards uniform and freshened the sill basins.
                 # Over 640 days at 7e-7 the salinity RMSE against 216 casts was 1.73 g/kg and
                 # the temperature RMSE 1.22 °C. Unmeasured here: check `e` against the floor.
@@ -214,7 +214,7 @@ FjordConfig(
             viscosity   = 200.0,
             diffusivity = 100.0,
         ),
-        # Salinity bounded, as in `oslofjorden_validation.jl`, where plain WENO drove salinity
+        # Salinity bounded, as in `oslofjorden.jl`, where plain WENO drove salinity
         # below TEOS10's -32 psu floor beside a large river entering shallow columns. A
         # NamedTuple leaves any tracer it omits on `Centered()`, so it names CATKE's `e` as well.
         #

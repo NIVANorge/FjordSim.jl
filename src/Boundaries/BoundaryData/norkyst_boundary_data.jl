@@ -53,13 +53,15 @@ const NORKYST_GRID_ANGLE_VARIABLE = "angle"
     AbstractNorKystBoundaryDataConfig <: AbstractBoundaryDataConfig
 
 Supertype of the NorKyst open-boundary configs. The operational archive
-(`NorKystBoundaryDataConfig`) and the Norkyst-v3 hindcast (`NorKystHindcastBoundaryDataConfig`) publish
-the same fields on the same polar-stereographic grid with the same projection variable and depth
-axis, so `boundary_time_steps` and `boundary_source_grid` are written once against this type.
+(`NorKystBoundaryDataConfig`), the Norkyst-v3 hindcast (`NorKystHindcastBoundaryDataConfig`) and the
+operational Norkyst-v3 (`NorKystV3BoundaryDataConfig`) publish the same fields on the same
+polar-stereographic grid with the same projection variable, so `boundary_time_steps` and
+`boundary_source_grid` are written once against this type.
 
-What is *not* shared is `boundary_source_slab`: the operational collection needs its barotropic pair
-derotated from ROMS' curvilinear axes and overloads it to do that, while the hindcast publishes the
-pair already derotated and takes the generic default.
+What is *not* shared is how the barotropic pair is obtained: the operational archive's needs
+derotating from ROMS' curvilinear axes, which its `boundary_source_slab` does; the hindcast
+publishes it already derotated; the operational Norkyst-v3 publishes none, and its download writes
+the depth mean of the z-level velocities instead. The last two take the generic default.
 """
 abstract type AbstractNorKystBoundaryDataConfig <: AbstractBoundaryDataConfig end
 

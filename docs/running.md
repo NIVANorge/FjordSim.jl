@@ -29,7 +29,7 @@ configure is a no-op.
 ```bash
 julia --project -m FjordSim prepare_bathymetry --config examples/oslofjorden/oslofjorden.jl
 julia --project -m FjordSim run_simulation --config examples/oslofjorden/oslofjorden_npzd.jl
-julia --project -m FjordSim validate_simulation --config examples/oslofjorden/oslofjorden_validation.jl
+julia --project -m FjordSim validate_simulation --config examples/oslofjorden/oslofjorden.jl
 ```
 
 The same without `-m`, Julia 1.12's package entry point:

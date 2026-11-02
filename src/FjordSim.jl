@@ -27,10 +27,12 @@ export
     NorKystConfig,
     NorKystHindcastConfig,
     NorKystInitialStateConfig,
+    NorKystV3InitialStateConfig,
     NVERiversConfig,
     NVERiver,
     NorKystBoundaryDataConfig,
     NorKystHindcastBoundaryDataConfig,
+    NorKystV3BoundaryDataConfig,
     NORA3Config,
     # simulation
     RunConfig,

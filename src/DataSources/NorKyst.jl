@@ -5,6 +5,8 @@ module NorKyst
 # it is listed, downloaded and written. Nothing here names a pipeline — a config type and the hooks
 # it implements belong to the adapter in that pipeline's directory.
 
+using Dates: DateTime, @dateformat_str
+import Dates
 using Downloads
 using NCDatasets
 
@@ -30,6 +32,13 @@ const NORKYST_HINDCAST_BAROTROPIC_CATALOG_URL =
     "https://thredds.met.no/thredds/catalog/romshindcast/norkyst_v3/sdepth"
 const NORKYST_HINDCAST_BAROTROPIC_OPENDAP_URL =
     "https://thredds.met.no/thredds/dodsC/romshindcast/norkyst_v3/sdepth"
+
+# The operational Norkyst-v3 (from 2024-01-01), one directory a day under `YYYY/MM/DD/` holding every
+# member's file of 24 hourly instants on 15 z levels down to 300 m. Member `m00` is the reference
+# run; `m70` and `m71` carry two-way 160 m nests, Sulafjorden and the Oslofjord, each with its own
+# 800 m parent file. No barotropic velocity is published.
+const NORKYST_V3_CATALOG_URL = "https://thredds.met.no/thredds/catalog/fou-hi/norkystv3_his_files"
+const NORKYST_V3_OPENDAP_URL = "https://thredds.met.no/thredds/dodsC/fou-hi/norkystv3_his_files"
 
 # The daily-mean NorKyst variables and the FjordSim names they become, for the forcing and the
 # initial state. Only the intersection of this mapping with a config's `parameters` is prepared.
@@ -113,6 +122,64 @@ function list_hindcast_files(catalog_url, year, month)
     end
 
     return sort!(unique!(files))
+end
+
+"""
+    list_v3_days(catalog_url, year, month)
+
+The days of one month the operational Norkyst-v3 has a directory for, sorted. An absent month
+returns empty rather than raising, as `list_hindcast_files` does.
+"""
+function list_v3_days(catalog_url, year, month)
+    url = join((catalog_url, string(year), lpad(month, 2, '0'), "catalog.xml"), "/")
+
+    catalog = try
+        with_retries(() -> read(Downloads.download(url), String), url)
+    catch exception
+        exception isa InterruptException && rethrow()
+        @warn "Could not read the Norkyst-v3 catalog for $year-$(lpad(month, 2, '0'))" url exception
+        return Int[]
+    end
+
+    return parse_v3_days(catalog)
+end
+
+"""
+    parse_v3_days(catalog)
+
+The day numbers a Norkyst-v3 month catalog lists as sub-catalogs, sorted.
+"""
+parse_v3_days(catalog) =
+    sort!(unique!([parse(Int, match.captures[1])
+                   for match in eachmatch(r"<catalogRef\b[^>]*\bxlink:title=\"(\d{2})\"", catalog)]))
+
+"""
+    norkyst_v3_url(opendap_url, resolution, member, date)
+
+The OPeNDAP URL of the operational Norkyst-v3 file of `member` at `resolution` (`"800"` or `"160"`
+metres) for the day `date` falls in.
+"""
+norkyst_v3_url(opendap_url, resolution, member, date) = join(
+    (
+        opendap_url,
+        Dates.format(date, dateformat"yyyy/mm/dd"),
+        "norkyst$(resolution)_his_zdepth_$(Dates.format(date, dateformat"yyyymmdd"))T00Z_$(member)_AN.nc",
+    ),
+    "/",
+)
+
+"""
+    record_index(ds, date, url)
+
+The index of the record of `ds` stamped exactly `date`.
+"""
+function record_index(ds, date, url)
+    times = DateTime.(ds["time"][:])
+    index = findfirst(==(DateTime(date)), times)
+    isnothing(index) && error(
+        "No record at $date in $url; its records run from $(first(times)) to $(last(times)).",
+    )
+    return index
 end
 
 """

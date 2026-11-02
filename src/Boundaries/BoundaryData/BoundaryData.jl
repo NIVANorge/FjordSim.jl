@@ -18,7 +18,8 @@ module BoundaryData
 export download_boundary_data,
     prepare_boundary_data,
     NorKystBoundaryDataConfig,
-    NorKystHindcastBoundaryDataConfig
+    NorKystHindcastBoundaryDataConfig,
+    NorKystV3BoundaryDataConfig
 
 using Oceananigans
 using Oceananigans.Units: Time
@@ -1038,5 +1039,6 @@ end
 
 include("norkyst_boundary_data.jl")
 include("norkyst_hindcast_boundary_data.jl")
+include("norkyst_v3_boundary_data.jl")
 
 end # module

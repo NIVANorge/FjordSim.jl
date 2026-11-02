@@ -182,7 +182,7 @@ biogeochemistry and its boundary conditions are setup components of their own, b
 | Supertype | `FjordConfig` field | Hooks |
 |---|---|---|
 | `AbstractModelConfig` | `model_config` | `coupled_model(model, grid; forcing, boundary_conditions, initial_conditions, biogeochemistry, atmosphere, radiation, boundary_data_config, river_columns, stop_time, initial_time_step)` → the model, and `model_tracers(model)`: required. `model_boundary_conditions(model, pieces, grid, forcing, boundary_data_config, tracers, boundaries)`: optional, defaults to merging the pieces into Oceananigans `FieldBoundaryConditions` |
-| `AbstractBiogeochemistryConfig` | `biogeochemistry_config` | `model_biogeochemistry(config, grid)` → the biogeochemistry `coupled_model` receives; required. `examples/oslofjorden_npzd.jl` has one |
+| `AbstractBiogeochemistryConfig` | `biogeochemistry_config` | `model_biogeochemistry(config, grid)` → the biogeochemistry `coupled_model` receives; required. `examples/oslofjorden/oslofjorden_npzd.jl` has one |
 | `AbstractBoundaryConditionConfig` | `boundary_condition_configs` (a tuple, merged in order) | `boundary_condition_sides(config, grid, forcing, boundary_data_config, tracers[, boundaries])` — implement the six-argument form only if the piece reads the prepared open-boundary state; the five-argument one is reached through a forwarding fallback |
 
 The boundary-condition pieces are a plain tuple because how they combine, and what shape the result

@@ -1,7 +1,7 @@
 # Videos of a run's surface snapshots (`SurfaceSnapshotWriter`), one MP4 per variable, for one
 # file — one monthly part, for a writer with `split_times`:
 #
-#     julia --project scripts/surface_videos.jl --config examples/mjosa.jl \
+#     julia --project scripts/surface_videos.jl --config examples/mjosa/mjosa.jl \
 #         ~/FjordSim_results/mjosa/snapshots_surface_<tag>_part1.jld2 \
 #         [--sea-ice ~/FjordSim_results/mjosa/snapshots_sea_ice_<tag>_part1.jld2] [--out DIR]
 #

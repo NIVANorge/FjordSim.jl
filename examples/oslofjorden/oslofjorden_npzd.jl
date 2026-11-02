@@ -1,4 +1,4 @@
-# The `examples/oslofjorden.jl` setup with the simplest OceanBioME.jl biogeochemistry bolted on: a
+# The `examples/oslofjorden/oslofjorden.jl` setup with the simplest OceanBioME.jl biogeochemistry bolted on: a
 # four-compartment nitrogen NPZD model (nutrient, phytoplankton, zooplankton, detritus) in
 # mmol N m⁻³.
 #
@@ -33,13 +33,13 @@
 # Every file goes to this file's own data root, `fjord_data_root("oslofjorden_npzd")`, so nothing here
 # reads `oslofjorden.jl`'s data directory:
 #
-#   julia --project -m FjordSim prepare_bathymetry     --config examples/oslofjorden_npzd.jl
-#   julia --project -m FjordSim add_rivers             --config examples/oslofjorden_npzd.jl
-#   julia --project -m FjordSim download_boundary_data --config examples/oslofjorden_npzd.jl
-#   julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden_npzd.jl
-#   julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden_npzd.jl
-#   julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden_npzd.jl
-#   julia --project -m FjordSim run_simulation         --config examples/oslofjorden_npzd.jl
+#   julia --project -m FjordSim prepare_bathymetry     --config examples/oslofjorden/oslofjorden_npzd.jl
+#   julia --project -m FjordSim add_rivers             --config examples/oslofjorden/oslofjorden_npzd.jl
+#   julia --project -m FjordSim download_boundary_data --config examples/oslofjorden/oslofjorden_npzd.jl
+#   julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden/oslofjorden_npzd.jl
+#   julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden/oslofjorden_npzd.jl
+#   julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden/oslofjorden_npzd.jl
+#   julia --project -m FjordSim run_simulation         --config examples/oslofjorden/oslofjorden_npzd.jl
 #
 # `add_rivers` needs `NVE_API_KEY`, exactly as `oslofjorden.jl` does.
 

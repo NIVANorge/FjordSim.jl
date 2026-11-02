@@ -5,7 +5,7 @@ A framework for regional ocean simulations built on top of
 [NumericalEarth](https://github.com/NumericalEarth/NumericalEarth.jl).
 
 A simulation is completely defined in a config file, for example
-[`examples/oslofjorden.jl`](examples/oslofjorden.jl).
+[`examples/oslofjorden/oslofjorden.jl`](examples/oslofjorden/oslofjorden.jl).
 It contains the simulation parameters and the programming objects that define the logic of a simulation.
 It is done using Julia's main feature/paradigm — multiple dispatch.
 Providing new structs and overloading existing/new methods on them, a user can change anything.
@@ -14,15 +14,15 @@ compact, and readable.
 
 ## Examples
 
-[`examples/oslofjorden.jl`](examples/oslofjorden.jl): April 2014 to December 2015.
+[`examples/oslofjorden/oslofjorden.jl`](examples/oslofjorden/oslofjorden.jl): April 2014 to December 2015.
 
 ![Oslofjorden surface temperature, salinity and currents](artifacts/oslofjorden_surface.gif)
 
-[`examples/moro.jl`](examples/moro.jl): Møre og Romsdal, January 2023.
+[`examples/moro/moro.jl`](examples/moro/moro.jl): Møre og Romsdal, January 2023.
 
 ![Møre og Romsdal surface temperature, salinity and currents](artifacts/moro_surface.gif)
 
-[`examples/lista.jl`](examples/lista.jl): 2024.
+[`examples/lista/lista.jl`](examples/lista/lista.jl): 2024.
 
 ![Lista surface temperature, salinity and currents](artifacts/lista_surface.gif)
 
@@ -54,7 +54,7 @@ or set the destination in a config file.
 
 ## Quick start: Oslofjorden
 
-[`examples/oslofjorden.jl`](examples/oslofjorden.jl) is the reference setup: Geonorge bathymetry,
+[`examples/oslofjorden/oslofjorden.jl`](examples/oslofjorden/oslofjorden.jl) is the reference setup: Geonorge bathymetry,
 an initial state from one NorKyst-800m daily mean, NVE rivers, hourly NorKyst-800m open-boundary
 data along the southern edge, and NORA3 atmosphere. It names no forcing, so `download_forcing` and
 `prepare_forcing` report that and do nothing.
@@ -68,22 +68,22 @@ required of every setup; the others belong to optional components (see
 [What a run is made of](#what-a-run-is-made-of)):
 
 ```bash
-julia --project -m FjordSim prepare_bathymetry     --config examples/oslofjorden.jl  # required
-julia --project -m FjordSim download_initial_state --config examples/oslofjorden.jl  # optional: initial state
-julia --project -m FjordSim prepare_initial_state  --config examples/oslofjorden.jl  # optional: initial state
-julia --project -m FjordSim add_rivers             --config examples/oslofjorden.jl  # optional: rivers
-julia --project -m FjordSim download_boundary_data --config examples/oslofjorden.jl  # optional: open boundaries
-julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden.jl  # optional: open boundaries
-julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden.jl  # optional: atmosphere
-julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden.jl  # optional: atmosphere
-julia --project -m FjordSim run_simulation         --config examples/oslofjorden.jl  # the run itself
+julia --project -m FjordSim prepare_bathymetry     --config examples/oslofjorden/oslofjorden.jl  # required
+julia --project -m FjordSim download_initial_state --config examples/oslofjorden/oslofjorden.jl  # optional: initial state
+julia --project -m FjordSim prepare_initial_state  --config examples/oslofjorden/oslofjorden.jl  # optional: initial state
+julia --project -m FjordSim add_rivers             --config examples/oslofjorden/oslofjorden.jl  # optional: rivers
+julia --project -m FjordSim download_boundary_data --config examples/oslofjorden/oslofjorden.jl  # optional: open boundaries
+julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden/oslofjorden.jl  # optional: open boundaries
+julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden/oslofjorden.jl  # optional: atmosphere
+julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden/oslofjorden.jl  # optional: atmosphere
+julia --project -m FjordSim run_simulation         --config examples/oslofjorden/oslofjorden.jl  # the run itself
 ```
 
 Each subcommand is named after the function it calls, so the same steps run from the REPL:
 
 ```julia
 using FjordSim
-config = fjord_config("examples/oslofjorden.jl")
+config = fjord_config("examples/oslofjorden/oslofjorden.jl")
 prepare_bathymetry(config)
 download_initial_state(config)
 prepare_initial_state(config)
@@ -175,10 +175,10 @@ an earlier run.
 
 No setup is part of the package: every one is a standalone `.jl` file whose last expression is its
 `FjordConfig`, passed by path to `--config`. A new fjord is a new file, written from scratch or built
-on another with `base = include("oslofjorden.jl")`, as the variants in `examples/` are:
+on another with `base = include("oslofjorden.jl")`, as the variants in `examples/oslofjorden/` are:
 
 ```bash
-julia --project -m FjordSim run_simulation --config examples/oslofjorden_npzd.jl
+julia --project -m FjordSim run_simulation --config examples/oslofjorden/oslofjorden_npzd.jl
 ```
 
 ## Working with AI coding agents

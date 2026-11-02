@@ -14,14 +14,14 @@
 # Norkyst-v3 hindcast configs, the station writers, and `validate_simulation` with its Kartverket
 # water-level source.
 #
-#   julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden_validation.jl
-#   julia --project -m FjordSim add_rivers          --config examples/oslofjorden_validation.jl
-#   julia --project -m FjordSim download_boundary_data --config examples/oslofjorden_validation.jl
-#   julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden_validation.jl
-#   julia --project -m FjordSim download_atmosphere --config examples/oslofjorden_validation.jl
-#   julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden_validation.jl
-#   julia --project -m FjordSim run_simulation      --config examples/oslofjorden_validation.jl
-#   julia --project -m FjordSim validate_simulation --config examples/oslofjorden_validation.jl
+#   julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden/oslofjorden_validation.jl
+#   julia --project -m FjordSim add_rivers          --config examples/oslofjorden/oslofjorden_validation.jl
+#   julia --project -m FjordSim download_boundary_data --config examples/oslofjorden/oslofjorden_validation.jl
+#   julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden/oslofjorden_validation.jl
+#   julia --project -m FjordSim download_atmosphere --config examples/oslofjorden/oslofjorden_validation.jl
+#   julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden/oslofjorden_validation.jl
+#   julia --project -m FjordSim run_simulation      --config examples/oslofjorden/oslofjorden_validation.jl
+#   julia --project -m FjordSim validate_simulation --config examples/oslofjorden/oslofjorden_validation.jl
 #
 # `add_rivers` needs `NVE_API_KEY`, exactly as `oslofjorden.jl` does.
 #

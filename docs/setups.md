@@ -26,17 +26,19 @@ julia --project -m FjordSim prepare_bathymetry --config path/to/hardangerfjorden
 
 Two ways to write one:
 
-- **From scratch**, or by copying the example closest to the new domain: `examples/oslofjorden.jl`
-  (inner fjord, open southern edge), `examples/drammensfjorden.jl` (a small sub-domain on
-  99 m cells), `examples/lista.jl` (open coast, three open edges), `examples/moro.jl` (coast, shelf
-  and continental slope, open western and northern edges), `examples/mjosa.jl` (a closed freshwater
-  lake: NVE depth-map bathymetry, no open edge, an outflowing river closing the water budget).
+- **From scratch**, or by copying the example closest to the new domain:
+  `examples/oslofjorden/oslofjorden.jl` (inner fjord, open southern edge),
+  `examples/drammensfjorden/drammensfjorden.jl` (a small sub-domain on 99 m cells),
+  `examples/lista/lista.jl` (open coast, three open edges), `examples/moro/moro.jl` (coast, shelf
+  and continental slope, open western and northern edges), `examples/mjosa/mjosa.jl` (a closed
+  freshwater lake: NVE depth-map bathymetry, no open edge, an outflowing river closing the water
+  budget).
 - **As a variant of another setup**: `base = include("oslofjorden.jl")` resolves beside the
   including file and returns that setup's config, whose fields the variant then changes or wraps
-  (`examples/oslofjorden_validation.jl`, `examples/oslofjorden_npzd.jl`). The included script's
-  top-level names (`data_root`, `FT`) become the variant's globals too, so assign the variant's own
-  after the `include`. `gcp/fjordsim-gcp` uploads every `.jl` file beside the config, so the
-  include works on the VM as well.
+  (`examples/oslofjorden/oslofjorden_validation.jl`, `examples/oslofjorden/oslofjorden_npzd.jl`).
+  The included script's top-level names (`data_root`, `FT`) become the variant's globals too, so
+  assign the variant's own after the `include`. `gcp/fjordsim-gcp` uploads every `.jl` file beside
+  the config, so the include works on the VM as well.
 
 Name the file after the fjord, lowercase, the same name `fjord_data_root` gets: `gcp/fjordsim-gcp`
 takes the basename as the fjord whose data and results directories it stages.
@@ -57,7 +59,7 @@ step whose config is `nothing` is a no-op. A setup naming a `run_config` must al
 | `boundary_data_config` | `NorKystBoundaryDataConfig`, `NorKystHindcastBoundaryDataConfig` | `download_boundary_data`, `prepare_boundary_data` | `boundaries.nc` | any open edge; `OpenLateralBoundaryFromData` |
 | `atmosphere_config` | `NORA3Config` | `download_atmosphere`, `prepare_atmosphere` | `atmosphere.nc` | the prescribed atmosphere and radiation the surface fluxes are computed from |
 | `model_config` | `CoupledHydrostaticModel` | `run_simulation` | — | running at all: what the model is |
-| `biogeochemistry_config` | none (`examples/oslofjorden_npzd.jl` has one) | `run_simulation` | — | a biogeochemical model |
+| `biogeochemistry_config` | none (`examples/oslofjorden/oslofjorden_npzd.jl` has one) | `run_simulation` | — | a biogeochemical model |
 | `boundary_condition_configs` | a tuple of `AirSeaFluxes`, `QuadraticBottomDrag`, `OpenLateralBoundaryFromData` | `run_simulation` | — | running at all; `()` for the model's defaults |
 | `run_config` | `RunConfig` | `run_simulation`, `validate_simulation` | results | running at all: how the model is run |
 

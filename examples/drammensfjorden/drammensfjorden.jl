@@ -12,15 +12,15 @@
 #
 # # Preparing and running it
 #
-#   julia --project -m FjordSim prepare_bathymetry     --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim download_initial_state --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim prepare_initial_state  --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim add_rivers             --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim download_boundary_data --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim prepare_boundary_data  --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim download_atmosphere    --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim prepare_atmosphere     --config examples/drammensfjorden.jl
-#   julia --project -m FjordSim run_simulation         --config examples/drammensfjorden.jl   # needs a GPU
+#   julia --project -m FjordSim prepare_bathymetry     --config examples/drammensfjorden/drammensfjorden.jl
+#   julia --project -m FjordSim download_initial_state --config examples/drammensfjorden/drammensfjorden.jl
+#   julia --project -m FjordSim prepare_initial_state  --config examples/drammensfjorden/drammensfjorden.jl
+#   julia --project -m FjordSim add_rivers             --config examples/drammensfjorden/drammensfjorden.jl
+#   julia --project -m FjordSim download_boundary_data --config examples/drammensfjorden/drammensfjorden.jl
+#   julia --project -m FjordSim prepare_boundary_data  --config examples/drammensfjorden/drammensfjorden.jl
+#   julia --project -m FjordSim download_atmosphere    --config examples/drammensfjorden/drammensfjorden.jl
+#   julia --project -m FjordSim prepare_atmosphere     --config examples/drammensfjorden/drammensfjorden.jl
+#   julia --project -m FjordSim run_simulation         --config examples/drammensfjorden/drammensfjorden.jl   # needs a GPU
 
 using FjordSim
 using Oceananigans:

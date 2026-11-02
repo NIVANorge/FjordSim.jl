@@ -898,7 +898,7 @@ schedule. One file per station.
 The counterpart of `SnapshotWriter` for validation rather than for maps. A snapshot of the full
 domain costs `Nx * Ny * Nz` per record, so the cadence a model-observation comparison needs — hourly
 for a current meter, ten-minutely for a tide gauge — is unaffordable over a multi-year window,
-while the same cadence at a dozen points is nothing. `examples/oslofjorden_validation.jl` writes
+while the same cadence at a dozen points is nothing. `examples/oslofjorden/oslofjorden_validation.jl` writes
 59 GB of daily 3D fields and about 150 MB of station series beside them.
 
 One `NetCDFWriter` per station rather than one for all of them, because Oceananigans takes a single
@@ -2644,7 +2644,7 @@ and return it without running it.
 Split from `run_simulation` so a run can be inspected or stepped by hand:
 
 ```julia
-simulation = build_simulation(fjord_config("examples/oslofjorden.jl"))
+simulation = build_simulation(fjord_config("examples/oslofjorden/oslofjorden.jl"))
 run!(simulation)
 ```
 

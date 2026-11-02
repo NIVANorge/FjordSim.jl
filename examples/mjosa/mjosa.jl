@@ -9,11 +9,11 @@
 #
 # # Preparing and running it
 #
-#   julia --project -m FjordSim prepare_bathymetry  --config examples/mjosa.jl
-#   julia --project -m FjordSim add_rivers          --config examples/mjosa.jl   # needs NVE_API_KEY
-#   julia --project -m FjordSim download_atmosphere --config examples/mjosa.jl
-#   julia --project -m FjordSim prepare_atmosphere  --config examples/mjosa.jl
-#   julia --project -m FjordSim run_simulation      --config examples/mjosa.jl   # needs a GPU
+#   julia --project -m FjordSim prepare_bathymetry  --config examples/mjosa/mjosa.jl
+#   julia --project -m FjordSim add_rivers          --config examples/mjosa/mjosa.jl   # needs NVE_API_KEY
+#   julia --project -m FjordSim download_atmosphere --config examples/mjosa/mjosa.jl
+#   julia --project -m FjordSim prepare_atmosphere  --config examples/mjosa/mjosa.jl
+#   julia --project -m FjordSim run_simulation      --config examples/mjosa/mjosa.jl   # needs a GPU
 
 using FjordSim
 using Oceananigans:

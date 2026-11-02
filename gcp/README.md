@@ -118,7 +118,7 @@ name one); and anything about the NVE key (`run` takes it from your environment)
 Every variable is also overridable per invocation, so a one-off needs no edit at all:
 
 ```bash
-BUCKET=gs://other-bucket gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --gpu
+BUCKET=gs://other-bucket gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu
 ```
 
 ### 2. Build and push the image
@@ -138,7 +138,7 @@ being billed for a GPU that is doing nothing.
 ```bash
 gcp/fjordsim-gcp up                                  # launcher job: create or start the VM
 gcp/fjordsim-gcp bootstrap                           # driver, Docker, toolkit, image pull
-gcp/fjordsim-gcp run --config examples/drammensfjorden.jl --steps run_simulation --gpu
+gcp/fjordsim-gcp run --config examples/drammensfjorden/drammensfjorden.jl --steps run_simulation --gpu
 gcp/fjordsim-gcp logs <run-id>
 gcp/fjordsim-gcp pull-results drammensfjorden
 gcp/fjordsim-gcp down                                # stop billing; the disk survives
@@ -160,11 +160,11 @@ because the disk is gone.
 Preparing on a laptop is fine and often simplest; only the simulation really needs the cloud.
 
 ```bash
-julia --project -m FjordSim prepare_bathymetry --config examples/drammensfjorden.jl
-julia --project -m FjordSim add_rivers         --config examples/drammensfjorden.jl
+julia --project -m FjordSim prepare_bathymetry --config examples/drammensfjorden/drammensfjorden.jl
+julia --project -m FjordSim add_rivers         --config examples/drammensfjorden/drammensfjorden.jl
 
 gcp/fjordsim-gcp push-data drammensfjorden          # only the top-level *.nc
-gcp/fjordsim-gcp run --config examples/drammensfjorden.jl --steps run_simulation --gpu
+gcp/fjordsim-gcp run --config examples/drammensfjorden/drammensfjorden.jl --steps run_simulation --gpu
 gcp/fjordsim-gcp pull-results drammensfjorden
 ```
 
@@ -177,11 +177,11 @@ the raw sources (`norkyst_hourly/`, `norkyst_initial/`, `nora3/`, the FileGDB), 
 Better for the slow steps, and it keeps the raw sources off your disk entirely.
 
 ```bash
-gcp/fjordsim-gcp run --config examples/oslofjorden.jl \
+gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl \
     --steps prepare_bathymetry,download_initial_state,prepare_initial_state,add_rivers,download_boundary_data,prepare_boundary_data
-gcp/fjordsim-gcp run --config examples/oslofjorden.jl \
+gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl \
     --steps download_atmosphere,prepare_atmosphere
-gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --gpu
+gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu
 ```
 
 Omitting `--gpu` hides the GPU from the container, and `architecture = :auto` resolves to `CPU()` —
@@ -212,12 +212,12 @@ gcp/fjordsim-gcp run --config path/to/myfjord.jl --steps prepare_bathymetry \
 ### A one-off experiment
 
 `--config` is a `.jl` file, uploaded to the bucket together with every `.jl` file beside it and
-fetched by the VM, so a config may `include` a sibling — as `examples/oslofjorden_npzd.jl` includes
+fetched by the VM, so a config may `include` a sibling — as `examples/oslofjorden/oslofjorden_npzd.jl` includes
 `oslofjorden.jl` — and trying a variant never means rebuilding the image. Name the file after the
 fjord — the basename is what roots the staged directories.
 
 ```bash
-gcp/fjordsim-gcp run --config examples/oslofjorden_npzd.jl --steps run_simulation --gpu
+gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden_npzd.jl --steps run_simulation --gpu
 ```
 
 ### A setup with its own environment
@@ -254,10 +254,10 @@ A Spot VM (the default) will interrupt a long run. Recovery is `up`, `bootstrap`
 id with `--resume`:
 
 ```bash
-gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020
+gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020
 # after a preemption:
 gcp/fjordsim-gcp up && gcp/fjordsim-gcp bootstrap
-gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020 --resume
+gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020 --resume
 ```
 
 `--resume` stages the newest checkpoint in `results/<fjord>/` back down and sets `pickup = true`
@@ -265,7 +265,7 @@ gcp/fjordsim-gcp run --config examples/oslofjorden.jl --steps run_simulation --g
 resumed writers start files of their own, and the finished output stays in the bucket. The sync
 keeps only the two newest checkpoints in the bucket — the newest, and one in case its upload is
 incomplete — since every one of `mjosa`'s is 580 MB. This only works if the setup names
-a `CheckpointWriter` — `examples/oslofjorden.jl` and `examples/drammensfjorden.jl` both do.
+a `CheckpointWriter` — `examples/oslofjorden/oslofjorden.jl` and `examples/drammensfjorden/drammensfjorden.jl` both do.
 
 Checkpoint filenames carry no run tag and are scoped to `results_root`, so **two live runs must not
 share a fjord**. With a single shared VM that is easy to do by accident. `fjordsim-gcp` refuses to
@@ -291,7 +291,7 @@ something to plot. A writer with `split_times` starts a new file part at each of
 part whose successor exists is finished: the sync uploads it and deletes it from the VM's disk, so
 the disk holds only the parts being written. A year of output in one file fills the 200 GB disk —
 `mjosa`'s 3-hourly 3D snapshots reached 110 GB in 185 days — so give a long run's writers
-`split_times` (monthly in `examples/mjosa.jl`).
+`split_times` (monthly in `examples/mjosa/mjosa.jl`).
 
 ### When a run finishes
 

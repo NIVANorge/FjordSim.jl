@@ -40,15 +40,15 @@
 #
 # # Preparing and running it
 #
-#   julia --project -m FjordSim prepare_bathymetry     --config examples/oslofjorden.jl
-#   julia --project -m FjordSim download_initial_state --config examples/oslofjorden.jl
-#   julia --project -m FjordSim prepare_initial_state  --config examples/oslofjorden.jl
-#   julia --project -m FjordSim add_rivers             --config examples/oslofjorden.jl
-#   julia --project -m FjordSim download_boundary_data --config examples/oslofjorden.jl
-#   julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden.jl
-#   julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden.jl
-#   julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden.jl
-#   julia --project -m FjordSim run_simulation         --config examples/oslofjorden.jl   # needs a GPU
+#   julia --project -m FjordSim prepare_bathymetry     --config examples/oslofjorden/oslofjorden.jl
+#   julia --project -m FjordSim download_initial_state --config examples/oslofjorden/oslofjorden.jl
+#   julia --project -m FjordSim prepare_initial_state  --config examples/oslofjorden/oslofjorden.jl
+#   julia --project -m FjordSim add_rivers             --config examples/oslofjorden/oslofjorden.jl
+#   julia --project -m FjordSim download_boundary_data --config examples/oslofjorden/oslofjorden.jl
+#   julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden/oslofjorden.jl
+#   julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden/oslofjorden.jl
+#   julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden/oslofjorden.jl
+#   julia --project -m FjordSim run_simulation         --config examples/oslofjorden/oslofjorden.jl   # needs a GPU
 
 using FjordSim
 using Oceananigans:

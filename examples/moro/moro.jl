@@ -5,21 +5,21 @@
 #
 # # Preparing and running it
 #
-#   julia --project -m FjordSim prepare_bathymetry     --config examples/moro.jl
-#   julia --project -m FjordSim download_initial_state --config examples/moro.jl
-#   julia --project -m FjordSim prepare_initial_state  --config examples/moro.jl
-#   julia --project -m FjordSim add_rivers             --config examples/moro.jl
-#   julia --project -m FjordSim download_boundary_data --config examples/moro.jl
-#   julia --project -m FjordSim prepare_boundary_data  --config examples/moro.jl
-#   julia --project -m FjordSim download_atmosphere    --config examples/moro.jl
-#   julia --project -m FjordSim prepare_atmosphere     --config examples/moro.jl
-#   julia --project -m FjordSim run_simulation         --config examples/moro.jl   # needs a GPU
+#   julia --project -m FjordSim prepare_bathymetry     --config examples/moro/moro.jl
+#   julia --project -m FjordSim download_initial_state --config examples/moro/moro.jl
+#   julia --project -m FjordSim prepare_initial_state  --config examples/moro/moro.jl
+#   julia --project -m FjordSim add_rivers             --config examples/moro/moro.jl
+#   julia --project -m FjordSim download_boundary_data --config examples/moro/moro.jl
+#   julia --project -m FjordSim prepare_boundary_data  --config examples/moro/moro.jl
+#   julia --project -m FjordSim download_atmosphere    --config examples/moro/moro.jl
+#   julia --project -m FjordSim prepare_atmosphere     --config examples/moro/moro.jl
+#   julia --project -m FjordSim run_simulation         --config examples/moro/moro.jl   # needs a GPU
 #
 # `add_rivers` needs `NVE_API_KEY` (free at https://hydapi.nve.no/Users). Data goes to
 # `~/FjordSim_data/moro/`, the Geonorge FileGDB to its own directory there, `geonorge/`, downloaded
 # (4.5 GB) by `prepare_bathymetry` if it is missing. Results go to `~/FjordSim_results/moro/`.
 #
-# # What follows `examples/oslofjorden_validation.jl`, and what does not
+# # What follows `examples/oslofjorden/oslofjorden_validation.jl`, and what does not
 #
 # The physics is the validation run's, with every coefficient that depends on grid spacing scaled
 # from 193 m to 500 m: bounded WENO for salinity, CATKE's `minimum_tke` at 7e-7, the biharmonic
@@ -49,7 +49,7 @@ FT = Float32
 years = [2023]
 
 # `oslofjorden.jl`'s top levels down to 41 m, then 10 m levels to 131 m and five levels thickening
-# from 13 to 28.5 m down to 232.5 m. `examples/oslofjorden_validation.jl` splits 41-132 m into
+# from 13 to 28.5 m down to 232.5 m. `examples/oslofjorden/oslofjorden_validation.jl` splits 41-132 m into
 # eighteen 5.06 m levels, which cut the Drammensfjord's salt-budget diffusivity below 41 m by
 # 2.6-7.7 times in 60 days (WENO's implicit vertical diffusion goes as |w|Δz). Here those levels set
 # the time step instead: flow up the steep slopes drives a single-column w of 2-5 cm/s in the bottom
@@ -148,7 +148,7 @@ FjordConfig(
         # Surna's is the one above Trollheim kraftstasjon: the plant's outlet station (112.33.0)
         # lacks 18 days of 2023. Discharge is still every river's REGINE normal; attach
         # `discharge_station`s to the large rivers (Driva, Rauma, Surna, Eira, Aura) as
-        # `examples/lista.jl` does.
+        # `examples/lista/lista.jl` does.
         outlets = [
             NVERiver(vassdragsnr = "109.A0", name = "Driva", temperature_station = "109.44.0"),
             NVERiver(vassdragsnr = "112.A0", name = "Surna", temperature_station = "112.35.0"),

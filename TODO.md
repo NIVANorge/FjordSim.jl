@@ -1,8 +1,8 @@
 # TODO
 
-## Validation of `examples/oslofjorden_validation.jl`
+## Validation of `examples/oslofjorden/oslofjorden_validation.jl`
 
-Code changes found while validating `examples/oslofjorden_validation.jl` against the NIVA CTD casts,
+Code changes found while validating `examples/oslofjorden/oslofjorden_validation.jl` against the NIVA CTD casts,
 NorKyst v3 and FjordOs. Unless a section says otherwise, numbers quote the full 640-day run (stamp
 20261014T142318, 2014-04-01 to 2015-12-31), archived as `oslofjorden_validation_2026-10-16`; its
 report and scripts are in that results directory under `validation/report_full/`.
@@ -10,8 +10,8 @@ report and scripts are in that results directory under `validation/report_full/`
 ### Vertical mixing is too strong
 
 This probably applies to every setup and example: `oslofjorden` and `drammensfjorden` use
-`CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6)`. `examples/lista.jl` has moved to 7e-7. The
-`examples/oslofjorden.jl` comment shows that this TKE floor, not the prognostic TKE, sets κ below about 6 m.
+`CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6)`. `examples/lista/lista.jl` has moved to 7e-7. The
+`examples/oslofjorden/oslofjorden.jl` comment shows that this TKE floor, not the prognostic TKE, sets κ below about 6 m.
 It argues that 7e-6 is at the low end of the measured basin diffusivities, but the first run at 7e-6
 (days 0–298, 2014-04 to 2015-01) contradicts that:
 
@@ -26,7 +26,7 @@ Tasks:
       example from the tracer variance budget, and compare it with CATKE's κ.
 - [ ] Revisit `HorizontalScalarBiharmonicDiffusivity`'s κ. NorKyst uses a 10 m² s⁻¹ harmonic κ on
       tracers.
-- [ ] Decide whether `examples/drammensfjorden.jl` follows `examples/oslofjorden.jl` to 7e-7, and
+- [ ] Decide whether `examples/drammensfjorden/drammensfjorden.jl` follows `examples/oslofjorden/oslofjorden.jl` to 7e-7, and
       update its rationale comment. The 640-day run at 7e-7 scores salinity RMSE 1.73 g/kg
       and temperature RMSE 1.22 °C against 216 casts (FjordOs 2.79 and 2.34), unbiased in
       temperature, but 0.4–1.4 g/kg too fresh below 5 m and overheats the 2–3 m deep cells (see
@@ -36,7 +36,7 @@ Tasks:
 
 The gridding and sill fixes are in (linear gridding of the soundings, `preserve_sills`,
 `raw_resolution_factor = 4`, `max_slope_factor = 0.5`, faces to −467 m); the measurements are in the
-bathymetry comments of `examples/oslofjorden.jl`. On the validation box the model columns at the CTD stations are within
+bathymetry comments of `examples/oslofjorden/oslofjorden.jl`. On the validation box the model columns at the CTD stations are within
 15 m of the casts except Im2 (165 against 201 m) in the narrow Drøbak Sound, and Drøbak is 23.5 m
 against the real ~20 m.
 
@@ -44,7 +44,7 @@ against the real ~20 m.
       `lista` and `moro`: all now set `raise_boundary_pockets`, `oslofjorden` and its variants have
       the 39 levels, and `oslofjorden` and `drammensfjorden` predate the linear gridding and
       `preserve_sills`. Their existing checkpoints are invalid.
-- [ ] Re-measure `examples/lista.jl`'s `z_faces` gate on the linear gridding.
+- [ ] Re-measure `examples/lista/lista.jl`'s `z_faces` gate on the linear gridding.
 - [ ] Check that `raise_boundary_pockets` removed the validation box's open-edge pits once its
       bathymetry is re-prepared: wet southern-row cells walled off from the interior, where the
       640-day run's domain minimum sat below −1.5 °C on 591 of 640 days, at i = 2, 76, 84, 92, 94,
@@ -78,7 +78,7 @@ Full run, harmonic fits from 2014-05-01 to 2015-12-31, amplitudes in cm:
   (r = 0.90), but its standard deviation is 14–16 % too small and the largest surges are
   18–25 % too low. That is worth a look at the boundary's subtidal `zeta` too, separately.
 
-The correction is implemented in `examples/oslofjorden_validation.jl` only: `TideCorrectedBoundaries`
+The correction is implemented in `examples/oslofjorden/oslofjorden_validation.jl` only: `TideCorrectedBoundaries`
 wraps the hindcast boundary config and rescales each constituent by `VIKER_TIDE_GAINS` after the
 regrid (`correct_boundary_tide!`), velocities by the same complex gain as the sea level.
 
@@ -223,7 +223,7 @@ columns. No observations cover those bays.
 - [ ] `fjordsim-gcp logs` runs `tail -f` and never returns. Add a `--lines N` mode that prints and
       exits.
 
-## `examples/mjosa.jl`
+## `examples/mjosa/mjosa.jl`
 
 - [ ] Bring it up: `add_rivers`, the NORA3 steps and a short GPU run (the bathymetry is prepared and
       `z_faces` fitted to its 443.3 m deepest cell). Check the Vorma outlet's mean against the

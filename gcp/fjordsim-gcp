@@ -231,7 +231,7 @@ cmd_run() {
     [[ -n "$steps" ]] || die "--steps is required."
     need PROJECT_ID; need BUCKET; need IMAGE_URI
 
-    [[ "$config_ref" == *.jl ]] || die "--config takes a .jl config file, e.g. examples/oslofjorden.jl."
+    [[ "$config_ref" == *.jl ]] || die "--config takes a .jl config file, e.g. examples/oslofjorden/oslofjorden.jl."
     [[ -f "$config_ref" ]] || die "config file $config_ref does not exist."
     local fjord
     fjord="$(basename "$config_ref" .jl)"

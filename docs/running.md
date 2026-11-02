@@ -5,7 +5,7 @@ consistent. The quick start and the `run_simulation` fields are in the `README.m
 cloud GPU is in `gcp/README.md`.
 
 `--config` is the only option of every subcommand, and it is required. It takes the path to a setup:
-a `.jl` file whose last expression is a `FjordConfig`, such as `examples/oslofjorden.jl`. No setup
+a `.jl` file whose last expression is a `FjordConfig`, such as `examples/oslofjorden/oslofjorden.jl`. No setup
 is part of the package. Everything else is a field of that config.
 
 ## The steps
@@ -27,15 +27,15 @@ configure is a no-op.
 | `validate_simulation` | a finished run | `<results_root>/validation/` | only Kartverket water level is fetched automatically |
 
 ```bash
-julia --project -m FjordSim prepare_bathymetry --config examples/oslofjorden.jl
-julia --project -m FjordSim run_simulation --config examples/oslofjorden_npzd.jl
-julia --project -m FjordSim validate_simulation --config examples/oslofjorden_validation.jl
+julia --project -m FjordSim prepare_bathymetry --config examples/oslofjorden/oslofjorden.jl
+julia --project -m FjordSim run_simulation --config examples/oslofjorden/oslofjorden_npzd.jl
+julia --project -m FjordSim validate_simulation --config examples/oslofjorden/oslofjorden_validation.jl
 ```
 
 The same without `-m`, Julia 1.12's package entry point:
 
 ```bash
-julia --project -e 'using FjordSim; FjordSim.main(ARGS)' -- prepare_bathymetry --config examples/oslofjorden.jl
+julia --project -e 'using FjordSim; FjordSim.main(ARGS)' -- prepare_bathymetry --config examples/oslofjorden/oslofjorden.jl
 ```
 
 `scripts/surface_videos.jl` turns one file of a `SurfaceSnapshotWriter` (and, with `--sea-ice`, the
@@ -52,7 +52,7 @@ Each subcommand is a method on the generic function of the same name, taking the
 ```julia
 using Pkg; Pkg.activate(".")
 using FjordSim
-config = fjord_config("examples/oslofjorden.jl")
+config = fjord_config("examples/oslofjorden/oslofjorden.jl")
 prepare_bathymetry(config)
 
 using Debugger
@@ -74,9 +74,9 @@ some config edits silently do nothing until the files are rewritten.
 (`FromInitialState` refuses a file prepared for another `start_date`):
 
 ```bash
-julia --project -m FjordSim add_rivers          --config examples/oslofjorden.jl
-julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden.jl
-julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden.jl
+julia --project -m FjordSim add_rivers          --config examples/oslofjorden/oslofjorden.jl
+julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden/oslofjorden.jl
+julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden/oslofjorden.jl
 ```
 
 **`z_faces`, the grid `size`, or any `bathymetry_config` smoothing knob.** `z_faces` is written into
@@ -86,9 +86,9 @@ boundary prepares build their masks from comes from the same file. Re-run, in th
 them:
 
 ```bash
-julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden.jl
-julia --project -m FjordSim add_rivers          --config examples/oslofjorden.jl
-julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden.jl
+julia --project -m FjordSim prepare_bathymetry  --config examples/oslofjorden/oslofjorden.jl
+julia --project -m FjordSim add_rivers          --config examples/oslofjorden/oslofjorden.jl
+julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden/oslofjorden.jl
 ```
 
 `prepare_atmosphere` is not in this list: the atmosphere is 2D on its own lon/lat grid. Existing

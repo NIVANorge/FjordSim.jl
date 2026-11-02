@@ -16,7 +16,7 @@ using ..Validation: validate_simulation
     fjord_config(path)
 
 Load a config file and return the `AbstractFjordConfig` it evaluates to: a Julia script whose last
-expression is a `FjordConfig`, or another subtype, such as `examples/oslofjorden.jl`. A setup is
+expression is a `FjordConfig`, or another subtype, such as `examples/oslofjorden/oslofjorden.jl`. A setup is
 never part of the package, so this is how every one of them is read, by `--config` and from the REPL
 alike.
 
@@ -148,14 +148,14 @@ Subcommands, in the order a setup is prepared and run:
 
 Options:
   --config FILE    The setup: a Julia script whose last expression is a FjordConfig, e.g.
-                   examples/oslofjorden.jl. Required.
+                   examples/oslofjorden/oslofjorden.jl. Required.
   -h, --help       Show this message.
 
 Everything other than which setup to prepare is stated in the setup itself, so this is the whole
 command-line surface. The same steps are available from the REPL:
 
   using FjordSim
-  config = fjord_config("examples/oslofjorden.jl")
+  config = fjord_config("examples/oslofjorden/oslofjorden.jl")
   prepare_bathymetry(config)
 """
 

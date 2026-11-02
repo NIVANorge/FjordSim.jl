@@ -893,7 +893,8 @@ FjordConfig(
             # Daily. One record of five fields on this grid is 225 MB, so three-hourly over 730 days
             # would be about 1.3 TB against 164 GB daily. The full fields are for maps, sections
             # and the M2 amplitude and phase maps, none of which needs sub-daily sampling —
-            # everything that does is a station below. A new file every month, ~7 GB.
+            # everything that does is the surface file or a station below. A new file every
+            # month, ~7 GB.
             #
             # `e` is CATKE's TKE tracer, in for diagnosis: the 2026-08-25 run died at day 11.5 on a
             # TEOS10 `sqrt(Sᴬ + 32)` DomainError — one cell below -32 psu — and the file carried
@@ -907,16 +908,20 @@ FjordConfig(
                 split_times        = monthly_splits,
                 overwrite_existing = true,
             ),
+            # The top level of T, S, u and v, and `η`, hourly, a new file every month. One record
+            # is 5.8 MB on this grid, about 4.2 GB a month and 100 GB over 730 days.
+            #
             # `η` in JLD2 because it cannot go in the NetCDF file: Oceananigans' NetCDF writer
             # cannot emit a `(Center, Center, Nothing)` user output at all — the free surface
             # asks for a singleton `z_aaf = [0.0]` against the grid's own `z_aaf`, and it fails
             # beside the 3D fields, alone in its own file, and with grid metrics off. See
             # `FieldSnapshotWriter`.
-            FieldSnapshotWriter(
+            SurfaceSnapshotWriter(
                 name               = :surface,
                 output_file        = "snapshots_surface.jld2",
-                variables          = (:η,),
-                interval           = 1day,
+                variables          = (:η, :T, :S, :u, :v),
+                interval           = 1hour,
+                split_times        = monthly_splits,
                 overwrite_existing = true,
             ),
             # Ice and snow thickness and ice concentration, daily, a new file every month.

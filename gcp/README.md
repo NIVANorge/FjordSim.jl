@@ -4,61 +4,103 @@
 `download_atmosphere` is close to 10000 OPeNDAP reads per simulated year and the Geonorge
 bathymetry source is a 4.5 GB FileGDB, so both halves are often better off in the cloud.
 
-This directory runs any pipeline step of any setup on a shared GCE VM, and moves data between your
-machine and a Cloud Storage bucket. Nothing about a fjord or a step is baked into the image: which
-setup and which steps are arguments to one launch.
+This directory runs any pipeline step of any setup on shared GCE VMs — a GPU VM for the
+simulation, and optionally CPU-only preprocessing VMs for the downloads and regrids — and moves data
+between your machine and a Cloud Storage bucket. Nothing about a fjord or a step is baked into the
+image: which setup and which steps are arguments to one launch.
 
-## The shape of this deployment
+## The deployment model
 
-**The workflow never creates, starts, stops or deletes an instance itself, and never sets instance
-metadata** — the operator account it runs as has no permission to. Two Cloud Run jobs, owned by an
-admin, create or start one fixed VM; after that the workflow drives it over SSH with sudo, and that
-is the whole interface. Everything here is built around that:
+The VMs come up one of two ways, picked by `gcp/config.env`:
 
-- There is **one** VM, named by `VM_NAME` (`fjordsim-gpu`), not one per run.
+- **Direct mode** — no launch job configured. `fjordsim-gcp` creates, starts, stops and deletes the
+  VMs itself with `gcloud compute instances`: for an operator with Compute Engine rights in the
+  project, such as their own.
+- **Job mode** — launch jobs configured. For a project where the operator has no Compute Engine
+  admin rights: someone who has them (the *admin*) sets up Cloud Run jobs that create or start
+  fixed VMs, and the operator executes those jobs. `fjordsim-gcp` then never creates, starts, stops
+  or deletes an instance itself, and never sets instance metadata.
+
+Either way, everything after `up` goes over SSH with sudo, and is the same in both modes:
+
+- VMs are **long-lived and shared**, not one per run: one GPU VM, `VM_NAME`, and optionally the
+  preprocessing VMs `PREP_VM_PREFIX-1` ... `-N`. Every subcommand that acts on a VM takes
+  `--vm N|NAME` to pick one; the default is the GPU VM.
 - There is **no startup script** — `run` ships a script over `scp` and detaches it with `nohup`.
-- Nothing self-deletes. `down` shuts the VM down *from inside* (`sudo poweroff`), which is the only
-  stop available without `compute.instances.stop`.
-- The VM's zone is **discovered, never configured**: the launcher tries `europe-west4-{a,b,c}` and
-  takes whichever has L4 capacity.
-- Both jobs create the same machine — `g2-standard-8` (8 vCPU, 32 GB) with one NVIDIA L4, a 200 GB
-  `pd-balanced` Ubuntu 22.04 boot disk, and `fjordsim-sa` as its service account — and differ only
-  in provisioning model and run-duration cap (read from the job specs with
-  `gcloud run jobs describe`, 2026-10-14):
+- Nothing self-deletes. `down` shuts a VM down *from inside* (`sudo poweroff`), which needs no
+  `compute.instances.stop`; `down --prep` stops every preprocessing VM; `delete` removes a VM and
+  its disk, where the operator may delete instances.
+- A VM's zone is **discovered, never configured**: whoever created it was free to pick whichever
+  zone had capacity.
 
-  | Job | `up` flag | Provisioning | `--max-run-duration` |
-  |---|---|---|---|
-  | `fjordsim-launch-spot` | (default) | Spot | 24h |
-  | `fjordsim-launch-standard` | `--standard` | on-demand | 168h |
+### Direct mode
 
-The operator account's access, measured with `testIamPermissions` (2026-09-16):
+`up` creates a missing VM from `config.env`, trying each zone in `ZONES` in order and moving on only
+when a zone has no capacity or no such machine type, and starts a stopped one in the zone it lives
+in. Every VM gets Ubuntu 22.04, a `pd-balanced` boot disk, OS Login and the `cloud-platform` scope,
+running as `SERVICE_ACCOUNT` (the project's default compute service account if empty).
 
-| Have | Scope |
+| VM | Created with |
 |---|---|
-| `run.jobs.run`, `run.jobs.get`, `run.executions.*`, `run.tasks.*` | the two launcher jobs |
-| `compute.instances.osAdminLogin` / `.osLogin` — SSH **with sudo** | the instance `fjordsim-gpu` only |
-| `compute.instances.get` / `.list` | project-wide |
-| `roles/storage.admin` | `gs://fjordsim` |
-| `iam.serviceAccounts.actAs` | `fjordsim-sa@nivatest-1.iam.gserviceaccount.com` |
-| AR push (`uploadArtifacts`, `tags.create/update`) | `europe-west1-docker.pkg.dev/niva-cd/vertex-images` |
+| GPU, `up` | `GPU_MACHINE_TYPE`, `GPU_ACCELERATOR` if set, `GPU_DISK_SIZE`; Spot, with `STOP` as the termination action: a preemption stops it and keeps its disk |
+| GPU, `up --standard` | the same, on-demand |
+| preprocessing, `up --prep N` | `PREP_MACHINE_TYPE`, `PREP_DISK_SIZE`, on-demand; `-1` ... `-N`. Without `N`, `up --prep` starts every existing one. |
 
-| Do **not** have | Consequence |
+A VM keeps the provisioning model it was created with: `delete` it to switch between Spot and
+on-demand. Size the GPU disk for the data directory plus the output written between two syncs
+("Watching a run"), and a preprocessing disk for one fjord's data directory — the Geonorge FileGDB
+alone is 4.5 GB.
+
+The operator needs `roles/compute.instanceAdmin.v1` on the project (it includes OS Login with
+sudo), `iam.serviceAccounts.actAs` on the VMs' service account, the bucket and registry access in
+"What the operator needs" below, and a way in on port 22: the default network's
+`default-allow-ssh` firewall rule, or IAP TCP forwarding from `35.235.240.0/20`. The VMs' service
+account needs what "What the admin provides" lists for it.
+
+### Job mode
+
+#### What the admin provides
+
+| Piece | What it must do |
 |---|---|
-| `compute.instances.create/start/stop/delete/setMetadata` | no per-run VMs, no startup script, no self-delete, no real stop |
-| `run.jobs.runWithOverrides` | the jobs' retry counts and zone list are fixed |
-| `secretmanager.*` | the NVE key comes from your own environment, not Secret Manager |
+| GPU launch jobs, `LAUNCH_JOB_SPOT` and `LAUNCH_JOB_STANDARD` | Create the instance `VM_NAME` if it is gone, start it if it is stopped, and succeed if it is running. One NVIDIA GPU, Ubuntu 22.04, OS Login, and a boot disk sized as in direct mode. `up` executes the first, `up --standard` the second — conventionally Spot and on-demand. |
+| Preprocessing launch job, `LAUNCH_JOB_PREP` (optional) | Task *i* (from 1) creates or starts `PREP_VM_PREFIX-i`. No GPU, Ubuntu 22.04, OS Login, and a boot disk sized as in direct mode. |
+| Preprocessing stop job, `STOP_JOB_PREP` (optional) | Stops every preprocessing VM. |
+| The VMs' service account | Read and write on the bucket; `roles/artifactregistry.reader` on the image's repository; the `cloud-platform` scope. |
+
+#### What the operator needs
+
+| Permission | On |
+|---|---|
+| `run.jobs.run` | every launch and stop job |
+| `run.executions.get` | the GPU launch jobs: `up` waits for the execution to finish |
+| `compute.instances.osAdminLogin` — SSH **with sudo** | every VM |
+| `compute.instances.get`, `.list` | the project: zone discovery and status |
+| `roles/storage.admin` (or object admin) | the bucket |
+| `iam.serviceAccounts.actAs` | the VMs' service account, which OS Login requires to SSH into a VM that runs as one |
+| Artifact Registry push | the image's repository |
+
+Optional, and what lacking each costs:
+
+| Permission | Without it |
+|---|---|
+| `run.jobs.runWithOverrides` and `run.jobs.get` on `LAUNCH_JOB_PREP` | `up --prep N` cannot set the number of VMs; `up --prep` starts the job's own task count. gcloud reads the job to validate any override, hence `get`. |
+| `run.executions.get` on the preprocessing jobs | none: `up --prep` and `down --prep` launch `--async` and wait on the VMs' status instead |
+| `compute.instances.delete` | `delete` fails, and a stopped VM's disk stays billed until the admin deletes it |
+| `secretmanager.*` | none: the NVE key comes from the operator's environment |
 
 > **A 403 from `list` proves nothing.** `gcloud storage buckets list` and
 > `gcloud artifacts repositories list` are *project-level* calls, and they are commonly denied to
 > accounts that nonetheless have full access to a specific bucket and can push to a specific
 > repository. Test what you will actually use: `gcloud storage ls "$BUCKET/"` for the bucket, and a
-> real push (`gcp/fjordsim-gcp build`) for the registry.
+> real push (`gcp/fjordsim-gcp build`) for the registry. For a job or an instance,
+> `testIamPermissions` on that resource answers exactly.
 
 ## How it fits together
 
 ```
-your machine                    gs://BUCKET                     the VM (one, shared, long-lived)
-────────────                    ───────────                     ────────────────────────────────
+your machine                    gs://BUCKET                     a VM (shared, long-lived)
+────────────                    ───────────                     ─────────────────────────
 ~/FjordSim_data/<fjord>  ──push──►  data/<fjord>/  ──stage in──►  /mnt/stage/data/<fjord>
                                                                         │  bind mount
                                     configs/<run-id>/*.jl ──────►  container: FJORDSIM_DATA_ROOT=/data
@@ -76,12 +118,12 @@ Object storage is not used as a filesystem. `add_rivers` copies a 360 MB file, `
 a directory, and the NetCDF writers append — all of which a FUSE mount does badly. Copy in, run,
 copy out.
 
-**Nothing on the VM is durable.** Both launchers create it with
-`--instance-termination-action=DELETE` and a `--max-run-duration` (24h Spot, 168h standard), so a
-preemption or reaching that cap deletes the instance *and its boot disk*. A guest `poweroff` is
-different — that only stops it, and the disk survives. This is why the remote run script syncs
-results and raw downloads to the bucket every ten minutes, and why `bootstrap` has to run again
-after a preemption but not after a `down`/`up`.
+**A VM's disk may not be durable.** A launch job that creates its VM with
+`--instance-termination-action=DELETE` — usual for Spot, and for a `--max-run-duration` cap — loses
+the instance *and its boot disk* to a preemption or to that cap. A guest `poweroff`, or a direct-mode
+Spot VM's preemption, is different — that only stops it, and the disk survives. This is why the remote run script syncs results and raw
+downloads to the bucket every ten minutes, and why `bootstrap` has to run again after a preemption
+but not after a `down`/`up`.
 
 ## One-time setup
 
@@ -91,29 +133,28 @@ after a preemption but not after a `down`/`up`.
 cp gcp/config.env.example gcp/config.env
 ```
 
-Six values, all of them facts about the deployment:
+All of them facts about the deployment:
 
 | Variable | What it is |
 |---|---|
-| `PROJECT_ID` | the project everything is billed to |
+| `PROJECT_ID` | the project the VMs (and jobs) live in |
 | `BUCKET` | `gs://…` — staged inputs, results and uploaded configs |
 | `IMAGE_URI` | the full image URI; everything else about the registry follows from it |
-| `JOB_REGION` | where the launcher jobs live — its *only* use is `gcloud run jobs execute` |
-| `VM_NAME` | the instance the jobs manage |
-| `LAUNCH_JOB_SPOT`, `LAUNCH_JOB_STANDARD` | the jobs themselves |
-
-The operator account cannot list the last three, so they come from the admin.
+| `VM_NAME` | the GPU instance |
+| `PREP_VM_PREFIX` | the preprocessing VMs are `PREP_VM_PREFIX-1` ... `-N`; `--vm N` names the Nth. Empty without them. |
+| `JOB_REGION`, `LAUNCH_JOB_SPOT`, `LAUNCH_JOB_STANDARD`, `LAUNCH_JOB_PREP`, `STOP_JOB_PREP` | job mode: the jobs and their region, named by the admin. All empty for direct mode. |
+| `ZONES`, `GPU_MACHINE_TYPE`, `GPU_ACCELERATOR`, `GPU_DISK_SIZE`, `PREP_MACHINE_TYPE`, `PREP_DISK_SIZE`, `SERVICE_ACCOUNT` | direct mode: what `up` creates the VMs with ("Direct mode") |
 
 Access to Artifact Registry is granted per *repository*, so the one you can push to may sit in
 another project or region entirely. `IMAGE_URI` is therefore written out in full rather than
 assembled from a project and a region, and both `bootstrap` and the remote run script take the
-Docker auth host from it — which is all it takes to make the split work. The VM's service account
-then needs `roles/artifactregistry.reader` on *that* repository's project.
+Docker auth host from it — which is all it takes to make the split work. The VMs' service account
+then needs `roles/artifactregistry.reader` on *that* repository.
 
-Deliberately absent: machine type, accelerator, disk and run duration (owned by the launcher jobs —
-changing one is an admin request); `ZONE` (discovered from the running instance); `SERVICE_ACCOUNT`
-(the job picks the VM's identity, and `bootstrap` reads it from the metadata server when it needs to
-name one); and anything about the NVE key (`run` takes it from your environment).
+Deliberately absent: `ZONE` (discovered from the running instance), and anything about the NVE key
+(`run` takes it from your environment). In job mode the machine, disk and service account belong to
+the launch jobs, and `bootstrap` reads the service account from the metadata server when it needs
+to name one.
 
 Every variable is also overridable per invocation, so a one-off needs no edit at all:
 
@@ -136,24 +177,25 @@ being billed for a GPU that is doing nothing.
 ## The loop
 
 ```bash
-gcp/fjordsim-gcp up                                  # launcher job: create or start the VM
+gcp/fjordsim-gcp up                                  # create or start the VM
 gcp/fjordsim-gcp bootstrap                           # driver, Docker, toolkit, image pull
 gcp/fjordsim-gcp run --config examples/drammensfjorden/drammensfjorden.jl --steps run_simulation --gpu
 gcp/fjordsim-gcp logs <run-id>
 gcp/fjordsim-gcp pull-results drammensfjorden
 gcp/fjordsim-gcp down                                # stop billing; the disk survives
+gcp/fjordsim-gcp delete                              # when done for good: the disk goes too
 ```
 
 `up` is idempotent and does the right thing in every state: it creates the VM if it is gone, starts
-it if it is stopped, and exits cleanly if it is already running. It can also block for a long
-while — the job retries every zone for up to ten rounds with backoff capped at ten minutes when
-there is no L4 capacity. A *stopped* VM is the exception: it can only be started in the zone it
-already lives in, so a stockout there fails `up` even when another zone has L4s.
+it if it is stopped, and exits cleanly if it is already running. It waits until the VM is running,
+which can take long when the zones are short of GPUs. A *stopped* VM can only be started in the
+zone it already lives in, so a stockout there fails `up` even when another zone has capacity —
+`delete` it, and the next `up` creates it wherever there is room.
 
-`bootstrap` is idempotent too. On the plain Ubuntu image the launcher currently uses it installs the
-NVIDIA driver (~5 min, then a reboot it drives itself), Docker and the container toolkit; on a
-second call, or after `down`/`up`, every stage is a no-op. After a *preemption* it starts over,
-because the disk is gone.
+`bootstrap` is idempotent too. On a plain Ubuntu 22.04 image it installs the NVIDIA driver (~5 min,
+then a reboot it drives itself), Docker and the container toolkit; on a second call, or after
+`down`/`up`, every stage is a no-op. After a `delete`, or a job-mode preemption that deleted the
+disk, it starts over.
 
 ### Prepare locally, simulate in the cloud
 
@@ -185,8 +227,7 @@ gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl --steps run_si
 ```
 
 Omitting `--gpu` hides the GPU from the container, and `architecture = :auto` resolves to `CPU()` —
-the same config runs either way without an edit. (The VM itself always has an L4; that is the
-launcher's choice, not ours.) Anything a prep job writes under the fjord's data directory is synced
+the same config runs either way without an edit. Anything a prep job writes under the fjord's data directory is synced
 back to the bucket when it finishes, so the next job finds it. Raw downloads in subdirectories are
 also synced every ten minutes, once a file is complete, so a preempted download resumes from the
 bucket; prepared top-level files wait for the final sync. Every job other than a plain
@@ -208,6 +249,44 @@ fjord staged too:
 gcp/fjordsim-gcp run --config path/to/myfjord.jl --steps prepare_bathymetry \
     --stage oslofjorden --stage-all
 ```
+
+### Prepare on the preprocessing VMs
+
+The CPU-only VMs are cheaper than the GPU VM and there can be several, so the slow downloads of one
+setup can run side by side, each on its own VM:
+
+```bash
+gcp/fjordsim-gcp up --prep 3                         # creates or starts -1, -2 and -3
+for n in 1 2 3; do gcp/fjordsim-gcp bootstrap --vm $n; done
+
+gcp/fjordsim-gcp run --vm 1 --config examples/moro/moro.jl \
+    --steps prepare_bathymetry,download_initial_state,prepare_initial_state,add_rivers
+gcp/fjordsim-gcp run --vm 2 --config examples/moro/moro.jl --steps download_boundary_data
+gcp/fjordsim-gcp run --vm 3 --config examples/moro/moro.jl --steps download_atmosphere,prepare_atmosphere
+# once vm 1 and vm 2 have succeeded (gcp/fjordsim-gcp status):
+gcp/fjordsim-gcp run --vm 2 --config examples/moro/moro.jl --steps prepare_boundary_data
+
+gcp/fjordsim-gcp down --prep                         # stops all of them
+gcp/fjordsim-gcp delete --prep                       # deletes all of them, disks included
+```
+
+- **A job reads what is in the bucket when it starts**, and writes back when it finishes. A step
+  that needs another's output (`docs/running.md`, "The steps": every ocean prepare needs
+  `bathymetry.nc`) must start after the job producing it has succeeded, not merely started.
+- **Parallel jobs on one fjord are safe** because a job uploads only the files it wrote — those
+  changed after its stage-in — never its staged copies of the rest, which another VM may have
+  replaced in the bucket meanwhile.
+- **One job per VM at a time.** A job that succeeds deletes the fjord's data directory from its
+  VM's disk, under any other job there for the same fjord.
+- `bootstrap` installs Docker only — the driver stages are skipped on a VM without a GPU — so it
+  takes a minute or two.
+- **In job mode the number of VMs is the job's task count.** `up --prep N` overrides it, which
+  needs `run.jobs.runWithOverrides` and `run.jobs.get` on the job ("What the operator needs");
+  without them, `up --prep` starts the job's own count. Both `up --prep` and `down --prep` launch
+  the job `--async` and wait for the VMs' status, so they need no access to its executions.
+- `logs RUN_ID` finds the run's VM by itself (`run` records it in `runs/<run-id>/vm`).
+- `down --prep` stops every preprocessing VM, including one in the middle of a job; a single one
+  can be powered off from inside with `down --vm N`.
 
 ### A one-off experiment
 
@@ -237,7 +316,7 @@ gcp/fjordsim-gcp run --config path/to/mysetup_env/mysetup.jl --steps prepare_bat
   plain one.
 - **`DIR` needs a `Project.toml` and a `Manifest.toml`**, instantiated. The build copies the git
   repository holding `DIR`, so a package the environment names by a relative `path` source inside
-  that repository (`NivaEcosmo = {path = ".."}`) comes along, data files and all; a `path` source
+  that repository (`MyBiogeochemistry = {path = ".."}`) comes along, data files and all; a `path` source
   outside it does not.
 - **FjordSim is this checkout's**, developed into the environment from the image's `/workspace`
   whatever source the environment names for it, so every step runs against the FjordSim the image
@@ -250,8 +329,8 @@ which is what has CUDA as a direct dependency.
 
 ### Resuming after a preemption
 
-A Spot VM (the default) will interrupt a long run. Recovery is `up`, `bootstrap`, then the same run
-id with `--resume`:
+A Spot VM will interrupt a long run. Recovery is `up`, `bootstrap` (a no-op if the disk survived),
+then the same run id with `--resume`:
 
 ```bash
 gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020
@@ -289,7 +368,7 @@ gcp/fjordsim-gcp ssh               # the VM is a normal box; docker ps, nvidia-s
 Results sync up every 10 minutes while the run is in flight, so `pull-results` mid-run gives you
 something to plot. A writer with `split_times` starts a new file part at each of them, and every
 part whose successor exists is finished: the sync uploads it and deletes it from the VM's disk, so
-the disk holds only the parts being written. A year of output in one file fills the 200 GB disk —
+the disk holds only the parts being written. A year of output in one file can fill a disk —
 `mjosa`'s 3-hourly 3D snapshots reached 110 GB in 185 days — so give a long run's writers
 `split_times` (monthly in `examples/mjosa/mjosa.jl`).
 
@@ -317,13 +396,15 @@ directory").
 
 ## Cost
 
-- **Nothing stops on its own.** A finished run leaves the VM up and billing; `down` is a manual step
-  and the only one available. `--max-run-duration` on the instance (24h Spot, 168h standard) is the
-  backstop, and it *deletes* rather than stops.
+- **Nothing stops on its own.** A finished job leaves its VM up and billing; `down` (or
+  `down --prep`) is a manual step. A launch job's `--max-run-duration`, if it sets one, is the only
+  backstop, and with `DELETE` as the termination action it deletes rather than stops.
+- **A stopped VM's disk is still billed**, at the same rate as a running one's. `delete` ends that;
+  in job mode it needs `compute.instances.delete`, which the admin may not have granted.
 - Spot is roughly a 60-70% discount and is survivable here because of checkpoint resume.
-- Keep the bucket near the VM (`europe-west4`) — that traffic repeats all run long, so staging is free.
-  The image is the exception; it is pulled cross-region once per bootstrap. Pulling results to your laptop is egress — a few
-  hundred MB per run.
+- Keep the bucket in the VMs' region — that traffic repeats all run long, and within a region
+  staging is free. An image in another region is pulled across regions, once per VM, since later
+  pulls reuse its cached layers. Pulling results to your laptop is egress — a few hundred MB per run.
 - The stage-in filter is the other lever: a simulation pulls ~900 MB instead of ~5.5 GB because it
   never touches the raw sources.
 

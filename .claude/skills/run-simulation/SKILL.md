@@ -25,6 +25,9 @@ relevant one first; this is the order to work through.
    - On GCP: check the VM is up, then
      `gcp/fjordsim-gcp run --config <setup.jl> --steps <a,b,...> [--gpu] [--resume] [--run-id <id>]`.
      Use `--dry-run` first when unsure what a launch will do. `add_rivers` needs `NVE_API_KEY`.
+     Where the deployment has CPU-only preprocessing VMs (`PREP_VM_PREFIX` in `gcp/config.env`),
+     download/prepare steps can go to them with `--vm N`, one job per VM, in parallel
+     (`gcp/README.md`, "Prepare on the preprocessing VMs").
 5. **Watch it.** `gcp/fjordsim-gcp status`, `gcp/fjordsim-gcp logs <run-id>`; stop any monitoring
    loop you started once it's no longer needed.
 6. **After the run.** `gcp/fjordsim-gcp pull-results <name>`, archive the run (step 3), then

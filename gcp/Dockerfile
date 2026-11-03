@@ -58,8 +58,9 @@ COPY Project.toml Manifest.toml ./
 # throwaway precompile of the CUDA chain, which is why it happens here rather than after the full
 # dependency precompile below.
 #
-# 12.4 matches this image's CUDA_VERSION and is one of the toolkits the JLL ships; the L4's driver
-# (615.71.09, CUDA UMD 13.4) is newer, which is the only compatibility requirement. Written through
+# 12.4 matches this image's CUDA_VERSION and is one of the toolkits the JLL ships; the driver
+# `bootstrap` installs (615.71.09, CUDA UMD 13.4, on an NVIDIA L4) is newer, which is the only
+# compatibility requirement. Written through
 # `set_runtime_version!` rather than by hand: a hand-rolled LocalPreferences.toml with the same
 # `[CUDA_Runtime_jll] version` entry was silently ignored by `Base.get_preferences`.
 RUN julia --project -e 'using Pkg; Pkg.instantiate()' \

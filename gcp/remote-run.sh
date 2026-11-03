@@ -4,8 +4,8 @@
 # stages inputs down from the bucket, runs each step in the container, syncs results back, and
 # leaves a status marker and a copy of its own log in the bucket.
 #
-# It does not delete the VM at the end: the account has no permission to, and the instance is a
-# long-lived singleton shared by every run. Use `fjordsim-gcp down` when you are finished with it.
+# It does not delete the VM at the end: the workflow never manages instances, and the VM is
+# long-lived and shared by every run. Use `fjordsim-gcp down` when you are finished with it.
 set -euo pipefail
 
 readonly BUCKET="${BUCKET}"
@@ -27,6 +27,7 @@ readonly RESULTS="$STAGE/results"
 readonly RUN_PREFIX="$BUCKET/runs/$RUN_ID"
 readonly RUN_LOG="$HOME/fjordsim-$RUN_ID.log"
 readonly NVE_KEY_FILE="$HOME/.fjordsim-nve-key"
+readonly STAGED_STAMP="$HOME/.fjordsim-staged-$RUN_ID"
 
 # Docker auth is against the host in IMAGE_URI, which need not be in the VM's own region — access
 # to Artifact Registry is granted per repository, so the image often lives in another project.
@@ -93,15 +94,31 @@ free_completed_parts() {
     done
 }
 
+# Upload the files this job wrote under the fjord's data directory, and none it only staged: with
+# two VMs preparing one fjord at once, each holds a staged copy of the other's files, and syncing
+# the whole directory would put a stale one back over the other's fresh upload. "Wrote" is a ctime
+# after stage-in — ctime, because nothing sets it back, where unzip gives the FileGDB its archive's
+# mtimes. The files are hard-linked into a tree of their own for `rsync`, which takes extra
+# arguments (exclusions).
+upload_written_data() {
+    [[ -d "$DATA/$FJORD" && -f "$STAGED_STAMP" ]] || return 0
+    # Its own directory per call: the final sync can start while a periodic one is still uploading.
+    local written code=0
+    written="$(mktemp -d "$STAGE/written.XXXXXX")" || return 1
+    # Root owns what the container wrote, and protected_hardlinks refuses to link another user's file.
+    (cd "$DATA/$FJORD" && sudo find . -type f -cnewer "$STAGED_STAMP" -exec cp --parents -l -t "$written" {} +) &&
+        gcloud storage rsync -r "$written" "$BUCKET/data/$FJORD" --quiet "$@" || code=$?
+    sudo rm -rf "$written"
+    return $code
+}
+
 # Raw downloads, mid-job, so a preemption loses minutes of them rather than the whole job. Files in
 # subdirectories are complete once they have their final name: every downloader writes `<name>.tmp`
 # and renames it, and the Geonorge archive is unpacked in a `*_staging` directory. Top-level
 # prepared files are written in place and would replace a good copy with a partial one, so only the
 # final sync uploads them.
 sync_downloads() {
-    [[ -d "$DATA/$FJORD" ]] || return 0
-    gcloud storage rsync -r "$DATA/$FJORD" "$BUCKET/data/$FJORD" --quiet \
-        -x '[^/]*$|.*\.tmp$|[^/]*_staging/'
+    upload_written_data -x '[^/]*$|.*\.tmp$|[^/]*_staging/'
 }
 
 finish() {
@@ -113,7 +130,8 @@ finish() {
     prune_bucket_checkpoints || true
     # Newly prepared inputs are a product too: a prep job exists to put them in the bucket.
     local data_synced=false
-    gcloud storage rsync -r "$DATA/$FJORD" "$BUCKET/data/$FJORD" --quiet && data_synced=true
+    upload_written_data && data_synced=true
+    rm -f "$STAGED_STAMP"
     # The VM's disk does not survive a preemption, so this copy is what `logs` falls back to.
     gcloud storage cp "$RUN_LOG" "$RUN_PREFIX/run.log" --quiet || true
 
@@ -127,7 +145,7 @@ finish() {
     fi
 
     echo "=== $RUN_ID finished (exit=$code) on $(hostname) ==="
-    echo "the VM is left running; stop it with: gcp/fjordsim-gcp down"
+    echo "the VM is left running; stop it with: gcp/fjordsim-gcp down --vm $(hostname)"
 }
 trap finish EXIT
 
@@ -172,6 +190,8 @@ extra_fjords="$EXTRA_FJORDS"
 for extra in $extra_fjords; do
     stage_in "$BUCKET/data/$extra" "$DATA/$extra"
 done
+# Everything under the data directory changed after this is the job's own output.
+touch "$STAGED_STAMP"
 
 if [[ "$RESUME" == "true" ]]; then
     # The container writes as root, so a directory an earlier launch left on this disk — a VM

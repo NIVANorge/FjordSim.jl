@@ -190,10 +190,9 @@ const INNER_OSLOFJORD_STATIONS = [
 # Breiangen. Not an observation programme: it is there to show the basin's vertical mixing and its
 # renewal over the sill, the deep freshening `TODO.md` calls the main open problem. The
 # positions are cell centres of the deepest path through the 193 m grid's 39-level `bathymetry.nc`,
-# found by Dijkstra over wet cells with a step cost of distance / depth² (`thalweg.jl` in
-# `gs://fjordsim/analysis/oslofjorden_validation_dz5_kappah0/`), every second cell of its 150 plus
-# the last and the sill's shallowest. On the 160 m grid each snaps to the nearest cell, and a change
-# to the bathymetry moves the path. The comments give distance along the path and the 193 m model's
+# found by Dijkstra over wet cells with a step cost of distance / depth², every second cell of its
+# 150 plus the last and the sill's shallowest. On the 160 m grid each snaps to the nearest cell, and
+# a change to the bathymetry moves the path. The comments give distance along the path and the 193 m model's
 # depth.
 const DRAMMENSFJORD_SECTION = [
     Station(name = "DS-00", longitude = 10.21026, latitude = 59.73954),  #  0.00 km,   5.0 m

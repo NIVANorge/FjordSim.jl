@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
 # Make the VM able to run the FjordSim container. Rendered by `fjordsim-gcp bootstrap` (envsubst),
-# scp'd to the VM and run there.
+# scp'd to the VM and run there. On a VM without a GPU — a preprocessing VM — the driver and
+# container toolkit stages are skipped.
 #
-# The launcher job creates a plain `ubuntu-2204-lts` instance, so none of this is preinstalled. Ask
-# the admin to switch the job to a Deep Learning VM image (see "Asking the admin" in gcp/README.md)
-# and every stage below turns into a no-op — which is also what happens on the second call, and
-# after `down`/`up`, since the boot disk survives a guest poweroff.
+# The launcher jobs create a plain `ubuntu-2204-lts` instance, so none of this is preinstalled. Every
+# stage is a no-op on the second call, and after `down`/`up`, since the boot disk survives a guest
+# poweroff.
 #
 # It does not survive a *preemption*: that deletes the instance and its disk, and bootstrap has to
 # run again from scratch.
@@ -19,8 +19,14 @@ readonly REBOOT_STAMP="$HOME/.fjordsim-bootstrap-rebooted"
 
 apt_get() { sudo DEBIAN_FRONTEND=noninteractive apt-get -qq "$@"; }
 
+# 0x10de is NVIDIA's PCI vendor id.
+has_gpu=false
+grep -qx 0x10de /sys/bus/pci/devices/*/vendor 2>/dev/null && has_gpu=true
+
 # --- 1. NVIDIA driver ---------------------------------------------------------------------------
-if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+if [[ "$has_gpu" != "true" ]]; then
+    echo "[1/5] driver: no GPU, skipped"
+elif command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
     echo "[1/5] driver: already present"
 elif [[ -f "$REBOOT_STAMP" ]]; then
     # We installed it and rebooted once already and the GPU is still not there. Another reboot
@@ -64,7 +70,9 @@ else
 fi
 
 # --- 3. nvidia-container-toolkit ----------------------------------------------------------------
-if command -v nvidia-ctk >/dev/null 2>&1; then
+if [[ "$has_gpu" != "true" ]]; then
+    echo "[3/5] container toolkit: no GPU, skipped"
+elif command -v nvidia-ctk >/dev/null 2>&1; then
     echo "[3/5] container toolkit: already present"
 else
     echo "[3/5] container toolkit: installing"
@@ -89,9 +97,11 @@ gcloud auth configure-docker "$REGISTRY_HOST" --quiet
 # `sg docker` picks up the group membership without a logout, which the freshly-added user does not
 # have in this session yet.
 echo "[5/5] verifying"
-nvidia-smi
-sg docker -c 'docker info --format "{{.Runtimes}}"' | grep -q nvidia \
-    || { echo "docker has no nvidia runtime configured" >&2; exit 1; }
+if [[ "$has_gpu" == "true" ]]; then
+    nvidia-smi
+    sg docker -c 'docker info --format "{{.Runtimes}}"' | grep -q nvidia \
+        || { echo "docker has no nvidia runtime configured" >&2; exit 1; }
+fi
 
 if ! sg docker -c "docker pull '$IMAGE_URI'"; then
     # Whoever we are is a question only the metadata server can answer authoritatively — the
@@ -105,8 +115,7 @@ docker pull failed. If that was a 403, the identity this VM runs as
   $identity
 needs roles/artifactregistry.reader on the repository behind
   $IMAGE_URI
-which is an admin request — see "Asking the admin" in gcp/README.md. Until then you can move the
-image through the bucket instead: \`docker save | gzip\` locally, upload, and \`docker load\` here.
+which the repository's administrator grants. Until then you can move the image through the bucket instead: \`docker save | gzip\` locally, upload, and \`docker load\` here.
 MSG
     exit 1
 fi

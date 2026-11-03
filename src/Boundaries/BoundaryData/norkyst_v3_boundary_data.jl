@@ -71,7 +71,9 @@ write it as the depth mean of `u_eastward`/`v_northward`, which must then be nam
   published from 2024-01-01, or the two-way parent of a 160 m nest, `"m70"` (Sulafjorden) or
   `"m71"` (Oslofjord, from 2024-11-23). Required.
 - `parameters`: Source variable names to extract. Required.
-- `years`: Calendar years to download. Required.
+- `start_date`, `stop_date`: The period downloaded and prepared, independent of the run's: every
+  month it touches is downloaded, its end exclusive (`coverage_months`), and the prepared axis is
+  padded to its ends. Required.
 """
 mutable struct NorKystV3BoundaryDataConfig <: AbstractNorKystBoundaryDataConfig
     data_root::String
@@ -85,7 +87,8 @@ mutable struct NorKystV3BoundaryDataConfig <: AbstractNorKystBoundaryDataConfig
     opendap_url::String
     member::String
     parameters::Vector{String}
-    years::Vector{Int}
+    start_date::DateTime
+    stop_date::DateTime
 end
 
 # Hand-written for the reason `NorKystBoundaryDataConfig`'s is: `open_edges` may be one `Symbol`.
@@ -101,7 +104,8 @@ function NorKystV3BoundaryDataConfig(;
     opendap_url = NORKYST_V3_OPENDAP_URL,
     member,
     parameters,
-    years,
+    start_date,
+    stop_date,
 )
     edges = lateral_edges(open_edges)
     isempty(edges) && throw(
@@ -129,7 +133,8 @@ function NorKystV3BoundaryDataConfig(;
         opendap_url,
         member,
         parameters,
-        years,
+        start_date,
+        stop_date,
     )
 end
 
@@ -149,7 +154,7 @@ boundary_variable_names(config::NorKystV3BoundaryDataConfig) = NORKYST_V3_BOUNDA
 """
     fetch_boundary_data(target_grid, config::NorKystV3BoundaryDataConfig)
 
-Download the operational Norkyst-v3 months covering `config.years`, each combined into one NetCDF
+Download the operational Norkyst-v3 months the config's period touches, each combined into one NetCDF
 file in `boundary_data_directory(config)` subset to the box `boundary_domain` derives from
 `open_edges(config)` and `target_grid`. A month whose file already exists is skipped, so an
 interrupted download resumes.
@@ -160,11 +165,12 @@ function fetch_boundary_data(target_grid, config::NorKystV3BoundaryDataConfig)
 
     edges = open_edges(config)
     longitude, latitude = boundary_domain(edges, target_grid, config.margin)
-    @info "Downloading operational Norkyst-v3 ($(config.member)) years $(join(config.years, ", ")) " *
+    months = coverage_months(coverage_window(config))
+    @info "Downloading operational Norkyst-v3 ($(config.member)) $(month_span(months)) " *
           "along the $(join(edges, ", ")) boundary to $output_directory"
     @info "  Band: longitude $longitude, latitude $latitude"
 
-    for year in config.years, month = 1:12
+    for (year, month) in months
         process_v3_boundary_month(year, month, longitude, latitude, config)
     end
 

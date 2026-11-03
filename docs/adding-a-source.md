@@ -82,8 +82,17 @@ Initial state — `AbstractInitialStateConfig`, consumed by `prepare_initial_sta
 | `initial_state_variable_names(config)` → `Dict` source name => FjordSim name | yes |
 | `fetch_initial_state(target_grid, config, date)` | only if it downloads |
 
-`date` is the run config's `start_date`, passed by the setup-level step: the dataset
-decides which of its records stands for that instant, and fetches only that one.
+`date` is the initial-state config's own `start_date` field, read by `initial_state_date` and passed
+by the setup-level step: the dataset decides which of its records stands for that instant, and
+fetches only that one. `FromInitialState` requires it to be the run's.
+
+**Every time-dependent dataset config states its own period**: forcing, river, open-boundary and
+atmosphere configs each have `start_date` and `stop_date` fields, which `coverage_window(config)`
+reads (a config storing its period differently overloads it). The download fetches, and the prepare
+step reads, the months that period touches — `coverage_months(coverage_window(config))`, its end
+exclusive — and the prepared time axis is padded to the period's ends. No step of a dataset reads
+the run config: the run is the only thing that combines them, checking its own window lies inside
+each prepared file.
 
 Rivers — `AbstractRiverConfig`, consumed by `add_rivers`:
 
@@ -99,14 +108,14 @@ Rivers — `AbstractRiverConfig`, consumed by `add_rivers`:
 A river is a volume of water: `add_rivers` snaps each mouth to a coastal cell, gives it as many
 connected surface columns as its peak discharge needs to enter no faster than
 `maximum_inflow_velocity`, and writes the result — inflow speed and river values per column, on a
-daily axis over the run window — to a river file of its own. The run reads it as a free-surface source
+daily axis over the river config's period — to a river file of its own. The run reads it as a free-surface source
 and a top-cell tracer source; see "Rivers as a volume source" in `docs/architecture.md` (Rivers
 section) for why that pair, and why the columns are spread. The speed bound is a vertical Courant
 number on the top cell, so it has no default: it belongs to the setup's grid and time step.
 
 A river config is a `FjordConfig` field of its own, `river_config`, `nothing` for a setup with no
 rivers, and independent of the forcing config. The file it writes stands beside the prepared forcing
-rather than inside it, so `add_rivers` needs only the bathymetry and the run window, and a setup can
+rather than inside it, so `add_rivers` needs only the bathymetry and its own period, and a setup can
 name rivers with no forcing at all. Every `river_series` variable
 is written; the run uses those naming a model tracer and ignores the rest, so one river dataset can
 serve models with different tracers.
@@ -192,9 +201,9 @@ overloads `model_boundary_conditions` on its own config.
 Run — `AbstractRunConfig`, the setup's `run_config`: how a built model is run. The pipeline reads it
 only through accessors (`FjordSim.Configs`), never its fields, so a subtype stores or derives each
 value as it likes: `results_root`, `writers`, `callbacks`, `time_stepping`, `initial_conditions`,
-`start_date`, `stop_time`, `loops`, `pickup`, and `Simulations.run_architecture`. A subtype
-implementing only `results_root`, `start_date` and `stop_time` still gets `results_path`, `run_tag`
-and `coverage_window`, so it can be prepared for; `build_simulation` needs the rest. A different way
+`start_date`, `stop_date`, `loops`, `pickup`, and `Simulations.run_architecture`. A subtype
+implementing only `results_root`, `start_date` and `stop_date` still gets `results_path`, `run_tag`
+and `coverage_window`; `build_simulation` needs the rest. A different way
 of *running* — an ensemble, a nested run — is not a run config but a setup type of its own
 overloading `run_simulation` (see below). What a run config returns is dispatched on one hook table
 each:

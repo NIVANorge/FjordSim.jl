@@ -23,13 +23,14 @@ using Oceananigans:
     WENO,
     WENOVectorInvariant
 using Oceananigans.TurbulenceClosures: HorizontalScalarBiharmonicDiffusivity
-using Oceananigans.Units: day, days, hour, hours, minutes, second
+using Oceananigans.Units: day, hour, hours, minutes, second
 using Dates: DateTime, Second
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 
 data_root = fjord_data_root("mjosa")
 FT = Float32
 start_date = DateTime(2025, 1, 1)
+stop_date = DateTime(2026, 1, 1)
 # Every writer starts a new file on the 1st of each month, so a finished month can leave the VM.
 monthly_splits = [(DateTime(2025, month, 1) - start_date) / Second(1) for month in 2:12]
 
@@ -88,7 +89,8 @@ FjordConfig(
         data_root               = data_root,
         output_file             = "rivers_nve.nc",
         plot_file               = "rivers_nve.png",
-        years                   = [2025],
+        start_date              = start_date,
+        stop_date               = stop_date,
         # 1 mm/s through the 1 m top cell is a vertical Courant number of 0.18 at the
         # 3-minute `max_time_step`; Lågen and Gausa's ~1100 m³/s scaled peak spreads over ~27
         # columns.
@@ -141,7 +143,8 @@ FjordConfig(
         plot_file        = "atmosphere.png",
         resolution       = 0.02,
         padding          = 0.1,
-        years            = [2025],
+        start_date       = start_date,
+        stop_date        = stop_date,
         # Snow on the ice, which insulates it far better than ice does.
         snowfall         = true,
     ),
@@ -220,7 +223,7 @@ FjordConfig(
         # water at 3.5-4 °C, and no open source has a lake-wide profile for the day.
         initial_conditions = (T = 3.5, S = 0.0),
         start_date         = start_date,
-        stop_time          = 365days,
+        stop_date          = stop_date,
         loops              = 1,
         pickup             = false,
     ),

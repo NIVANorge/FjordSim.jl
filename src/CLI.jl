@@ -102,21 +102,23 @@ Usage:
 Subcommands, in the order a setup is prepared and run:
   prepare_bathymetry    Regrid the bathymetry source onto the setup's grid. Downloads the Geonorge
                         Sjøkart FileGDB on first use (~2.3 GB).
-  download_forcing      Download and subset the forcing dataset over the setup's region and years.
+  download_forcing      Download and subset the forcing dataset over the setup's region and the
+                        forcing config's start_date to stop_date.
                         A setup with no forcing config does nothing.
   prepare_forcing       Regrid the download onto the simulation grid. Needs prepare_bathymetry.
                         Where the interpolation runs is the forcing config's `architecture` field,
                         not a command-line option. A setup with no forcing config does nothing.
   download_initial_state
-                        Download the one day of source data the initial state at start_date is read
-                        from. A setup with no initial-state config does nothing.
+                        Download the one day of source data the initial state at the initial-state
+                        config's start_date is read from. A setup with no initial-state config does nothing.
   prepare_initial_state Regrid that day onto the simulation grid, for FromInitialState initial
                         conditions. Needs prepare_bathymetry; re-run both initial-state steps when
-                        start_date changes. A setup with no initial-state config does nothing.
+                        its start_date changes. A setup with no initial-state config does nothing.
   add_rivers            Write the river inflow file: each river's discharge and water properties on
-                        the surface columns it enters through, on a daily axis over the run window.
-                        Needs prepare_bathymetry, not prepare_forcing; re-run it when start_date or
-                        stop_time change. A setup with no rivers does nothing.
+                        the surface columns it enters through, on a daily axis over the river
+                        config's start_date to stop_date. Needs prepare_bathymetry, not
+                        prepare_forcing; re-run it when those change. A setup with no rivers
+                        does nothing.
   download_boundary_data
                         Download and subset hourly source data along the open lateral boundary. A
                         thin band rather than the whole domain, since the exterior state an open
@@ -136,7 +138,8 @@ Subcommands, in the order a setup is prepared and run:
                         configures: prepare_bathymetry, prepare_forcing if it names forcing,
                         prepare_initial_state if it starts FromInitialState,
                         add_rivers if it names rivers, prepare_boundary_data if it names
-                        open-boundary data, and prepare_atmosphere if it names an atmosphere.
+                        open-boundary data, and prepare_atmosphere if it names an atmosphere,
+                        each over a period spanning the run config's start_date to stop_date.
                         Only prepare_bathymetry is required. Where it runs
                         is the run config's `architecture` field. A setup with no
                         run config does nothing.

@@ -64,20 +64,26 @@ for inspecting a model or stepping into it.
 
 ## What to re-run after a config change
 
-The prepared files are regridded onto the grid and padded to the run window *at prepare time*, so
-some config edits silently do nothing until the files are rewritten.
+The prepared files are regridded onto the grid and padded to their dataset's period *at prepare
+time*, so some config edits silently do nothing until the files are rewritten.
 
-**`start_date` or `stop_time`.** The prepare steps pad their time axes to the run window
-(`coverage_window`), and the river file's daily axis *is* that window. Re-run, in this order, with
-`prepare_forcing` first for a setup that names a `forcing_config`, and after a `start_date` change
-`download_initial_state` and `prepare_initial_state` for one that names an `initial_state_config`
-(`FromInitialState` refuses a file prepared for another `start_date`):
+**The run's `start_date` or `stop_date`.** Nothing, as long as every prepared file still spans the
+new window: each dataset is downloaded and prepared for its own config's `start_date` to `stop_date`,
+independent of the run's, and `build_simulation` checks the run window lies inside each one. The
+exception is the initial state, whose config's `start_date` has to be the run's: `FromInitialState`
+refuses a file prepared for another one.
+
+**A dataset config's `start_date` or `stop_date`.** That dataset's download fetches every month the
+period touches, its end exclusive (`coverage_months`), skipping the months already present, and its
+prepare step pads to the period's ends; the river file's daily axis *is* the river config's period.
+Re-run that dataset's download and prepare steps — for the rivers, `add_rivers` does both:
 
 ```bash
-julia --project -m FjordSim add_rivers          --config examples/oslofjorden/oslofjorden.jl
-julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden/oslofjorden.jl
+julia --project -m FjordSim download_atmosphere --config examples/oslofjorden/oslofjorden.jl
 julia --project -m FjordSim prepare_atmosphere  --config examples/oslofjorden/oslofjorden.jl
 ```
+
+For the initial state, `download_initial_state` and `prepare_initial_state`.
 
 **`z_faces`, the grid `size`, or any `bathymetry_config` smoothing knob.** `z_faces` is written into
 `bathymetry.nc` and `simulation_grid` reads the *file*, not the config; the land mask the forcing and
@@ -94,7 +100,7 @@ julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden
 `prepare_atmosphere` is not in this list: the atmosphere is 2D on its own lon/lat grid. Existing
 checkpoints are invalid after either change.
 
-No download step is affected by either change, and `loops` re-runs nothing.
+No download step is affected by a grid or bathymetry change, and `loops` re-runs nothing.
 
 ## One run per results directory
 

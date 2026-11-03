@@ -77,7 +77,9 @@ survive, and a daily sample would alias it away.
   `ubar_eastward` and `vbar_northward` and nothing else. Defaulted. Stated separately rather than
   derived from a shared parent so that neither URL means something different from the other config's.
 - `parameters`: Source variable names to extract. Required.
-- `years`: Calendar years to download. Required.
+- `start_date`, `stop_date`: The period downloaded and prepared, independent of the run's: every
+  month it touches is downloaded, its end exclusive (`coverage_months`), and the prepared axis is
+  padded to its ends. Required.
 """
 mutable struct NorKystHindcastBoundaryDataConfig <: AbstractNorKystBoundaryDataConfig
     data_root::String
@@ -92,7 +94,8 @@ mutable struct NorKystHindcastBoundaryDataConfig <: AbstractNorKystBoundaryDataC
     barotropic_catalog_url::String
     barotropic_opendap_url::String
     parameters::Vector{String}
-    years::Vector{Int}
+    start_date::DateTime
+    stop_date::DateTime
 end
 
 # A hand-written keyword constructor for the same reason `NorKystBoundaryDataConfig` has one:
@@ -111,7 +114,8 @@ function NorKystHindcastBoundaryDataConfig(;
     barotropic_catalog_url = NORKYST_HINDCAST_BAROTROPIC_CATALOG_URL,
     barotropic_opendap_url = NORKYST_HINDCAST_BAROTROPIC_OPENDAP_URL,
     parameters,
-    years,
+    start_date,
+    stop_date,
 )
     edges = lateral_edges(open_edges)
     isempty(edges) && throw(
@@ -135,7 +139,8 @@ function NorKystHindcastBoundaryDataConfig(;
         barotropic_catalog_url,
         barotropic_opendap_url,
         parameters,
-        years,
+        start_date,
+        stop_date,
     )
 end
 
@@ -162,7 +167,7 @@ boundary_variable_names(config::NorKystHindcastBoundaryDataConfig) =
 """
     fetch_boundary_data(target_grid, config::NorKystHindcastBoundaryDataConfig)
 
-Download the Norkyst-v3 hindcast months covering `config.years`, each combined into one NetCDF file
+Download the Norkyst-v3 hindcast months the config's period touches, each combined into one NetCDF file
 in `boundary_data_directory(config)` subset to the box `boundary_domain` derives from
 `open_edges(config)` and `target_grid`. A month whose file already exists is skipped, so an
 interrupted download resumes.
@@ -173,11 +178,12 @@ function fetch_boundary_data(target_grid, config::NorKystHindcastBoundaryDataCon
 
     edges = open_edges(config)
     longitude, latitude = boundary_domain(edges, target_grid, config.margin)
-    @info "Downloading Norkyst-v3 hindcast years $(join(config.years, ", ")) along the " *
+    months = coverage_months(coverage_window(config))
+    @info "Downloading Norkyst-v3 hindcast $(month_span(months)) along the " *
           "$(join(edges, ", ")) boundary to $output_directory"
     @info "  Band: longitude $longitude, latitude $latitude"
 
-    for year in config.years, month = 1:12
+    for (year, month) in months
         process_hindcast_boundary_month(year, month, longitude, latitude, config)
     end
 

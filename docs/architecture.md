@@ -291,9 +291,16 @@ file layout, and `Atmospheres` only the source-grid rotation.
 
 ### Time-axis padding
 
-`pad_time_steps` extends an axis to both ends of the run window by replicating the nearest step.
-Needed because NorKyst's daily records sit at 12:00, so a run starting at 00:00 has no record for its
-first half-day, and every reader uses `Cyclical()` indexing, which wraps instead of failing.
+`pad_time_steps` extends an axis to both ends of the dataset config's own period (`coverage_window`)
+by replicating the nearest step. Needed because NorKyst's daily records sit at 12:00, so a period
+starting at 00:00 has no record for its first half-day, and every reader uses `Cyclical()`
+indexing, which wraps instead of failing.
+
+**Each dataset config states its own period** (`start_date`, `stop_date`), and its download and
+prepare read no other config's: a download fetches the months the period touches, its end
+exclusive (`coverage_months`), so a period ending at 00:00 on the 1st fetches nothing of that month
+and the pad reaches it from the month before. Only the run combines them, through
+`validate_time_coverage`. So one prepared file serves any run inside its period.
 
 - It runs **after** `daily_time_steps`: a pad at the record level would break that function's
   whole-day cadence test and silently disable gap-filling.
@@ -383,13 +390,13 @@ Norkyst-v3 hindcast (from 2012), keeping hour 12 of its 24 hourly records to mat
 
 **Why it is not the forcing.** The forcing file has to span the whole run window, because the run
 reads it as forcing terms at every step and `build_simulation` checks its coverage, and the NorKyst
-forcing downloads whole years. A realistic start needs one record. So the initial state is its own
+forcing downloads every month of its period. A realistic start needs one record. So the initial state is its own
 config, two steps and a one-record file, and a setup starting from it needs no forcing config.
 
-- **The date is the run config's `start_date`**, not a field of its own, so the two cannot
-  disagree. The record is picked when the file is prepared, so the file stores the `start_date` it was
-  prepared for and `FromInitialState` refuses a mismatch. A changed `start_date` therefore fails loudly
-  instead of starting from the old day.
+- **The date is the initial-state config's own `start_date`**, so its steps read no other config,
+  like every dataset's. The record is picked when the file is prepared, so the file stores the
+  `start_date` it was prepared for and `FromInitialState` refuses one that is not the run's. A
+  changed `start_date` therefore fails loudly instead of starting from the old day.
 - The record is whatever the source holds for that instant: NorKyst's daily mean for the day
   `start_date` falls in, stamped 12:00, so a run starting at midnight starts from a mean centred half
   a day later.
@@ -625,7 +632,8 @@ the components meet, which makes it the one place a setup type with an input of 
 A different way of running — an ensemble, a nested run — is a setup type of its own overloading
 `run_simulation`; a run config that stores its values differently is a new `AbstractRunConfig`
 implementing the accessors. `OceanSeaIceModel` takes the ocean as a
-`Simulation` of its own, so `coupled_model` still needs `stop_time` and the initial `Δt`.
+`Simulation` of its own, so `coupled_model` still needs `stop_time` — `run_duration`, the seconds
+from `start_date` to `stop_date` — and the initial `Δt`.
 
 **The run tag is the wall-clock launch instant** (`yyyymmddTHHMMSS`, `Simulations.LAUNCH_TAG`,
 filled by `__init__` — a `const` initialized with `now()` would freeze the precompilation instant).
@@ -643,9 +651,9 @@ has its own first record, and when each reader zeroed its own axis the forcing (
 atmosphere (00:00) ran twelve hours out of phase. `build_simulation` passes it to every reader as
 `reference_date`; a `start_date` before a file's first record is an error, not a shift.
 
-**`validate_time_coverage`** checks every prepared file spans `[start_date, start_date + stop_time]`,
-which is what makes `Cyclical()`'s wrap unreachable. One `stop_time`, not `loops` of them — every
-loop replays the same window. Each check goes through a hook on its own config
+**`validate_time_coverage`** checks every prepared file spans `[start_date, stop_date]`, which is
+what makes `Cyclical()`'s wrap unreachable. One window, not `loops` of them — every loop replays the
+same one. Each check goes through a hook on its own config
 (`forcing_date_range`, `atmosphere_date_range`, …), so the module names no file layout.
 
 `model_tracers(model)` is a hook because the tracer list is needed before the model exists: the
@@ -745,7 +753,7 @@ file is already on the model grid, so this is a read and a type conversion, not 
 - **The writer is replaced and the old one closed**: a `TimeInterval` keeps its actuation count, and a
   `NetCDFWriter` holds an open file.
 
-A monotonic clock over `loops * stop_time` was rejected: `Cyclical`'s inferred period stops matching
+A monotonic clock over `loops * run_duration` was rejected: `Cyclical`'s inferred period stops matching
 the loop once a file is padded, and fixing it would change the atmosphere hook signatures.
 
 ### Writers and callbacks

@@ -11,9 +11,9 @@ using Oceananigans.Utils: prettytime
 using Oceananigans.Advection: cell_advection_timescale
 using JLD2: @save
 using Printf: @sprintf
-using Dates: Second
+using Dates: Date, DateTime, Millisecond, Month, month, year
 
-using ..Configs: AbstractRunConfig, start_date, stop_time
+using ..Configs: AbstractRunConfig, start_date, stop_date
 
 cell_advection_timescale_coupled_model(coupled_model) = cell_advection_timescale(coupled_model.ocean.model)
 
@@ -166,20 +166,62 @@ recursive_merge(a::NamedTuple, b::NamedTuple, rest::NamedTuple...) =
 """
     coverage_window(config)
 
-The calendar interval a run needs its prepared inputs to span, as `(first, last)` — or `nothing`
-for a setup naming no run config.
+The calendar interval `config` spans, as `(first, last)`, or `nothing` for no config.
 
-Passed to `regrid_forcing`, `regrid_boundary_data`, `regrid_atmosphere` and `place_rivers` as their
-`coverage`, so each pads its own time axis to reach both ends. A plain tuple of dates rather than the
-config itself, so no pipeline ever sees a run config.
+For a run config it is the run window, `start_date` to `stop_date`, which every prepared input is
+checked to span. A looped run reuses that one window rather than extending it.
 
-A looped run reuses one window rather than extending it, so this is `stop_time` from `start_date`
-and not `loops * stop_time`.
+For a time-dependent dataset's config (forcing, rivers, open-boundary data, atmosphere) it is the
+dataset's own period, its `start_date` and `stop_date` fields: the months its download fetches and
+its prepare step reads (`coverage_months`), and the interval its prepared time axis is padded to. It
+is independent of the run's and may be longer, so one download and prepare serves runs over any part
+of it. A dataset whose config states its period some other way overloads this.
 """
 coverage_window(::Nothing) = nothing
 
-coverage_window(config::AbstractRunConfig) =
-    (start_date(config), start_date(config) + Second(round(Int, stop_time(config))))
+coverage_window(config::AbstractRunConfig) = (start_date(config), stop_date(config))
+
+coverage_window(config) = (config.start_date, config.stop_date)
+
+"""
+    months_in(start, stop)
+
+`(year, month)` for every calendar month `[start, stop]` touches.
+"""
+function months_in(start::DateTime, stop::DateTime)
+    months = Tuple{Int,Int}[]
+    current = Date(year(start), month(start), 1)
+    last = Date(year(stop), month(stop), 1)
+
+    while current <= last
+        push!(months, (year(current), month(current)))
+        current += Month(1)
+    end
+
+    return months
+end
+
+"""
+    coverage_months(coverage)
+
+`(year, month)` for every calendar month a dataset's `coverage` window, from `coverage_window`,
+needs data from: the months its download fetches and its prepare step reads.
+
+The window's end is exclusive, so a period ending at 00:00 on the first of a month needs nothing of
+that month: the prepare steps reach that instant by padding from the month before's last record
+(`pad_time_steps`).
+"""
+coverage_months(coverage) = months_in(first(coverage), last(coverage) - Millisecond(1))
+
+"""
+    month_span(months)
+
+`months`, as `coverage_months` returns them, written for a log line: `"2024-10 to 2026-09"`.
+"""
+function month_span(months)
+    label((year, month)) = string(year, "-", lpad(month, 2, '0'))
+    return "$(label(first(months))) to $(label(last(months)))"
+end
 
 """
     fjord_data_root(fjord)

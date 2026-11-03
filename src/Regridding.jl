@@ -244,19 +244,19 @@ end
 """
     pad_time_steps(steps, coverage)
 
-Extend `steps` to span `coverage`, replicating the nearest step at each end that falls short. A
-`nothing` coverage leaves `steps` alone.
+Extend `steps` to span `coverage`, the dataset config's own period, replicating the nearest step at
+each end that falls short.
 
 Written after `daily_time_steps` so its whole-day cadence check sees only the downloaded times: a
-pad step is deliberately off that cadence whenever the run's window is.
+pad step is deliberately off that cadence whenever the period is.
 
 The pad carries the *same* source records and blend weight as the step it copies, so the written
 field is identical to its neighbour rather than a re-derived approximation of it. That is what makes
 the padding a statement about the time axis alone.
 
-The reason this exists is that a run's window rarely lines up with a dataset's records — NorKyst's
-first daily record here is at 12:00, so a run starting at 00:00 on the same day has no forcing for
-its first half-day. `forcing_from_file` reads with `Cyclical()` time indexing, which does not fail
+The reason this exists is that a period rarely lines up with a dataset's records — NorKyst's first
+daily record here is at 12:00, so a period starting at 00:00 on the same day has no forcing for its
+first half-day. `forcing_from_file` reads with `Cyclical()` time indexing, which does not fail
 outside its data but wraps to the far end, so the shortfall would be filled with the following
 December rather than reported. Padding puts a real record at both ends instead, which is what lets
 `Simulations.validate_time_coverage` stay a hard check.
@@ -268,8 +268,6 @@ span, `validate_time_coverage` would pass, and the run would interpolate twelve 
 identical records — quietly worse than the wrap. Overshooting by more than a spacing is a missing
 download, and is reported as one.
 """
-pad_time_steps(steps, ::Nothing) = steps
-
 function pad_time_steps(steps, coverage)
     first_needed, last_needed = coverage
     padded = collect(steps)
@@ -278,10 +276,9 @@ function pad_time_steps(steps, coverage)
         head = first(padded)
         spacing = forcing_record_spacing(padded)
         head.date - first_needed <= spacing || error(
-            "The run starts at $first_needed but the downloaded forcing only begins at " *
-            "$(head.date), more than one record spacing " *
-            "($(Dates.canonicalize(spacing))) later. Download the preceding period, or move the " *
-            "run config's `start_date` to " *
+            "The config's period starts at $first_needed but the downloaded forcing only begins " *
+            "at $(head.date), more than one record spacing ($(Dates.canonicalize(spacing))) " *
+            "later. Download the preceding period, or move the config's `start_date` to " *
             "$(head.date - spacing) or later.",
         )
         pushfirst!(padded, ForcingTimeStep(first_needed, head.lower, head.upper, head.weight))
@@ -292,11 +289,10 @@ function pad_time_steps(steps, coverage)
         tail = last(padded)
         spacing = forcing_record_spacing(padded)
         last_needed - tail.date <= spacing || error(
-            "The run ends at $last_needed but the downloaded forcing already stops at " *
-            "$(tail.date), more than one record spacing " *
-            "($(Dates.canonicalize(spacing))) earlier. Download the following period, or shorten " *
-            "`stop_time` so the run ends by " *
-            "$(tail.date + spacing).",
+            "The config's period ends at $last_needed but the downloaded forcing already stops " *
+            "at $(tail.date), more than one record spacing ($(Dates.canonicalize(spacing))) " *
+            "earlier. Download the following period, or move the config's `stop_date` to " *
+            "$(tail.date + spacing) or earlier.",
         )
         push!(padded, ForcingTimeStep(last_needed, tail.lower, tail.upper, tail.weight))
         @info "Padded forcing end: replicated $(tail.date) at $last_needed"

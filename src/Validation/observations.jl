@@ -281,24 +281,6 @@ function parse_kartverket(xml::AbstractString)
     return records
 end
 
-"""
-    months_in(start, stop)
-
-`(year, month)` for every calendar month `[start, stop]` touches.
-"""
-function months_in(start::DateTime, stop::DateTime)
-    months = Tuple{Int,Int}[]
-    current = Date(Dates.year(start), Dates.month(start), 1)
-    last = Date(Dates.year(stop), Dates.month(stop), 1)
-
-    while current <= last
-        push!(months, (Dates.year(current), Dates.month(current)))
-        current += Dates.Month(1)
-    end
-
-    return months
-end
-
 # --- Held records, read from files ---
 
 """

@@ -57,11 +57,11 @@
 # separate from the input data root, and each writer's file carries the launch tag so runs do not
 # overwrite each other.
 #
-# `start_date` and `stop_time` also decide what the prepare steps write: they pad the boundary and
-# atmosphere time axes to span exactly this window, and the river file is written on it, so changing
-# either means re-running `add_rivers`, `prepare_boundary_data` and `prepare_atmosphere`. The initial
-# state is the hourly instant `start_date`, so changing `start_date` also means re-running
-# `download_initial_state` and `prepare_initial_state`.
+# Every dataset states its own `start_date` and `stop_date`, the period it is downloaded and prepared
+# for, and the run states its own; here they are all `start_date` and `stop_date` below. A run inside
+# the datasets' period needs nothing re-prepared. Changing a dataset's period means re-running its
+# download and prepare steps (`add_rivers` for the rivers), and the initial state is the hourly
+# instant of its config's `start_date`, which `FromInitialState` requires to be the run's.
 #
 # # What it can and cannot be expected to show
 #
@@ -357,17 +357,13 @@ BoundaryData.boundary_variable_names(config::TideCorrectedBoundaries) =
 BoundaryData.fetch_boundary_data(target_grid, config::TideCorrectedBoundaries) =
     BoundaryData.fetch_boundary_data(target_grid, config.source)
 
-function BoundaryData.regrid_boundary_data(
-    target_grid,
-    config::TideCorrectedBoundaries;
-    coverage = nothing,
-)
+function BoundaryData.regrid_boundary_data(target_grid, config::TideCorrectedBoundaries)
     isempty(config.gains) && error(
         "No boundary tide gains are stated. After `download_boundary_data`, run " *
         "`julia --project scripts/measure_boundary_tide.jl examples/oslofjorden/oslofjorden.jl " *
         "Viker 10.949769 59.036046` and paste its output into `VIKER_TIDE_GAINS`.",
     )
-    result = BoundaryData.regrid_boundary_data(target_grid, config.source; coverage)
+    result = BoundaryData.regrid_boundary_data(target_grid, config.source)
     correct_boundary_tide!(result.output_file, Grids.open_edges(config), config.gains)
     return result
 end
@@ -474,6 +470,9 @@ end
 
 data_root = fjord_data_root("oslofjorden")
 start_date = DateTime(2024, 10, 1)
+# Two years, so each winter falls whole inside the run: 730 days, as neither 2025 nor 2026 is a leap
+# year. Every dataset below is downloaded and prepared for the same period.
+stop_date = DateTime(2026, 10, 1)
 # The full-field writers start a new file on the 1st of each month, so a finished month can leave
 # the VM.
 monthly_splits = [(start_date + Month(month) - start_date) / Second(1) for month in 1:23]
@@ -614,17 +613,19 @@ FjordConfig(
         nest_member      = "m71",
         parent_member    = "m00",
         parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
+        start_date       = start_date,
     ),
     # NVERiversConfig overloads river_locations, river_series, river_discharge and
     # fetch_rivers (all required, hooks add_rivers calls), all dispatching on this
-    # config's type. It queries NVE, so the window follows `years` and every value has
+    # config's type. It queries NVE, so the window follows its period and every value has
     # provenance. The HydAPI half needs an API key — `NVE_API_KEY`, free at
     # https://hydapi.nve.no/Users.
     river_config = NVERiversConfig(
         data_root  = data_root,
         output_file = "rivers_nve.nc",
         plot_file   = "rivers_nve.png",
-        years       = [2024, 2025, 2026],
+        start_date  = start_date,
+        stop_date   = stop_date,
         # Every outlet below is *discovered* from NVE's ELVIS river network and sized by
         # its REGINE catchment, so this setup states no river coordinate at all. It used
         # to state nine, copied from the OF800 dataset's outlet table, and measured
@@ -746,7 +747,8 @@ FjordConfig(
                 "temperature", "salinity", "u_eastward", "v_northward", "zeta",
                 "ubar_eastward", "vbar_northward",
             ],
-            years            = [2024, 2025, 2026],
+            start_date       = start_date,
+            stop_date        = stop_date,
         ),
         VIKER_TIDE_GAINS,
     ),
@@ -762,7 +764,8 @@ FjordConfig(
         plot_file        = "atmosphere.png",
         resolution       = 0.02,
         padding          = 0.1,
-        years            = [2024, 2025, 2026],
+        start_date       = start_date,
+        stop_date        = stop_date,
         # Snow on the ice, which insulates it far better than ice does.
         snowfall         = true,
     ),
@@ -1013,11 +1016,8 @@ FjordConfig(
         # `(T = 5.0, S = 33.0)` starts from a uniform water column at rest instead, and
         # `FromResults("snapshots_ocean_<tag>.nc")` continues from a previous run.
         initial_conditions = FromInitialState(),
-        # Two years from 1 October 2024, so each winter falls whole inside the run: 730 days, as
-        # neither 2025 nor 2026 is a leap year. The prepare steps pad their time axes to reach
-        # both ends.
         start_date         = start_date,
-        stop_time          = 730days,
+        stop_date          = stop_date,
         # One pass. Raise it to spin the deep basins up on the same year, carrying the
         # state over; each repetition writes its own `_loopNN` file.
         loops              = 1,

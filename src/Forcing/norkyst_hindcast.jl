@@ -58,7 +58,7 @@ Two differences are worth knowing before using it:
 - `catalog_url`: THREDDS catalog base URL; `YYYY/MM/catalog.xml` is appended per month.
 - `opendap_url`: OPeNDAP base URL; `YYYY/MM/<file>` is appended per day.
 - `parameters`: Variable names to extract. Required.
-- `years`: Calendar years to download. Required.
+- `start_date`, `stop_date`: The period downloaded and prepared, as for `NorKystConfig`. Required.
 """
 Base.@kwdef mutable struct NorKystHindcastConfig <: AbstractNorKystConfig
     data_root::String
@@ -69,7 +69,8 @@ Base.@kwdef mutable struct NorKystHindcastConfig <: AbstractNorKystConfig
     catalog_url::String = NORKYST_HINDCAST_CATALOG_URL
     opendap_url::String = NORKYST_HINDCAST_OPENDAP_URL
     parameters::Vector{String}
-    years::Vector{Int}
+    start_date::DateTime
+    stop_date::DateTime
 end
 
 """
@@ -107,7 +108,7 @@ end
 """
     fetch_forcing(target_grid, config::NorKystHindcastConfig)
 
-Download the Norkyst-v3 hindcast months covering `config.years`, each combined into one NetCDF file
+Download the Norkyst-v3 hindcast months the config's period touches, each combined into one NetCDF file
 in `forcing_directory(config)` subset to the lon/lat box of `target_grid` and to one record a day.
 A month whose file already exists is skipped, so an interrupted download resumes.
 """
@@ -115,9 +116,10 @@ function fetch_forcing(target_grid, config::NorKystHindcastConfig)
     output_directory = forcing_directory(config)
     mkpath(output_directory)
 
-    @info "Downloading Norkyst-v3 hindcast years $(join(config.years, ", ")) to $output_directory"
+    months = coverage_months(coverage_window(config))
+    @info "Downloading Norkyst-v3 hindcast $(month_span(months)) to $output_directory"
 
-    for year in config.years, month = 1:12
+    for (year, month) in months
         process_hindcast_month(year, month, target_grid, config)
     end
 

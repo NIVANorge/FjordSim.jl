@@ -9,8 +9,8 @@
 # `minimum_discharge`.
 #
 # **Where the values come from** — HydAPI (https://hydapi.nve.no/UserDocumentation/), queried per
-# station, parameter and year, so the window comes from `years` rather than from whatever a
-# published artifact happens to cover. This is the half that needs an API key.
+# station, parameter and year, so the window comes from the config's period rather than from
+# whatever a published artifact happens to cover. This is the half that needs an API key.
 #
 # Both are licensed under the Norwegian Licence for Open Government Data (NLOD), which requires
 # attribution to NVE. Every HydAPI response carries its own `license` field.
@@ -189,14 +189,15 @@ function NVERiver(;
 end
 
 """
-    NVERiversConfig(; data_root, outlets, years, kwargs...)
+    NVERiversConfig(; data_root, outlets, start_date, stop_date, kwargs...)
 
 River forcing from NVE: river mouths and catchment sizes from the ELVIS/REGINE map services, and
 observed daily water temperature and discharge from HydAPI, turned into a volume inflow carrying the
 river's properties.
 
-`years` is the calendar years to download and is required, along with `data_root`, `outlets` and
-`maximum_inflow_velocity`; everything else has a default.
+`start_date` and `stop_date` are the period the river file spans, independent of the run's, and are
+required along with `data_root`, `outlets` and `maximum_inflow_velocity`; everything else has a
+default. HydAPI is asked for every calendar year the period touches (`nve_years`).
 
 # Outlet discovery
 `minimum_discharge` decides where the outlets come from, and it is the field to reach for first.
@@ -249,7 +250,8 @@ accepts a comma-separated station list; only `/Observations` does.
 # Fields
 - `data_root`, `output_file`, `plot_file`: resolved by `river_forcing_path` and `plot_path`.
 - `download_directory`: where cached responses go, under `data_root`.
-- `outlets`, `years`: the rivers — stated or overridden — and the calendar years to fetch.
+- `outlets`: the rivers — stated or overridden.
+- `start_date`, `stop_date`: the period fetched and written.
 - `minimum_discharge`, `margin`: outlet discovery, above.
 - `discovered`: where `nve_outlets` memoises what it derived. Never written by a setup.
 - `base_url`, `map_url`, `api_key`, `resolution_time`: the requests.
@@ -263,7 +265,8 @@ Base.@kwdef mutable struct NVERiversConfig <: AbstractRiverConfig
     plot_file::String = "rivers_nve.png"
     download_directory::String = "nve"
     outlets::Vector{NVERiver}
-    years::Vector{Int}
+    start_date::DateTime
+    stop_date::DateTime
     base_url::String = NVE_HYDAPI_URL
     map_url::String = NVE_MAP_URL
     api_key::String = ""
@@ -995,8 +998,8 @@ and `x_domain`/`y_domain` provide them for any grid. A config naming no `minimum
 its own outlets, so the download is skipped and the grid goes unused.
 
 Then **HydAPI**: every series the outlets name — water temperature and discharge, one calendar year
-at a time — plus each station's metadata. Files already present are left alone, so this is cheap to
-re-run and a partial download resumes.
+of the config's period at a time (`nve_years`) — plus each station's metadata. Files already present
+are left alone, so this is cheap to re-run and a partial download resumes.
 
 A configured station with no data for a requested year is an **error**, not a `NaN` row: the setup
 named that station and that year, so an empty answer is a statement about the setup. A river that
@@ -1011,7 +1014,6 @@ is a perfectly successful 200 carrying zero observations. The empty cache file i
 later run re-requests rather than reading the emptiness back as a gap-filled row of `NaN`.
 """
 function fetch_rivers(target_grid, config::NVERiversConfig)
-    isempty(config.years) && error("The NVE river config names no years.")
     !isfinite(config.minimum_discharge) && isempty(config.outlets) && error(
         "The NVE river config names neither outlets nor a `minimum_discharge`, so it has no " *
         "rivers at all. State the outlets, or give a discharge threshold to discover them.",
@@ -1027,7 +1029,7 @@ function fetch_rivers(target_grid, config::NVERiversConfig)
                     "$(round(o.catchment_discharge, digits = 2)) m³/s" for o in outlets), ", ")
 
     for outlet in outlets, (parameter, station) in nve_outlet_series(outlet)
-        for year in config.years
+        for year in nve_years(config)
             filepath = nve_observations_path(config, station, parameter, year)
             description = "$(outlet.name) parameter $parameter at station $station for $year"
             result = nve_request(
@@ -1184,13 +1186,25 @@ function nve_daily_values(filepath)
 end
 
 """
+    nve_years(config)
+
+The calendar years HydAPI is asked for, and read back over: those the config's period touches, its
+end exclusive as in `coverage_months`, so a period ending at 00:00 on 1 January asks nothing of the
+year after.
+"""
+function nve_years(config::NVERiversConfig)
+    first_date, last_date = coverage_window(config)
+    return year(first_date):year(max(first_date, last_date - Millisecond(1)))
+end
+
+"""
     nve_station_series(config, station, parameter)
 
-Every cached daily record of one station and parameter, merged across the config's `years`.
+Every cached daily record of one station and parameter, merged across `nve_years(config)`.
 """
 function nve_station_series(config::NVERiversConfig, station, parameter)
     records = Dict{Date,Float64}()
-    for year in config.years
+    for year in nve_years(config)
         filepath = nve_observations_path(config, station, parameter, year)
         isfile(filepath) || error(
             "Cached HydAPI response $filepath does not exist. Run `fetch_rivers` first.",
@@ -1357,7 +1371,7 @@ outlet's `discharge_fraction` applied to whichever answered:
    neutral volume to fall back on.
 
 A gauge whose cached years hold no record on any date of `times` is an error too, rather than a
-silent fall through to the normal: it means `years` does not cover the run window.
+silent fall through to the normal: it means the config's period does not cover `times`.
 """
 function river_discharge(config::NVERiversConfig, times)
     outlets = nve_outlets(config)
@@ -1400,7 +1414,7 @@ function nve_outlet_discharge(config::NVERiversConfig, outlet::NVERiver, inflow,
     records = nve_station_series(config, outlet.level_station, NVE_WATER_LEVEL)
     isempty(records) && error(
         "Level station $(outlet.level_station) of $(outlet.name) has no records. Give the river " *
-        "config `years` covering the run window and re-run `fetch_rivers`.",
+        "config a `start_date`/`stop_date` covering the run window and re-run `fetch_rivers`.",
     )
     level = nve_interpolate_gaps([get(records, date, NaN) for date in dates])
 
@@ -1478,7 +1492,8 @@ function nve_discharge_row(config::NVERiversConfig, outlet::NVERiver, dates)
             any(isfinite, row) || error(
                 "Discharge station $(outlet.discharge_station) of river $(outlet.id) " *
                 "($(outlet.name)) has no record between $(first(dates)) and $(last(dates)). " *
-                "Give the river config `years` covering the run window and re-run `fetch_rivers`.",
+                "Give the river config a `start_date`/`stop_date` covering the run window and " *
+                "re-run `fetch_rivers`.",
             )
             @info "River $(outlet.id) ($(outlet.name)): daily discharge from station " *
                   "$(outlet.discharge_station)" *

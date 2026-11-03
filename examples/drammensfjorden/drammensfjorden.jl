@@ -30,7 +30,7 @@ using Oceananigans:
     WENO,
     WENOVectorInvariant
 using Oceananigans.TurbulenceClosures: HorizontalScalarBiharmonicDiffusivity
-using Oceananigans.Units: days, hour, hours, minutes, second
+using Oceananigans.Units: hour, hours, minutes, second
 using Dates: DateTime
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using NumericalEarth: FreezingLimitedOceanTemperature
@@ -39,6 +39,9 @@ data_root = fjord_data_root("drammensfjorden")
 # Stated here and passed to the grid and to every model component below, rather than set on
 # `Oceananigans.defaults.FloatType` — see `EvenGrid`'s `float_type`.
 FT = Float32
+# The whole of 2020, a leap year. Every dataset below is downloaded and prepared for the same period.
+start_date = DateTime(2020, 1, 1)
+stop_date = DateTime(2021, 1, 1)
 
 FjordConfig(
     # Overloads LatitudeLongitudeGrid(architecture, config) — the one grid hook.
@@ -103,6 +106,7 @@ FjordConfig(
         output_directory = "norkyst_initial",
         output_file      = "initial_state.nc",
         parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
+        start_date       = start_date,
     ),
     # Overloads river_locations, river_series, river_discharge and fetch_rivers (all
     # required). Its own `data_root`: the ELVIS and REGINE caches record the domain they
@@ -112,7 +116,8 @@ FjordConfig(
         data_root         = data_root,
         output_file       = "rivers_nve.nc",
         plot_file         = "rivers_nve.png",
-        years             = [2020],
+        start_date        = start_date,
+        stop_date         = stop_date,
         # Discovery at Oslofjord's threshold: every mouth NVE has in this domain carrying
         # 0.5 m³/s or more, sized by its own REGINE catchment. It replaced the OF800
         # dataset's outlet table, which landed one river in the domain, 602 m from the
@@ -152,7 +157,8 @@ FjordConfig(
         parameters       = [
             "temperature", "salinity", "u_eastward", "v_northward", "zeta", "ubar", "vbar",
         ],
-        years            = [2020],
+        start_date       = start_date,
+        stop_date        = stop_date,
     ),
     # Overloads atmosphere_time_steps, atmosphere_source_grid, atmosphere_variable_names,
     # download_atmosphere, prescribed_atmosphere and prescribed_radiation.
@@ -163,7 +169,8 @@ FjordConfig(
         plot_file        = "atmosphere.png",
         resolution       = 0.02,
         padding          = 0.1,
-        years            = [2020],
+        start_date       = start_date,
+        stop_date        = stop_date,
     ),
     # Overloads coupled_model and model_tracers.
     model_config = CoupledHydrostaticModel(
@@ -257,10 +264,8 @@ FjordConfig(
         ),
         # The NorKyst daily mean of `start_date`: T, S, u and v.
         initial_conditions = FromInitialState(),
-        # The whole of 2020, a leap year, so 366 days from midnight lands on midnight. The
-        # prepare steps pad their time axes to reach the ends of this window.
-        start_date         = DateTime(2020, 1, 1),
-        stop_time          = 366days,
+        start_date         = start_date,
+        stop_date          = stop_date,
         # One pass. Raise it to spin the basin up on the same year, carrying the state
         # over; each repetition writes its own `_loopNN` file.
         loops              = 1,

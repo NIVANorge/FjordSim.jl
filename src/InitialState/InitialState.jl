@@ -1,6 +1,6 @@
 module InitialState
 
-# The initial-state pipeline: one source record at the run's `start_date`, regridded onto the
+# The initial-state pipeline: one source record at the config's `start_date`, regridded onto the
 # simulation grid for `FromInitialState` initial conditions. The regridding is `Regridding`'s, the
 # same as the forcing's and the open boundaries'; the dataset enters only through the hooks below.
 
@@ -14,14 +14,11 @@ using NCDatasets
 
 using ..Configs:
     AbstractInitialStateConfig,
-    AbstractRunConfig,
     AbstractFjordConfig,
     grid_config,
     bathymetry_config,
     initial_state_config,
-    boundary_data_config,
-    run_config,
-    start_date
+    boundary_data_config
 using ..Grids: domain_grid, open_edges, simulation_grid
 using ..Bathymetry: resolve_bathymetry_file
 using ..Regridding:
@@ -93,19 +90,14 @@ A new initial-state dataset implements this on its `AbstractInitialStateConfig` 
 function initial_state_variable_names end
 
 """
-    initial_state_date(initial_state_config, run_config)
+    initial_state_date(initial_state_config)
 
-The instant the initial state is for: the run config's `start_date`. `nothing` for a
-`nothing` initial state, which needs no date. A setup naming an initial state but no run config
-has no such instant, which is an error rather than a no-op.
+The instant the initial state is for: the initial-state config's own `start_date`, independent of
+the run's. `FromInitialState` refuses a run starting at any other instant. `nothing` for a `nothing`
+initial state, which needs no date.
 """
-initial_state_date(::Nothing, run_config) = nothing
-initial_state_date(::AbstractInitialStateConfig, config::AbstractRunConfig) = start_date(config)
-
-initial_state_date(::AbstractInitialStateConfig, ::Nothing) = error(
-    "The initial state is read at the run config's `start_date`, and this setup names no " *
-    "`run_config`.",
-)
+initial_state_date(::Nothing) = nothing
+initial_state_date(config::AbstractInitialStateConfig) = config.start_date
 
 # --- Drivers ---
 
@@ -113,14 +105,14 @@ initial_state_date(::AbstractInitialStateConfig, ::Nothing) = error(
     download_initial_state(config)
 
 Fetch the source record a later `prepare_initial_state` reads, into `initial_state_directory`:
-builds the bare domain grid on the CPU, takes `date` from the run config's `start_date` and hands
-both to the initial-state config's `fetch_initial_state` hook. Returns `nothing` for a `nothing`
+builds the bare domain grid on the CPU, takes `date` from the initial-state config's `start_date` and
+hands both to its `fetch_initial_state` hook. Returns `nothing` for a `nothing`
 initial-state config.
 """
 download_initial_state(config::AbstractFjordConfig) = fetch_initial_state(
     domain_grid(grid_config(config), CPU()),
     initial_state_config(config),
-    initial_state_date(initial_state_config(config), run_config(config)),
+    initial_state_date(initial_state_config(config)),
 )
 
 """
@@ -135,7 +127,7 @@ fetch_initial_state(target_grid, ::Nothing, date) = nothing
     prepare_initial_state(config)
 
 Regrid the initial state a setup names onto its simulation grid. Returns `nothing` for a `nothing`
-initial-state config. Only picks out the five components this step reads and hands them to
+initial-state config. Only picks out the four components this step reads and hands them to
 `regrid_initial_state`.
 """
 prepare_initial_state(config::AbstractFjordConfig) = regrid_initial_state(
@@ -143,11 +135,10 @@ prepare_initial_state(config::AbstractFjordConfig) = regrid_initial_state(
     bathymetry_config(config),
     initial_state_config(config),
     boundary_data_config(config),
-    run_config(config),
 )
 
 """
-    regrid_initial_state(grid_config, bathymetry_config, initial_state_config, boundary_data_config, run_config)
+    regrid_initial_state(grid_config, bathymetry_config, initial_state_config, boundary_data_config)
     regrid_initial_state(target_grid, initial_state_config, date; edges = nothing)
 
 Regrid the downloaded record for `date` onto `target_grid` and write it, with `date` as its
@@ -157,27 +148,25 @@ Regrid the downloaded record for `date` onto `target_grid` and write it, with `d
 The file has the layout of the prepared forcing file with one record and no `_lambda` twins. As
 there, `target_grid` is the immersed grid the simulation runs on, cells the model treats as land are
 `NaN`, and `edges` are the open lateral boundaries whose velocity face rows are kept. The
-component form reads the grid from the processed bathymetry, the date from the run config and
-the edges from the boundary data config. Interpolation runs on the CPU: it is one record.
+component form reads the grid from the processed bathymetry, the date from the initial-state config
+and the edges from the boundary data config. Interpolation runs on the CPU: it is one record.
 
 # Returns
 A named tuple with `output_file`, `date` (the source record's own) and `variables`.
 """
-regrid_initial_state(grid_config, bathymetry_config, ::Nothing, boundary_data_config, run_config) =
-    nothing
+regrid_initial_state(grid_config, bathymetry_config, ::Nothing, boundary_data_config) = nothing
 
 function regrid_initial_state(
     grid_config,
     bathymetry_config,
     initial_state_config::AbstractInitialStateConfig,
     boundary_data_config,
-    run_config,
 )
     grid = simulation_grid(grid_config, resolve_bathymetry_file(bathymetry_config), CPU())
     result = regrid_initial_state(
         grid,
         initial_state_config,
-        initial_state_date(initial_state_config, run_config);
+        initial_state_date(initial_state_config);
         edges = open_edges(boundary_data_config),
     )
 

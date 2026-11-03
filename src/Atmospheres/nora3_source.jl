@@ -69,14 +69,15 @@ const NORA3_EASTWARD_NAME = "u_wind_10m"
 const NORA3_NORTHWARD_NAME = "v_wind_10m"
 
 """
-    NORA3Config(; data_root, output_directory, years, kw...)
+    NORA3Config(; data_root, output_directory, start_date, stop_date, kw...)
 
 Atmosphere configuration for the MET Norway NORA3 reanalysis, served per forecast lead hour over
 OPeNDAP from `thredds.met.no`.
 
 Only `opendap_url`, NORA3's public endpoint, and `snowfall` are defaulted among the source's own
 settings.
-`data_root`, `output_directory` and `years` have no defaults, so a setup that forgets one gets an
+`data_root`, `output_directory`, `start_date` and `stop_date` have no defaults, so a setup that
+forgets one gets an
 `UndefKeywordError` rather than a silent fallback.
 
 The download normalizes NORA3's forecast structure away: it selects the forecast lead supplying
@@ -97,8 +98,10 @@ repeating the first step.
 - `opendap_url`: Base OPeNDAP URL of the NORA3 file archive.
 - `resolution`: Prepared grid spacing in degrees.
 - `padding`: Degrees of margin added around the ocean domain.
-- `years`: Calendar years to prepare. Hours 00:00 to 03:00 of 1 January come from the 18Z run of
-  31 December of the preceding year, which is fetched automatically.
+- `start_date`, `stop_date`: The period downloaded and prepared, independent of the run's: every
+  month it touches is downloaded, its end exclusive (`coverage_months`), and the prepared axis is
+  padded to its ends. A month's first hours come from the 18Z run of the day before, which is
+  fetched automatically.
 - `snowfall`: Also fetch solid precipitation and prepare it as `snowfall`, leaving `precipitation`
   the liquid part. A month downloaded with the other setting is fetched again.
 
@@ -113,7 +116,8 @@ Base.@kwdef mutable struct NORA3Config <: AbstractAtmosphereConfig
     opendap_url::String = NORA3_OPENDAP_URL
     resolution::Float64 = 0.02
     padding::Float64 = 0.1
-    years::Vector{Int}
+    start_date::DateTime
+    stop_date::DateTime
     snowfall::Bool = false
 end
 
@@ -181,7 +185,7 @@ atmosphere_variable_names(config::NORA3Config) =
 """
     atmosphere_time_steps(config::NORA3Config)
 
-The hourly records present in the downloaded monthly files, sorted by date.
+The hourly records of the downloaded monthly files of the config's period, sorted by date.
 """
 function atmosphere_time_steps(config::NORA3Config)
     output_directory = atmosphere_directory(config)
@@ -190,8 +194,9 @@ function atmosphere_time_steps(config::NORA3Config)
         "Run `julia --project -m FjordSim download_atmosphere` for this setup first.",
     )
 
+    months = coverage_months(coverage_window(config))
     records = AtmosphereRecord[]
-    for year in config.years, month = 1:12
+    for (year, month) in months
         filepath = nora3_monthly_path(config, year, month)
         isfile(filepath) || continue
         nora3_month_matches(config, filepath) || error(
@@ -208,8 +213,7 @@ function atmosphere_time_steps(config::NORA3Config)
     end
 
     isempty(records) && error(
-        "No downloaded NORA3 files found in $output_directory for years " *
-        "$(join(config.years, ", ")). " *
+        "No downloaded NORA3 files found in $output_directory for $(month_span(months)). " *
         "Run `julia --project -m FjordSim download_atmosphere` for this setup first.",
     )
     sort!(records, by = record -> record.date)
@@ -294,8 +298,8 @@ end
 """
     fetch_atmosphere(target_grid, config::NORA3Config)
 
-Download NORA3 for `config.years` into `atmosphere_directory(config)`, one gap-free hourly file
-per month.
+Download NORA3 for the months of the config's period into `atmosphere_directory(config)`, one
+gap-free hourly file per month.
 
 A month whose file already exists is skipped, so an interrupted download resumes. Each month is
 written to a `.tmp` path and renamed on success — a month is close to 900 OPeNDAP opens, so a
@@ -308,8 +312,9 @@ function fetch_atmosphere(target_grid, config::NORA3Config)
     mkpath(output_directory)
 
     longitude, latitude = atmosphere_target_axes(target_grid, config)
+    months = coverage_months(coverage_window(config))
     pending = [
-        (year, month) for year in config.years, month = 1:12 if
+        (year, month) for (year, month) in months if
         !isfile(nora3_monthly_path(config, year, month)) ||
         !nora3_month_matches(config, nora3_monthly_path(config, year, month))
     ]
@@ -319,7 +324,7 @@ function fetch_atmosphere(target_grid, config::NORA3Config)
         return output_directory
     end
 
-    @info "Downloading NORA3 years $(join(config.years, ", ")) to $output_directory"
+    @info "Downloading NORA3 $(month_span(months)) to $output_directory"
     @info "Subsetting to longitude $(first(longitude)) to $(last(longitude)), " *
           "latitude $(first(latitude)) to $(last(latitude))"
 

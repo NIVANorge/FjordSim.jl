@@ -775,25 +775,25 @@ end
         @test geodatabase_path(shared) == "/shared/Dybdedata.gdb"
         @test bathymetry_path(shared) == joinpath(data_root, "bathymetry.nc")  # others unaffected
 
-        # A setup states its own forcing directory, variables and years; only the NorKyst
+        # A setup states its own forcing directory, variables and period; only the NorKyst
         # endpoints are defaulted.
-        @test_throws UndefKeywordError NorKystConfig(data_root = data_root, years = [2020])
+        @test_throws UndefKeywordError NorKystConfig(data_root = data_root)
         @test_throws UndefKeywordError NorKystConfig(
             data_root = data_root,
             output_directory = "norkyst",
-            years = [2020],
+            start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
         )
         @test_throws UndefKeywordError NorKystConfig(
             data_root = data_root,
             parameters = ["temperature"],
-            years = [2020],
+            start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
         )
 
         forcing_config = NorKystConfig(
             data_root = data_root,
             output_directory = "norkyst",
             parameters = ["temperature", "salinity"],
-            years = [2020],
+            start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
         )
         @test forcing_directory(forcing_config) == joinpath(data_root, "norkyst")
         @test forcing_config.parameters == ["temperature", "salinity"]
@@ -821,7 +821,7 @@ end
             data_root = data_root,
             output_directory = "norkyst_hourly",
             parameters = ["temperature"],
-            years = [2020],
+            start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
         )
         # A setup naming none has no open edge at all, which is how a closed domain is stated.
         @test isempty(open_edges(nothing))
@@ -847,11 +847,11 @@ end
         @test forcing_monthly_filename(forcing_config, 2020, 3) == "NorKyst-800m_ZDEPTHS_avg_202003.nc"
         @test occursin("thredds.met.no", forcing_config.catalog_url)
 
-        # A setup states its own atmosphere directory and years; only the NORA3 endpoint, the
+        # A setup states its own atmosphere directory and period; only the NORA3 endpoint, the
         # prepared file names and the target resolution are defaulted.
-        @test_throws UndefKeywordError NORA3Config(data_root = data_root, years = [2020])
+        @test_throws UndefKeywordError NORA3Config(data_root = data_root)
         @test_throws UndefKeywordError NORA3Config(data_root = data_root, output_directory = "nora3")
-        @test_throws UndefKeywordError NORA3Config(output_directory = "nora3", years = [2020])
+        @test_throws UndefKeywordError NORA3Config(output_directory = "nora3")
 
         atmosphere_config = test_atmosphere_config(data_root = data_root)
         @test atmosphere_config isa AbstractAtmosphereConfig
@@ -868,7 +868,7 @@ end
             data_root = data_root,
             output_directory = "nora3",
             output_file = "/shared/atmosphere.nc",
-            years = [2020],
+            start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
         )
         @test atmosphere_path(relocated_atmosphere) == "/shared/atmosphere.nc"
         @test atmosphere_directory(relocated_atmosphere) == joinpath(data_root, "nora3")
@@ -908,12 +908,12 @@ end
         # Every config is editable in place.
         config.grid_config.size = (4, 6, 2)
         config.bathymetry_config.padding_cells = 0
-        config.forcing_config.years = [2020, 2021]
-        config.atmosphere_config.years = [2020, 2021]
+        config.forcing_config.stop_date = DateTime(2022, 1, 1)
+        config.atmosphere_config.stop_date = DateTime(2022, 1, 1)
         @test config.grid_config.size == (4, 6, 2)
         @test config.bathymetry_config.padding_cells == 0
-        @test config.forcing_config.years == [2020, 2021]
-        @test config.atmosphere_config.years == [2020, 2021]
+        @test config.forcing_config.stop_date == DateTime(2022, 1, 1)
+        @test config.atmosphere_config.stop_date == DateTime(2022, 1, 1)
     end
 
     @testset "data and results roots" begin
@@ -974,7 +974,7 @@ end
                 0.05,
                 0.1,
             ),
-            run_config = MinimalRun(data_root, DateTime(2021, 3, 4, 5), 7200.0),
+            run_config = MinimalRun(data_root, DateTime(2021, 3, 4, 5), DateTime(2021, 3, 4, 7)),
         )
         rivers = config.river_config
 
@@ -1152,10 +1152,10 @@ end
 
         # Each step hands the components it reads to a function dispatching on them alone, so a
         # missing one is a no-op at that level too, with no setup in sight.
-        @test isnothing(regrid_atmosphere(bare.grid_config, nothing, nothing))
-        @test isnothing(regrid_forcing(bare.grid_config, bare.bathymetry_config, nothing, nothing, nothing))
-        @test isnothing(place_rivers(bare.grid_config, bare.bathymetry_config, nothing, nothing, nothing))
-        @test isnothing(regrid_boundary_data(bare.grid_config, bare.bathymetry_config, nothing, nothing))
+        @test isnothing(regrid_atmosphere(bare.grid_config, nothing))
+        @test isnothing(regrid_forcing(bare.grid_config, bare.bathymetry_config, nothing, nothing))
+        @test isnothing(place_rivers(bare.grid_config, bare.bathymetry_config, nothing, nothing))
+        @test isnothing(regrid_boundary_data(bare.grid_config, bare.bathymetry_config, nothing))
 
         # Every step and `build_simulation` has exactly one method, on the setup supertype, so a
         # setup type replaces a step by overloading it on itself and nothing else answers to the
@@ -1213,7 +1213,8 @@ end
                 forcing_config = NorKystConfig(
                     data_root = $(repr(tmp)), output_directory = "norkyst",
                     output_file = "f.nc", plot_file = "f.png",
-                    parameters = ["temperature"], years = [2020],
+                    parameters = ["temperature"],
+                    start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
                 ),
             )
             """,
@@ -2724,7 +2725,7 @@ end
         rivers = NVERiversConfig(
             data_root = "/data/oslofjord",
             outlets = [glomma, akerselva],
-            years = [2020],
+            start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
             maximum_inflow_velocity = 1.0e-3,
         )
 
@@ -2739,7 +2740,8 @@ end
         # The inflow speed is a stability bound on the setup's own grid and time step, so it has no
         # default to fall back on: a config that omits it fails at construction.
         @test_throws UndefKeywordError NVERiversConfig(
-            data_root = "/data/oslofjord", outlets = [glomma], years = [2020],
+            data_root = "/data/oslofjord", outlets = [glomma],
+            start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
         )
 
         # `river_locations` reads no file, so it works before anything is downloaded — which is what
@@ -2770,7 +2772,9 @@ end
 
         mktempdir() do tmp
             keyed = NVERiversConfig(
-                data_root = tmp, outlets = [glomma], years = [2020], api_key = "stated",
+                data_root = tmp, outlets = [glomma],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
+                api_key = "stated",
                 maximum_inflow_velocity = 1.0e-3,
             )
             @test Rivers.nve_api_key(keyed) == "stated"
@@ -2778,7 +2782,9 @@ end
             # A stated key wins over the environment; with neither, the error names the variable and
             # where to get a key, rather than surfacing as an HTTP 401 with an empty body.
             unkeyed = NVERiversConfig(
-                data_root = tmp, outlets = [glomma], years = [2020], maximum_inflow_velocity = 1.0e-3,
+                data_root = tmp, outlets = [glomma],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
+                maximum_inflow_velocity = 1.0e-3,
             )
             withenv(Rivers.NVE_API_KEY_VARIABLE => "from-env") do
                 @test Rivers.nve_api_key(unkeyed) == "from-env"
@@ -2807,7 +2813,9 @@ end
             @test endswith(path, "observations_2.1087.0_1003_2020.json")
 
             cached = NVERiversConfig(
-                data_root = tmp, outlets = [glomma], years = [2020], api_key = "stated",
+                data_root = tmp, outlets = [glomma],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
+                api_key = "stated",
                 maximum_inflow_velocity = 1.0e-3,
             )
             mkpath(Rivers.nve_download_directory(cached))
@@ -2883,7 +2891,9 @@ end
             # An outlet naming no temperature station is the documented escape for an untrustworthy
             # sensor: it borrows the gauged outlets' temperature, date by date.
             mixed = NVERiversConfig(
-                data_root = tmp, outlets = [glomma, akerselva], years = [2020], api_key = "stated",
+                data_root = tmp, outlets = [glomma, akerselva],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
+                api_key = "stated",
                 maximum_inflow_velocity = 1.0e-3,
             )
             series = @test_logs (:warn, r"Filled 1 of 3") (:info, r"Akerselva has no temperature") (
@@ -2894,7 +2904,9 @@ end
 
             # With nothing gauged at all there is no temperature to borrow.
             quiet = NVERiversConfig(
-                data_root = tmp, outlets = [akerselva], years = [2020], api_key = "stated",
+                data_root = tmp, outlets = [akerselva],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
+                api_key = "stated",
                 maximum_inflow_velocity = 1.0e-3,
             )
             @test_throws "temperature_station" river_series(quiet, times)
@@ -2915,14 +2927,17 @@ end
                     id = 1, name = "Glomstadfoss", longitude = 11.3, latitude = 60.8,
                     temperature_station = "2.43.0", mean_discharge = 100.0,
                 )],
-                years = [2020], api_key = "stated", maximum_inflow_velocity = 1.0e-3,
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
+                api_key = "stated", maximum_inflow_velocity = 1.0e-3,
             )
             series = @test_logs (:info, r"Glomstadfoss: 1 daily temperature below 0 °C") river_series(frozen, times)
             @test series["T"][1, :] == Float32[0, 0.4, 6.5]
 
             # A missing cache names the step that fills it rather than failing on a JSON read.
             absent = NVERiversConfig(
-                data_root = tmp, outlets = [glomma], years = [2019], api_key = "stated",
+                data_root = tmp, outlets = [glomma],
+                start_date = DateTime(2019, 1, 1), stop_date = DateTime(2020, 1, 1),
+                api_key = "stated",
                 maximum_inflow_velocity = 1.0e-3,
             )
             @test_throws ErrorException river_series(absent, times)
@@ -2956,7 +2971,7 @@ end
                     id = 1, name = "Glomma", longitude = 10.9709, latitude = 59.1859,
                     discharge_station = "2.605.0", discharge_fraction = 0.5,
                 )],
-                years = [2020],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
                 api_key = "stated",
                 maximum_inflow_velocity = 1.0e-3,
             )
@@ -2969,7 +2984,7 @@ end
                     id = 1, name = "Glomma", longitude = 10.9709, latitude = 59.1859,
                     discharge_station = "2.605.0", mean_discharge = 5.0,
                 )],
-                years = [2020],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
                 api_key = "stated",
                 maximum_inflow_velocity = 1.0e-3,
             )
@@ -2998,7 +3013,9 @@ end
             )
             @test (Rivers.NVE_WATER_LEVEL, "2.101.0") in Rivers.nve_outlet_series(outlet)
             lake = NVERiversConfig(
-                data_root = tmp, outlets = [akerselva, outlet], years = [2020], api_key = "stated",
+                data_root = tmp, outlets = [akerselva, outlet],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
+                api_key = "stated",
                 maximum_inflow_velocity = 1.0e-3,
             )
             storage = area * 0.1 / 86400
@@ -3012,7 +3029,8 @@ end
                     NVERiver(id = 1, name = "Trickle", longitude = 10.5, latitude = 59.5, mean_discharge = 1.0),
                     outlet,
                 ],
-                years = [2020], api_key = "stated", maximum_inflow_velocity = 1.0e-3,
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
+                api_key = "stated", maximum_inflow_velocity = 1.0e-3,
             )
             @test (@test_logs (:warn, r"rises faster") match_mode = :any river_discharge(dry, times))[2, :] ==
                   zeros(3)
@@ -3022,7 +3040,8 @@ end
                 id = 3, name = "No area", longitude = 10.6, latitude = 59.6, level_station = "2.101.0",
             )
             twice = NVERiversConfig(
-                data_root = tmp, outlets = [outlet, Rivers.nve_river_with_id(outlet, 3)], years = [2020],
+                data_root = tmp, outlets = [outlet, Rivers.nve_river_with_id(outlet, 3)],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
                 api_key = "stated", maximum_inflow_velocity = 1.0e-3,
             )
             @test_throws "only one may" river_discharge(twice, times)
@@ -3035,7 +3054,7 @@ end
                     id = 3, name = "Ungauged", longitude = 10.5, latitude = 59.5,
                     catchment_discharge = 7.0,
                 )],
-                years = [2020],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
                 api_key = "stated",
                 maximum_inflow_velocity = 1.0e-3,
             )
@@ -3045,19 +3064,27 @@ end
             sizeless = NVERiversConfig(
                 data_root = tmp,
                 outlets = [NVERiver(id = 4, name = "Sizeless", longitude = 10.5, latitude = 59.5)],
-                years = [2020],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
                 api_key = "stated",
                 maximum_inflow_velocity = 1.0e-3,
             )
             @test_throws "Sizeless" river_discharge(sizeless, times)
 
-            # A gauge whose cached years hold nothing in the window means `years` does not cover the
-            # run — an error, not a silent fall through to the normal.
+            # A gauge whose cached years hold nothing in the window means the config's period does
+            # not cover it — an error, not a silent fall through to the normal.
             @test_throws ErrorException river_discharge(cached, [DateTime(2021, 6, 1)])
 
             # A named discharge station whose year was never downloaded is an error naming the step
             # that fills the cache.
             @test_throws ErrorException river_discharge(absent, times)
+
+            # HydAPI is asked for the years the config's period touches, its end exclusive: a period
+            # ending at midnight on 1 January asks nothing of the year after.
+            fall = NVERiversConfig(
+                data_root = tmp, outlets = [glomma], maximum_inflow_velocity = 1.0e-3,
+                start_date = DateTime(2024, 10, 1), stop_date = DateTime(2027, 1, 1),
+            )
+            @test Rivers.nve_years(fall) == 2024:2026
         end
     end
 
@@ -3099,7 +3126,8 @@ end
 
         fixture(tmp; kwargs...) = begin
             config = NVERiversConfig(;
-                data_root = tmp, outlets = NVERiver[], years = [2020],
+                data_root = tmp, outlets = NVERiver[],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
                 maximum_inflow_velocity = 1.0e-3, kwargs...,
             )
             Rivers.nve_write_cache(Rivers.nve_catchment_path(config), domain, "catchments", catchments)
@@ -3140,7 +3168,7 @@ end
             stated = NVERiversConfig(
                 data_root = tmp,
                 outlets = [NVERiver(id = 7, name = "Manual", longitude = 10.5, latitude = 59.5)],
-                years = [2020],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
                 maximum_inflow_velocity = 1.0e-3,
             )
             @test Rivers.nve_outlets(stated) == stated.outlets
@@ -3212,7 +3240,9 @@ end
                 "020.Z" => Dict{String,Any}("name" => "Bekk A", "qnormal_mm3aar" => runoff(2.0)),
             )
             config = NVERiversConfig(
-                data_root = tmp, outlets = NVERiver[], years = [2020], minimum_discharge = 0.5,
+                data_root = tmp, outlets = NVERiver[],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
+                minimum_discharge = 0.5,
                 maximum_inflow_velocity = 1.0e-3,
             )
             Rivers.nve_write_cache(
@@ -3318,7 +3348,8 @@ end
 
             # Reading a cache that was never written names the step that writes it.
             missing_config = NVERiversConfig(
-                data_root = joinpath(tmp, "empty"), outlets = NVERiver[], years = [2020],
+                data_root = joinpath(tmp, "empty"), outlets = NVERiver[],
+                start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
                 minimum_discharge = 0.5, maximum_inflow_velocity = 1.0e-3,
             )
             @test_throws ErrorException Rivers.nve_outlets(missing_config)
@@ -3574,9 +3605,6 @@ end
             @test_throws ErrorException FjordSim.Rivers.validate_river_output(clash, forcing_config)
             @test isnothing(FjordSim.Rivers.validate_river_output(clash, nothing))
             @test isnothing(FjordSim.Rivers.validate_river_output(rivers, forcing_config))
-
-            # The axis comes from the run window, so a setup with no run config has none.
-            @test_throws ErrorException place_rivers(grid, rivers)
 
             # A discharge of the wrong shape, or a non-finite one, is refused rather than written;
             # so is an inflow speed that could never be met. A negative one is an outlet.
@@ -3970,7 +3998,10 @@ end
                 bottom_height,
             )
 
-            boundaries_config = test_boundaries_config(data_root = tmp, architecture = :cpu)
+            boundaries_config = test_boundaries_config(
+                data_root = tmp, architecture = :cpu,
+                start_date = first(dates), stop_date = last(dates),
+            )
             mkpath(boundary_data_directory(boundaries_config))
             write_hourly_source_stub(
                 joinpath(
@@ -4068,7 +4099,10 @@ end
                 bottom_height = fill(-20.0, 4, 3),
             )
 
-            boundaries_config = test_boundaries_config(data_root = tmp, architecture = :cpu)
+            boundaries_config = test_boundaries_config(
+                data_root = tmp, architecture = :cpu,
+                start_date = first(dates), stop_date = last(dates),
+            )
             mkpath(boundary_data_directory(boundaries_config))
             write_hourly_source_stub(
                 joinpath(
@@ -4131,7 +4165,10 @@ end
                 bottom_height = fill(-20.0, 4, 3),
             )
 
-            config = test_boundaries_config(data_root = tmp, architecture = :cpu, open_edges = edges)
+            config = test_boundaries_config(
+                data_root = tmp, architecture = :cpu, open_edges = edges,
+                start_date = first(dates), stop_date = last(dates),
+            )
             mkpath(boundary_data_directory(config))
             write_hourly_source_stub(
                 joinpath(
@@ -4390,7 +4427,9 @@ end
         proj4 = "+proj=lcc +lat_0=66.3 +lon_0=-42 +lat_1=66.3 +lat_2=66.3 +no_defs +R=6.371e+06"
 
         mktempdir() do tmp
-            config = test_atmosphere_config(data_root = tmp)
+            # The twelve hours the fixture month below holds.
+            period = (; start_date = DateTime(2020, 1, 1), stop_date = DateTime(2020, 1, 1, 11))
+            config = test_atmosphere_config(; data_root = tmp, period...)
             grid = LatitudeLongitudeGrid(
                 CPU();
                 size = (8, 10, 2),
@@ -4497,7 +4536,9 @@ end
                     defVar(ds, variable.name, Float32, ("x", "y", "time"))[:, :, :] .= 1.0f0
                 end
             end
-            @test_throws ErrorException regrid_atmosphere(grid, config)
+            both_months = test_atmosphere_config(data_root = tmp, start_date = first(dates),
+                                                 stop_date = last(february))
+            @test_throws ErrorException regrid_atmosphere(grid, both_months)
             rm(joinpath(atmosphere_directory(config), "NORA3_202002.nc"))
 
             # ...and the produced file satisfies the reader contract end to end.
@@ -4517,13 +4558,14 @@ end
             # holding snowfall by a config without, since either would get the snow wrong.
             @test_throws ErrorException regrid_atmosphere(
                 grid,
-                test_atmosphere_config(data_root = tmp, snowfall = true, output_file = "snowy.nc"),
+                test_atmosphere_config(; data_root = tmp, snowfall = true, output_file = "snowy.nc", period...),
             )
             snowy = test_atmosphere_config(;
                 data_root = tmp,
                 output_directory = "nora3_snow",
                 snowfall = true,
                 output_file = "snowy.nc",
+                period...,
             )
             mkpath(atmosphere_directory(snowy))
             snowy_source = joinpath(atmosphere_directory(snowy), "NORA3_202001.nc")
@@ -4538,7 +4580,7 @@ end
             @test !atmospheres.nora3_month_matches(config, snowy_source)
             @test_throws ErrorException regrid_atmosphere(
                 grid,
-                test_atmosphere_config(data_root = tmp, output_directory = "nora3_snow"),
+                test_atmosphere_config(; data_root = tmp, output_directory = "nora3_snow", period...),
             )
 
             # ...and a snowfall config reading its own months prepares `snowfall`, which the
@@ -4738,13 +4780,13 @@ end
         end
 
         # `Base.@kwdef` on a *parametric* struct dispatches on the declared field types instead of
-        # converting. So a duration written as an integer is a MethodError, not a silent promotion —
-        # which is why every setup writes `RunConfig`'s durations with `Oceananigans.Units`
-        # constants, all of which are already Float64.
-        @test_throws MethodError test_run_config(stop_time = 3600)
-        @test test_run_config(stop_time = 1hour).stop_time === 3600.0
-        # `loops` is the one field this does not apply to, being an Int already.
+        # converting. So a field given in another type is a MethodError, not a silent conversion.
+        @test_throws MethodError test_run_config(loops = 2.0)
         @test test_run_config(loops = 2).loops === 2
+        # The run lasts from `start_date` to `stop_date`, in the seconds Oceananigans' clock counts.
+        @test FjordSim.Simulations.run_duration(test_run_config(
+            start_date = DateTime(2020, 1, 1), stop_date = DateTime(2020, 1, 1, 1),
+        )) === 3600.0
         # The nested configs are the other exception, and deliberately so: each has a hand-written
         # keyword constructor that converts, so the rule a reader learns from `RunConfig` does
         # not silently mislead them about the four types they will write far more often.
@@ -4892,16 +4934,33 @@ end
             writers = (test_snapshot_writer(), test_snapshot_writer(output_file = "other.nc")),
         ))
 
-        # The window every loop replays, which is what the prepare steps pad their axes to. It does not
-        # grow with `loops`, since each repetition replays the same interval.
-        window = test_run_config(start_date = DateTime(2020, 1, 1), stop_time = 365days)
-        @test coverage_window(window) == (DateTime(2020, 1, 1), DateTime(2020, 12, 31))
+        # The window every loop replays, which every prepared input must span. It does not grow
+        # with `loops`, since each repetition replays the same interval.
+        window = test_run_config(
+            start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
+        )
+        @test coverage_window(window) == (DateTime(2020, 1, 1), DateTime(2021, 1, 1))
         @test coverage_window(test_run_config(
             start_date = DateTime(2020, 1, 1),
-            stop_time = 365days,
+            stop_date = DateTime(2021, 1, 1),
             loops = 5,
         )) == coverage_window(window)
         @test isnothing(coverage_window(nothing))     # a setup naming no run config
+        # A dataset's own period, independent of the run's.
+        @test coverage_window(test_atmosphere_config(
+            start_date = DateTime(2019, 6, 1), stop_date = DateTime(2022, 1, 1),
+        )) == (DateTime(2019, 6, 1), DateTime(2022, 1, 1))
+
+        # The months a download fetches and a prepare step reads: every month the period touches,
+        # its end exclusive, so a period ending at midnight on the first fetches nothing of that
+        # month.
+        coverage_months = FjordSim.Utils.coverage_months
+        @test coverage_months((DateTime(2024, 10, 1), DateTime(2026, 10, 1))) ==
+              [(year, month) for year in 2024:2026 for month in 1:12
+               if DateTime(2024, 10, 1) <= DateTime(year, month, 1) < DateTime(2026, 10, 1)]
+        @test coverage_months((DateTime(2020, 12, 15), DateTime(2021, 1, 1, 1))) ==
+              [(2020, 12), (2021, 1)]
+        @test coverage_months(coverage_window(window)) == [(2020, month) for month in 1:12]
 
         # The checkpoint prefix carries the loop index because the checkpoint itself does not: the state
         # records the clock but not which repetition produced it. It carries no run tag, so a later launch
@@ -4967,16 +5026,23 @@ end
 
         # Both readers use `Cyclical()` time indexing, which wraps rather than failing outside its
         # data, so a run that outlasts its forcing would quietly replay the beginning.
-        @test isnothing(validate_time_coverage("forcing", covered, DateTime(2020, 1, 1, 12), 86400.0, "x"))
-        @test isnothing(validate_time_coverage("forcing", covered, DateTime(2020, 6, 1), 86400.0, "x"))
+        day = Day(1)
+        @test isnothing(validate_time_coverage(
+            "forcing", covered, DateTime(2020, 1, 1, 12), DateTime(2020, 1, 1, 12) + day, "x",
+        ))
+        @test isnothing(validate_time_coverage(
+            "forcing", covered, DateTime(2020, 6, 1), DateTime(2020, 6, 1) + day, "x",
+        ))
         # A source that cannot report its dates is skipped rather than blocking the run.
-        @test isnothing(validate_time_coverage("atmosphere", nothing, DateTime(2019, 1, 1), 1e9, "x"))
+        @test isnothing(validate_time_coverage(
+            "atmosphere", nothing, DateTime(2019, 1, 1), DateTime(2060, 1, 1), "x",
+        ))
 
         @test_throws ErrorException validate_time_coverage(
-            "forcing", covered, DateTime(2020, 1, 1), 86400.0, "x",   # starts before the data
+            "forcing", covered, DateTime(2020, 1, 1), DateTime(2020, 1, 2), "x",   # starts before the data
         )
         @test_throws ErrorException validate_time_coverage(
-            "forcing", covered, DateTime(2020, 12, 31), 86400.0, "x", # runs past the data
+            "forcing", covered, DateTime(2020, 12, 31), DateTime(2021, 1, 1), "x", # runs past the data
         )
 
         mktempdir() do tmp
@@ -5005,9 +5071,7 @@ end
             ForcingTimeStep(date, SourceRecord(date, "a.nc", index), SourceRecord(date, "a.nc", index), 0.0f0)
         steps = [step(DateTime(2020, 1, 1, 12), 1), step(DateTime(2020, 1, 2, 12), 2)]
 
-        # A setup naming no run config prepares exactly the downloaded range.
-        @test pad_time_steps(steps, nothing) === steps
-        # So does a window the axis already spans.
+        # A period the axis already spans leaves it alone.
         @test length(pad_time_steps(steps, (DateTime(2020, 1, 1, 12), DateTime(2020, 1, 2, 12)))) == 2
 
         # A window reaching past either end gets one replicated record there, carrying the same source
@@ -5042,7 +5106,6 @@ end
             AtmosphereRecord(DateTime(2020, 1, 1, 0), "n.nc", 1),
             AtmosphereRecord(DateTime(2020, 1, 1, 1), "n.nc", 2),
         ]
-        @test pad_atmosphere_records(records, nothing) === records
 
         # A pad points at the same file and index, so `validate_source_consistency` sees no new file.
         padded = pad_atmosphere_records(records, (DateTime(2019, 12, 31, 23), DateTime(2020, 1, 1, 2)))
@@ -5328,6 +5391,7 @@ end
                 data_root = tmp,
                 output_directory = "norkyst_initial",
                 parameters = ["temperature", "salinity", "u_eastward", "v_northward"],
+                start_date = start_date,
             )
 
             # Nothing downloaded is an error naming the step that downloads it.
@@ -5378,6 +5442,7 @@ end
                 output_directory = "norkyst_initial",
                 output_file = "absent.nc",
                 parameters = config.parameters,
+                start_date = start_date,
             )
             @test_throws "prepare_initial_state" resolve_initial_conditions(
                 FromInitialState(), grid, initialized(initial_state_config = absent), (:T, :S),
@@ -5386,14 +5451,15 @@ end
                 FromInitialState(), grid, initialized(), (:T, :S),
             )
 
-            # The setup-level drivers take the date from the run config. A day already
+            # The setup-level drivers take the date from the initial-state config. A day already
             # downloaded is not fetched again, which is what lets this run offline.
             setup = FjordConfig(; grid_config, bathymetry_config, initial_state_config = config, run_config)
             @test download_initial_state(setup) == downloaded
             @test prepare_initial_state(setup).date == DateTime(2020, 1, 1, 12)
-            @test_throws "run_config" prepare_initial_state(
+            # Independent of the run config, so a setup naming none prepares it just the same.
+            @test prepare_initial_state(
                 FjordConfig(; grid_config, bathymetry_config, initial_state_config = config),
-            )
+            ).date == DateTime(2020, 1, 1, 12)
         end
     end
 
@@ -5492,7 +5558,7 @@ end
 
             simulation = build_simulation(config)
             @test simulation isa Simulation
-            @test simulation.stop_time == run_config.stop_time
+            @test simulation.stop_time == FjordSim.Simulations.run_duration(run_config)
 
             ocean_model = simulation.model.ocean.model
             @test Set(keys(ocean_model.tracers)) ⊇ Set((:T, :S))
@@ -5611,7 +5677,7 @@ end
             # window still builds; the loop index reaches the output filename.
             looped_config = fjord(loops = 2)
             looped = build_simulation(looped_config)
-            @test looped.stop_time == looped_config.run_config.stop_time
+            @test looped.stop_time == FjordSim.Simulations.run_duration(looped_config.run_config)
             @test looped.model.ocean.output_writers[snapshot.name].filepath ==
                   results_path(snapshot, looped_config.run_config, 1)
 
@@ -5637,7 +5703,7 @@ end
             # The state carried over — that is the whole point of resetting only the clocks.
             @test maximum(interior(looped.model.ocean.model.tracers.T)) ≈ 9.0
             # stop_time is untouched, so the next repetition runs the same window.
-            @test looped.stop_time == looped_config.run_config.stop_time
+            @test looped.stop_time == FjordSim.Simulations.run_duration(looped_config.run_config)
 
             # A loop count below one is rejected before anything is read or allocated.
             @test_throws ArgumentError build_simulation(fjord(loops = 0))
@@ -6583,15 +6649,15 @@ end
             data_root = "/tmp/fjordsim-test",
             output_directory = "norkyst_v3",
             parameters = ["temperature", "salinity"],
-            years = [2014, 2015],
+            start_date = DateTime(2014, 1, 1), stop_date = DateTime(2016, 1, 1),
         )
 
         @test config isa FjordSim.Configs.AbstractForcingConfig
         # Shares the operational config's supertype, which is what lets the two share every read
         # hook rather than duplicating them.
         @test config isa FjordSim.Forcing.AbstractNorKystConfig
-        @test NorKystConfig(data_root = "/x", output_directory = "y",
-                            parameters = String[], years = Int[]) isa
+        @test NorKystConfig(data_root = "/x", output_directory = "y", parameters = String[],
+                            start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1)) isa
               FjordSim.Forcing.AbstractNorKystConfig
 
         @test occursin("romshindcast/norkyst_v3/zdepth", config.catalog_url)
@@ -6601,8 +6667,8 @@ end
         @test forcing_monthly_filename(config, 2015, 12) == "Norkyst-v3_ZDEPTHS_201512.nc"
         # The same variable map as the operational collection — the two publish the same fields.
         @test forcing_variable_names(config) == forcing_variable_names(
-            NorKystConfig(data_root = "/x", output_directory = "y",
-                          parameters = String[], years = Int[]),
+            NorKystConfig(data_root = "/x", output_directory = "y", parameters = String[],
+                          start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1)),
         )
         @test forcing_directory(config) == "/tmp/fjordsim-test/norkyst_v3"
         @test FjordSim.Forcing.NORKYST_HINDCAST_HOUR == 12
@@ -6614,14 +6680,15 @@ end
             output_directory = "norkyst_v3_hourly",
             open_edges = :south,
             parameters = ["temperature", "zeta", "ubar_eastward", "vbar_northward"],
-            years = [2014],
+            start_date = DateTime(2014, 1, 1), stop_date = DateTime(2015, 1, 1),
         )
 
         @test config isa FjordSim.Configs.AbstractBoundaryDataConfig
         @test config isa FjordSim.BoundaryData.AbstractNorKystBoundaryDataConfig
-        @test NorKystBoundaryDataConfig(data_root = "/x", output_directory = "y",
-                                      open_edges = :south, parameters = String[], years = Int[]) isa
-              FjordSim.BoundaryData.AbstractNorKystBoundaryDataConfig
+        @test NorKystBoundaryDataConfig(
+            data_root = "/x", output_directory = "y", open_edges = :south, parameters = String[],
+            start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
+        ) isa FjordSim.BoundaryData.AbstractNorKystBoundaryDataConfig
 
         @test open_edges(config) == [:south]
         # Not exported, unlike its forcing counterpart; reached through the module.
@@ -6647,7 +6714,8 @@ end
 
         @test_throws ArgumentError NorKystHindcastBoundaryDataConfig(
             data_root = "/x", output_directory = "y", open_edges = Symbol[],
-            parameters = String[], years = Int[],
+            parameters = String[],
+            start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
         )
     end
 
@@ -6675,7 +6743,8 @@ end
         parameters = ["temperature", "u_eastward", "v_northward", "zeta", "ubar_eastward", "vbar_northward"]
         config = NorKystV3BoundaryDataConfig(
             data_root = "/x", output_directory = "y", open_edges = :south, member = "m71",
-            parameters = parameters, years = [2025],
+            parameters = parameters,
+            start_date = DateTime(2025, 1, 1), stop_date = DateTime(2026, 1, 1),
         )
         @test config isa FjordSim.BoundaryData.AbstractNorKystBoundaryDataConfig
         @test open_edges(config) == [:south]
@@ -6688,18 +6757,20 @@ end
         # A depth mean needs its z-level component downloaded beside it.
         @test_throws "u_eastward" NorKystV3BoundaryDataConfig(
             data_root = "/x", output_directory = "y", open_edges = :south, member = "m00",
-            parameters = ["ubar_eastward"], years = [2025],
+            parameters = ["ubar_eastward"],
+            start_date = DateTime(2025, 1, 1), stop_date = DateTime(2026, 1, 1),
         )
         @test_throws ArgumentError NorKystV3BoundaryDataConfig(
             data_root = "/x", output_directory = "y", open_edges = Symbol[], member = "m00",
-            parameters = String[], years = Int[],
+            parameters = String[],
+            start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
         )
     end
 
     @testset "initial-state config" begin
         config = NorKystV3InitialStateConfig(
             data_root = "/x", output_directory = "y", nest_member = "m71", parent_member = "m00",
-            parameters = ["temperature"],
+            parameters = ["temperature"], start_date = DateTime(2024, 10, 1),
         )
         @test config isa FjordSim.Configs.AbstractInitialStateConfig
         @test FjordSim.InitialState.initial_state_filename(config, DateTime(2024, 10, 1)) ==

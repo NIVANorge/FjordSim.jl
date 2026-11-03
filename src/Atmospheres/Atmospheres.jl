@@ -15,10 +15,10 @@ using NumericalEarth.DataWrangling: first_date, last_date
 using ..Configs:
     AbstractAtmosphereConfig,
     AbstractFjordConfig,
+    AbstractGridConfig,
     grid_config,
-    atmosphere_config,
-    run_config
-using ..Utils: coverage_window, with_retries
+    atmosphere_config
+using ..Utils: coverage_months, coverage_window, month_span, with_retries
 using ..Grids: domain_grid
 using ..Plotting: Plotting, plot_atmosphere
 
@@ -124,8 +124,8 @@ end
 """
     atmosphere_time_steps(config)
 
-The time records present in the downloaded files, as a sorted `Vector{AtmosphereRecord}` with
-one entry per prepared time step.
+The downloaded time records of `config`'s own period (`coverage_window`), as a sorted
+`Vector{AtmosphereRecord}` with one entry per prepared time step.
 
 Required for every `AbstractAtmosphereConfig`. See the `NORA3Config` method in
 `src/Atmospheres/nora3_source.jl`.
@@ -356,7 +356,7 @@ end
 # --- Preparation ---
 
 """
-    regrid_atmosphere(target_grid, config::AbstractAtmosphereConfig; coverage)
+    regrid_atmosphere(target_grid, config::AbstractAtmosphereConfig)
 
 Regrid the downloaded atmosphere files onto a regular longitude/latitude grid covering
 `target_grid`, and write the single NetCDF file the simulation reads.
@@ -381,15 +381,15 @@ Its layout is what `FjordSim.Atmospheres.NORA3.MultiYearNORA3` reads and is ther
 
 # Coverage
 
-`coverage` is the `(first, last)` calendar interval the run needs, from `coverage_window`. The time
-axis is padded to reach both ends by replicating the nearest record; `nothing` prepares exactly the
-downloaded range. See `pad_atmosphere_records`.
+The prepared file spans the config's own period, `coverage_window(config)`, independent of any run:
+its time axis is padded to reach both ends by replicating the nearest record. See
+`pad_atmosphere_records`.
 
 # Returns
 
 A named tuple `(; output_file, times, variables)`.
 """
-function regrid_atmosphere(target_grid, config::AbstractAtmosphereConfig; coverage = nothing)
+function regrid_atmosphere(target_grid, config::AbstractAtmosphereConfig)
     variable_names = atmosphere_variable_names(config)
     isempty(variable_names) && error("$(nameof(typeof(config))) names no atmosphere variables to prepare")
     # Sorted so the prepared file's variable order does not depend on Dict iteration order.
@@ -397,7 +397,7 @@ function regrid_atmosphere(target_grid, config::AbstractAtmosphereConfig; covera
 
     records = atmosphere_time_steps(config)
     validate_atmosphere_records(records)
-    records = pad_atmosphere_records(records, coverage)
+    records = pad_atmosphere_records(records, coverage_window(config))
     source = atmosphere_source_grid(config, first(records).filepath)
     validate_source_consistency(config, records, source)
 
@@ -418,37 +418,32 @@ function regrid_atmosphere(target_grid, config::AbstractAtmosphereConfig; covera
     )
 end
 
-regrid_atmosphere(target_grid, ::Nothing; coverage = nothing) = nothing
+regrid_atmosphere(target_grid, ::Nothing) = nothing
 
 """
     prepare_atmosphere(config)
 
 Regrid the atmosphere a setup names onto a regular longitude/latitude grid, and write the diagnostic
-plot. Returns `nothing` for a `nothing` atmosphere config. Only picks out the three components this
+plot. Returns `nothing` for a `nothing` atmosphere config. Only picks out the two components this
 step reads and hands them to `regrid_atmosphere`.
 
 # Returns
 The `regrid_atmosphere(target_grid, config)` named tuple with `plot_file` added.
 """
 prepare_atmosphere(config::AbstractFjordConfig) =
-    regrid_atmosphere(grid_config(config), atmosphere_config(config), run_config(config))
+    regrid_atmosphere(grid_config(config), atmosphere_config(config))
 
 """
-    regrid_atmosphere(grid_config, atmosphere_config, run_config)
+    regrid_atmosphere(grid_config, atmosphere_config)
 
 `prepare_atmosphere`'s work, on the components it reads. It needs no bathymetry: the prepared grid
 is derived from the setup's longitude/latitude domain rather than from the ocean grid's land mask, so
 unlike `prepare_forcing` it does not depend on `prepare_bathymetry`. It does read the files
-`download_atmosphere` wrote. The coverage window comes from the run config, so the prepared file
-spans the run the setup describes; a `nothing` run config gives the downloaded range.
+`download_atmosphere` wrote, over the atmosphere config's own period.
 """
-regrid_atmosphere(grid_config, ::Nothing, run_config) = nothing
+regrid_atmosphere(grid_config::AbstractGridConfig, ::Nothing) = nothing
 
-function regrid_atmosphere(
-    grid_config,
-    atmosphere_config::AbstractAtmosphereConfig,
-    run_config,
-)
+function regrid_atmosphere(grid_config::AbstractGridConfig, atmosphere_config::AbstractAtmosphereConfig)
     source_directory = atmosphere_directory(atmosphere_config)
     isdir(source_directory) || error(
         "Atmosphere source directory $source_directory does not exist. " *
@@ -456,7 +451,7 @@ function regrid_atmosphere(
     )
 
     grid = domain_grid(grid_config, CPU())
-    result = regrid_atmosphere(grid, atmosphere_config; coverage = coverage_window(run_config))
+    result = regrid_atmosphere(grid, atmosphere_config)
     plot_file = plot_atmosphere(atmosphere_config, atmosphere_path(atmosphere_config))
 
     @info "Prepared variables: $(join(result.variables, ", "))"
@@ -491,11 +486,10 @@ end
 """
     pad_atmosphere_records(records, coverage)
 
-Extend `records` to span `coverage`, replicating the nearest record at each end that falls short. A
-`nothing` coverage leaves `records` alone.
+Extend `records` to span `coverage`, replicating the nearest record at each end that falls short.
 
 Applied after `validate_atmosphere_records`, whose hourly-gap warning would otherwise fire on a pad
-that is deliberately off the hourly cadence — the run's window need not land on an hour of the
+that is deliberately off the hourly cadence — the config's period need not land on an hour of the
 downloaded axis.
 
 A pad points at the same file and index as the record it copies, so the written field is identical
@@ -508,8 +502,6 @@ A pad may reach at most one record spacing past the downloaded axis, for the rea
 there: unbounded, it would manufacture the very coverage `Simulations.validate_time_coverage` exists
 to verify.
 """
-pad_atmosphere_records(records, ::Nothing) = records
-
 function pad_atmosphere_records(records, coverage)
     first_needed, last_needed = coverage
     padded = collect(records)
@@ -518,10 +510,9 @@ function pad_atmosphere_records(records, coverage)
         head = first(padded)
         spacing = atmosphere_record_spacing(padded)
         head.date - first_needed <= spacing || error(
-            "The run starts at $first_needed but the downloaded atmosphere only begins at " *
-            "$(head.date), more than one record spacing " *
-            "($(Dates.canonicalize(spacing))) later. Download the preceding period, or move the " *
-            "run config's `start_date` to " *
+            "The config's period starts at $first_needed but the downloaded atmosphere only begins " *
+            "at $(head.date), more than one record spacing ($(Dates.canonicalize(spacing))) " *
+            "later. Download the preceding period, or move the config's `start_date` to " *
             "$(head.date - spacing) or later.",
         )
         pushfirst!(padded, AtmosphereRecord(first_needed, head.filepath, head.index))
@@ -532,11 +523,10 @@ function pad_atmosphere_records(records, coverage)
         tail = last(padded)
         spacing = atmosphere_record_spacing(padded)
         last_needed - tail.date <= spacing || error(
-            "The run ends at $last_needed but the downloaded atmosphere already stops at " *
-            "$(tail.date), more than one record spacing " *
-            "($(Dates.canonicalize(spacing))) earlier. Download the following period, or shorten " *
-            "`stop_time` so the run ends by " *
-            "$(tail.date + spacing).",
+            "The config's period ends at $last_needed but the downloaded atmosphere already stops " *
+            "at $(tail.date), more than one record spacing ($(Dates.canonicalize(spacing))) " *
+            "earlier. Download the following period, or move the config's `stop_date` to " *
+            "$(tail.date + spacing) or earlier.",
         )
         push!(padded, AtmosphereRecord(last_needed, tail.filepath, tail.index))
         @info "Padded atmosphere end: replicated $(tail.date) at $last_needed"

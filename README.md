@@ -142,18 +142,17 @@ by side with the data: `model_config` says what is built, `run_config` how it is
    result as a NetCDF file. That file is what actually defines the model's `ImmersedBoundaryGrid`. The
    built-in source is the public [Geonorge](https://www.geonorge.no/) Sjøkart Dybdedata dataset.
 
-2. **Initial state** — one record of a larger-scale ocean model at the run's `start_date`, for a
+2. **Initial state** — one record of a larger-scale ocean model at its config's `start_date`, for a
    realistic start without the whole-window download the forcing (below) needs.
    `download_initial_state` fetches a single day (built in: the NorKyst-800m daily mean of the day
    `start_date` falls in) and `prepare_initial_state` regrids it onto the simulation grid;
-   `FromInitialState()` initial conditions read it. The file records the `start_date` it was prepared for, and a run starting at
-   another one refuses it, so changing `start_date` means re-running both steps.
+   `FromInitialState()` initial conditions read it. The file records the `start_date` it was prepared
+   for, and a run starting at another one refuses it.
 
 3. **Rivers** — `add_rivers` writes each river's daily discharge and temperature on the surface
    columns it enters through (built in: NVE's HydAPI), which the run adds as a volume source. It is its
    own config and file, independent of the forcing: it needs only the processed bathymetry and the
-   run config's run window, `start_date` to `start_date + stop_time`, which its daily time
-   axis spans.
+   river config's own period, `start_date` to `stop_date`, which its daily time axis spans.
 
 4. **Open-boundary data** — the exterior state along the open lateral edges, which is what makes them
    open. `prepare_boundary_data` regrids the *hourly* NorKyst collection onto the boundary rows,
@@ -219,7 +218,7 @@ write new setups, add data sources and run the pipeline. Ask in plain words, for
 | Field | Meaning |
 |---|---|
 | `start_date` | the calendar instant model time zero stands for |
-| `stop_time` | how long one run window is |
+| `stop_date` | the calendar instant the run window ends at |
 | `loops` | how many times to repeat that window, carrying the ocean state over |
 | `initial_conditions` | where the first state comes from |
 | `pickup` | resume from the newest checkpoint instead of starting fresh |

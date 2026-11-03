@@ -63,6 +63,8 @@ how to download and subset it.
 - `parameters`: source variable names to prepare.
 - `architecture`: `:auto`, `:cpu` or `:gpu`, resolved by `interpolation_architecture` to decide
   where `prepare_forcing` runs its interpolation kernel.
+- `start_date`, `stop_date`: the period downloaded and prepared, read by `coverage_window`.
+  Independent of the run's, which it has to span.
 
 The open edge is *not* a field here. It belongs to the open-boundary data config
 (`AbstractBoundaryDataConfig`), which hangs off `FjordConfig` rather than off this config, and
@@ -96,7 +98,7 @@ abstract type AbstractForcingConfig end
     AbstractInitialStateConfig
 
 Supertype for initial-state configurations. A concrete subtype describes one dataset the ocean state
-at `start_date` is read from, and how to download it. `prepare_initial_state` regrids that one record
+at its `start_date` is read from, and how to download it. `prepare_initial_state` regrids that one record
 onto the simulation grid, and `FromInitialState` initial conditions read it back.
 
 Independent of the forcing config: the forcing file has to span the whole run window, because the
@@ -104,13 +106,15 @@ run reads it as forcing terms at every step, while this file is a single record 
 wanting a realistic start without interior forcing names this and no forcing config.
 
 The record is the one `start_date` falls in, so changing `start_date` means re-running both steps;
-the prepared file records the `start_date` it was prepared for, and `build_simulation` refuses a
-mismatch.
+the prepared file records the `start_date` it was prepared for, and `build_simulation` refuses one
+that is not the run's.
 
 # Fields a subtype provides
 - `data_root`, `output_file`: resolved by `initial_state_path`, the prepared file.
 - `output_directory`: resolved by `initial_state_directory`; the directory the download writes into.
 - `parameters`: source variable names to prepare.
+- `start_date`: the instant the state is for, read by `initial_state_date`. Independent of the
+  run's, which `FromInitialState` requires to be the same.
 
 # Methods a subtype provides
 - `initial_state_record(config, date)`: the downloaded `SourceRecord` holding the state at `date`.
@@ -145,6 +149,8 @@ with no interior forcing.
 - `maximum_inflow_velocity`: m/s, read by the default `river_maximum_inflow_velocity` — how fast a
   river's water may cross the surface of the columns it enters through, which decides how many
   columns a large river is spread over.
+- `start_date`, `stop_date`: the period downloaded and prepared, read by `coverage_window`.
+  Independent of the run's, which it has to span.
 
 # Methods a subtype provides
 - `river_locations(config)`: the river outlets, as `RiverLocation`s. Required.
@@ -208,6 +214,8 @@ edge is a set of new variables in the same file rather than a new file or a form
   interior forcing's, and the open lateral boundary condition puts its schemes on every one of them.
 - `parameters`: source variable names to prepare.
 - `architecture`: `:auto`, `:cpu` or `:gpu`, resolved by `interpolation_architecture`.
+- `start_date`, `stop_date`: the period downloaded and prepared, read by `coverage_window`.
+  Independent of the run's, which it has to span.
 
 # Methods a subtype provides
 - `boundary_time_steps(config)`: the downloaded time records, as `SourceRecord`s. Required.
@@ -252,6 +260,8 @@ interpolates between them — so it only has to cover the ocean domain with a ma
 - `resolution`: target grid spacing in degrees.
 - `padding`: degrees of margin added around the ocean domain, read by
   `atmosphere_target_axes`.
+- `start_date`, `stop_date`: the period downloaded and prepared, read by `coverage_window`.
+  Independent of the run's, which it has to span.
 
 # Methods a subtype provides
 - `atmosphere_time_steps(config)`: the downloaded time records, as `AtmosphereRecord`s.
@@ -298,9 +308,10 @@ ensemble, a nested run — is a setup type of its own overloading `run_simulatio
   Required.
 - `initial_conditions(config)`: an `AbstractInitialConditionsConfig`, or a `NamedTuple` `set!`
   accepts, resolved by `FjordSim.Simulations.resolve_initial_conditions`. Required.
-- `start_date(config)`: the calendar instant model time zero stands for. With `stop_time` it is the
-  run window `coverage_window` reports, which every prepare step spans. Required.
-- `stop_time(config)`, `loops(config)`, `pickup(config)`: run control, read by `build_simulation`
+- `start_date(config)`: the calendar instant model time zero stands for. With `stop_date`, the
+  instant the run ends, it is the run window `coverage_window` reports, which `build_simulation`
+  checks every prepared input spans. Required.
+- `stop_date(config)`, `loops(config)`, `pickup(config)`: run control, read by `build_simulation`
   and `run_simulation`. Required.
 
 `FjordSim.Simulations.RunConfig` is the built-in implementation, returning its fields of the same
@@ -314,7 +325,7 @@ function callbacks end
 function time_stepping end
 function initial_conditions end
 function start_date end
-function stop_time end
+function stop_date end
 function loops end
 function pickup end
 

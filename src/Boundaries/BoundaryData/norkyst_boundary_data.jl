@@ -97,7 +97,9 @@ overrides `data_root` for that entry only.
 - `catalog_url`, `opendap_url`: The hourly NorKyst collection's own public endpoints; the only
   defaulted fields.
 - `parameters`: Source variable names to extract. Required.
-- `years`: Calendar years to download. Required.
+- `start_date`, `stop_date`: The period downloaded and prepared, independent of the run's: every
+  month it touches is downloaded, its end exclusive (`coverage_months`), and the prepared axis is
+  padded to its ends. Required.
 """
 mutable struct NorKystBoundaryDataConfig <: AbstractNorKystBoundaryDataConfig
     data_root::String
@@ -110,7 +112,8 @@ mutable struct NorKystBoundaryDataConfig <: AbstractNorKystBoundaryDataConfig
     catalog_url::String
     opendap_url::String
     parameters::Vector{String}
-    years::Vector{Int}
+    start_date::DateTime
+    stop_date::DateTime
 end
 
 # A hand-written keyword constructor rather than `Base.@kwdef`, so `open_edges` may be written as one
@@ -128,7 +131,8 @@ function NorKystBoundaryDataConfig(;
     catalog_url = NORKYST_HOURLY_CATALOG_URL,
     opendap_url = NORKYST_HOURLY_OPENDAP_URL,
     parameters,
-    years,
+    start_date,
+    stop_date,
 )
     edges = lateral_edges(open_edges)
     isempty(edges) && throw(
@@ -150,7 +154,8 @@ function NorKystBoundaryDataConfig(;
         catalog_url,
         opendap_url,
         parameters,
-        years,
+        start_date,
+        stop_date,
     )
 end
 
@@ -172,7 +177,7 @@ boundary_variable_names(config::NorKystBoundaryDataConfig) = NORKYST_BOUNDARY_VA
 """
     boundary_time_steps(config::AbstractNorKystBoundaryDataConfig)
 
-Every time record of every downloaded monthly file for `config.years`, sorted by date with
+Every time record of every downloaded monthly file of the config's period, sorted by date with
 duplicates dropped. Errors if the directory or the files are missing.
 """
 function boundary_time_steps(config::AbstractNorKystBoundaryDataConfig)
@@ -182,8 +187,9 @@ function boundary_time_steps(config::AbstractNorKystBoundaryDataConfig)
         "Run `julia --project -m FjordSim download_boundary_data` for this setup first.",
     )
 
+    months = coverage_months(coverage_window(config))
     records = SourceRecord[]
-    for year in config.years, month = 1:12
+    for (year, month) in months
         filepath = joinpath(directory, boundary_monthly_filename(config, year, month))
         isfile(filepath) || continue
         NCDataset(filepath) do ds
@@ -194,7 +200,7 @@ function boundary_time_steps(config::AbstractNorKystBoundaryDataConfig)
     end
 
     isempty(records) &&
-        error("No NorKyst boundary monthly files for years $(config.years) found in $directory.")
+        error("No NorKyst boundary monthly files for $(month_span(months)) found in $directory.")
     sort!(records; by = record -> record.date)
 
     return unique(record -> record.date, records)
@@ -256,7 +262,7 @@ end
 """
     fetch_boundary_data(target_grid, config::NorKystBoundaryDataConfig)
 
-Download the hourly NorKyst-800m months covering `config.years`, each combined into one NetCDF file
+Download the hourly NorKyst-800m months the config's period touches, each combined into one NetCDF file
 in `boundary_data_directory(config)` subset to the box `boundary_domain` derives from
 `open_edges(config)` and `target_grid`. A month whose file already exists is skipped, so an interrupted
 download resumes.
@@ -271,12 +277,13 @@ function fetch_boundary_data(target_grid, config::NorKystBoundaryDataConfig)
 
     edges = open_edges(config)
     longitude, latitude = boundary_domain(edges, target_grid, config.margin)
-    @info "Downloading hourly NorKyst-800m years $(join(config.years, ", ")) along the " *
+    months = coverage_months(coverage_window(config))
+    @info "Downloading hourly NorKyst-800m $(month_span(months)) along the " *
           "$(join(edges, ", ")) boundary to $output_directory"
     @info "  Band: longitude $longitude, latitude $latitude"
 
     files = list_opendap_files(catalog_url = config.catalog_url)
-    for year in config.years, month = 1:12
+    for (year, month) in months
         process_boundary_month(year, month, longitude, latitude, config; files)
     end
 

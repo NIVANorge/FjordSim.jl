@@ -7,7 +7,7 @@
 
 | Doc | Read it before |
 |---|---|
-| [`docs/running.md`](docs/running.md) | running any pipeline step; changing `start_date`, `stop_time`, `z_faces`, the grid `size` or a bathymetry knob; a fresh rerun into a used results directory; resuming |
+| [`docs/running.md`](docs/running.md) | running any pipeline step; changing a `start_date`/`stop_date`, `z_faces`, the grid `size` or a bathymetry knob; a fresh rerun into a used results directory; resuming |
 | [`gcp/README.md`](gcp/README.md) | anything with `gcp/fjordsim-gcp` or the cloud VM |
 | [`docs/architecture.md`](docs/architecture.md) | changing a module in `src/` — its section only (design rationale, ordering constraints, measured numbers) |
 | [`docs/dispatch-map.md`](docs/dispatch-map.md) | looking up which hooks a supertype has and who implements them; it is generated — after changing a hook, a supertype docstring or a step, rerun `julia --project docs/make_dispatch_map.jl` |
@@ -43,9 +43,11 @@ option and is required. From the REPL each step is a function of the same name o
 - **One run per results directory.** Checkpoints carry no run tag. A finished run is archived as
   `<name>_<YYYY-MM-DD>`, in the bucket and locally, and the next run — rerun, test or changed
   parameter — uses the same config file, edited, not a new one. Procedure in `docs/running.md`.
-- **Prepared files go stale silently.** Changing `start_date`/`stop_time` or `z_faces`/`size`/a
-  bathymetry knob does nothing until the listed prepare steps are re-run — `simulation_grid` reads
-  `bathymetry.nc`, not the config. Lists in `docs/running.md`.
+- **Prepared files go stale silently.** Changing a dataset config's `start_date`/`stop_date` or
+  `z_faces`/`size`/a bathymetry knob does nothing until the listed steps are re-run —
+  `simulation_grid` reads `bathymetry.nc`, not the config. Each dataset config states its own
+  period; only the run reads them all, and checks its own window lies inside each. Lists in
+  `docs/running.md`.
 
 ## Branches
 
@@ -99,7 +101,7 @@ The modules, in `include` order from `src/FjordSim.jl`:
 9. **Forcing** (`src/Forcing/`) — the interior forcing pipeline (`prepare_forcing`,
    `download_forcing`) and its NorKyst adapters.
 10. **Initial state** (`src/InitialState/`) — `download_initial_state`, `prepare_initial_state`:
-    one source record at `start_date` for `FromInitialState`, and its NorKyst adapter.
+    one source record at its config's `start_date` for `FromInitialState`, and its NorKyst adapter.
 11. **Rivers** (`src/Rivers/`) — the river pipeline (`add_rivers`) and its NVE adapter.
 12. **Boundary conditions** (`src/Boundaries/BoundaryConditions/`) — the `boundary_condition_sides`
     hook, `model_boundary_conditions` (the default merge on any model config), `AirSeaFluxes`,
@@ -228,11 +230,9 @@ forcings.
   instead. Use `Pkg.update()` after raising a compat bound. (`Pkg.up` is not a name in current Pkg.)
 - `Base.@kwdef` on a *parametric* struct does not convert its arguments, unlike on a
   non-parametric one: the generated constructor keeps the declared field types in its signature,
-  so `RunConfig(stop_time = 3600, ...)` is a `MethodError` where `stop_time = 1hour` is
-  fine. Every `Oceananigans.Units` constant is already a `Float64`, so writing durations with them —
-  `365days`, `1hour`, `3minutes` — sidesteps this. `loops` is the one field this does *not* apply to,
-  being an `Int` already. `RunConfig` is now the **only** config the rule reaches: every other
-  one is either non-parametric, or — like `SnapshotWriter`, `ProgressCallback` and
+  so `RunConfig(loops = 1.0, ...)` is a `MethodError` where `loops = 1` is fine: give every
+  field in its declared type, `start_date`/`stop_date` as `DateTime`s. `RunConfig` is now the
+  **only** config the rule reaches: every other one is either non-parametric, or — like `SnapshotWriter`, `ProgressCallback` and
   `CoupledHydrostaticModel`, all of which *are* parametric — has a hand-written keyword
   constructor that converts. `Regridding.PreparedVariable` is the one internal type the rule reaches
   too, for the same reason.

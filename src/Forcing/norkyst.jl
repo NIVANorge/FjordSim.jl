@@ -36,7 +36,7 @@ abstract type AbstractNorKystConfig <: AbstractForcingConfig end
 
 Configuration for downloading and subsetting NorKyst-800m reanalysis data.
 
-A setup states where its forcing goes, which variables to extract and which years to cover.
+A setup states where its forcing goes, which variables to extract and which period to cover.
 Only `catalog_url` and `opendap_url` are defaulted, being the NorKyst dataset's own public
 endpoints.
 
@@ -54,7 +54,9 @@ overrides `data_root` for that entry only.
 - `catalog_url`: THREDDS catalog URL listing available files.
 - `opendap_url`: OPeNDAP base URL for streaming data.
 - `parameters`: Variable names to extract (e.g. `["temperature", "salinity"]`). Required.
-- `years`: Calendar years to download. Required.
+- `start_date`, `stop_date`: The period downloaded and prepared, independent of the run's: every
+  month it touches is downloaded, its end exclusive (`coverage_months`), and the prepared axis is
+  padded to its ends. Required.
 
 The rivers and the open edges are not here: they belong to the `AbstractRiverConfig` and the
 `AbstractBoundaryDataConfig` a setup names on its `FjordConfig`. `prepare_forcing` takes the edges
@@ -69,7 +71,8 @@ Base.@kwdef mutable struct NorKystConfig <: AbstractNorKystConfig
     catalog_url::String = NORKYST_CATALOG_URL
     opendap_url::String = NORKYST_OPENDAP_URL
     parameters::Vector{String}
-    years::Vector{Int}
+    start_date::DateTime
+    stop_date::DateTime
 end
 
 """
@@ -90,7 +93,7 @@ forcing_variable_names(config::AbstractNorKystConfig) = NORKYST_VARIABLE_NAMES
 """
     forcing_time_steps(config::AbstractNorKystConfig)
 
-Every time record of every downloaded monthly file for `config.years`, sorted by date with
+Every time record of every downloaded monthly file of the config's period, sorted by date with
 duplicates dropped. Errors if the directory or the files are missing.
 """
 function forcing_time_steps(config::AbstractNorKystConfig)
@@ -100,8 +103,9 @@ function forcing_time_steps(config::AbstractNorKystConfig)
         "Run `julia --project -m FjordSim download_forcing` for this setup first.",
     )
 
+    months = coverage_months(coverage_window(config))
     records = SourceRecord[]
-    for year in config.years, month = 1:12
+    for (year, month) in months
         filepath = joinpath(directory, forcing_monthly_filename(config, year, month))
         isfile(filepath) || continue
         NCDataset(filepath) do ds
@@ -111,7 +115,7 @@ function forcing_time_steps(config::AbstractNorKystConfig)
         end
     end
 
-    isempty(records) && error("No NorKyst monthly files for years $(config.years) found in $directory.")
+    isempty(records) && error("No NorKyst monthly files for $(month_span(months)) found in $directory.")
     sort!(records; by = record -> record.date)
 
     return unique(record -> record.date, records)
@@ -129,7 +133,7 @@ forcing_source_grid(config::AbstractNorKystConfig, filepath) = norkyst_source_gr
 """
     fetch_forcing(target_grid, config::NorKystConfig)
 
-Download the NorKyst-800m months covering `config.years`, each combined into one NetCDF file
+Download the NorKyst-800m months the config's period touches, each combined into one NetCDF file
 in `forcing_directory(config)` subset to the lon/lat box of `target_grid`. A month whose file
 already exists is skipped, so an interrupted download resumes.
 """
@@ -137,10 +141,11 @@ function fetch_forcing(target_grid, config::NorKystConfig)
     output_directory = forcing_directory(config)
     mkpath(output_directory)
 
-    @info "Downloading NorKyst-800m years $(join(config.years, ", ")) to $output_directory"
+    months = coverage_months(coverage_window(config))
+    @info "Downloading NorKyst-800m $(month_span(months)) to $output_directory"
 
     files = list_opendap_files(catalog_url = config.catalog_url)
-    for year in config.years, month = 1:12
+    for (year, month) in months
         process_month(year, month, target_grid, config; files)
     end
 

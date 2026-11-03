@@ -41,14 +41,14 @@ and hands them to the work function, which dispatches on them.
 |---|---|---|
 | `prepare_bathymetry` | `grid_config`, `bathymetry_config`, `boundary_data_config` | `process_bathymetry` |
 | `download_forcing` | `grid_config`, `forcing_config` | `fetch_forcing` |
-| `prepare_forcing` | `grid_config`, `bathymetry_config`, `forcing_config`, `boundary_data_config`, `run_config` | `regrid_forcing` |
-| `download_initial_state` | `grid_config`, `initial_state_config`, `run_config` | `fetch_initial_state` |
-| `prepare_initial_state` | `grid_config`, `bathymetry_config`, `initial_state_config`, `boundary_data_config`, `run_config` | `regrid_initial_state` |
-| `add_rivers` | `grid_config`, `bathymetry_config`, `river_config`, `forcing_config`, `run_config` | `place_rivers` |
+| `prepare_forcing` | `grid_config`, `bathymetry_config`, `forcing_config`, `boundary_data_config` | `regrid_forcing` |
+| `download_initial_state` | `grid_config`, `initial_state_config` | `fetch_initial_state` |
+| `prepare_initial_state` | `grid_config`, `bathymetry_config`, `initial_state_config`, `boundary_data_config` | `regrid_initial_state` |
+| `add_rivers` | `grid_config`, `bathymetry_config`, `river_config`, `forcing_config` | `place_rivers` |
 | `download_boundary_data` | `grid_config`, `boundary_data_config` | `fetch_boundary_data` |
-| `prepare_boundary_data` | `grid_config`, `bathymetry_config`, `boundary_data_config`, `run_config` | `regrid_boundary_data` |
+| `prepare_boundary_data` | `grid_config`, `bathymetry_config`, `boundary_data_config` | `regrid_boundary_data` |
 | `download_atmosphere` | `grid_config`, `atmosphere_config` | `fetch_atmosphere` |
-| `prepare_atmosphere` | `grid_config`, `atmosphere_config`, `run_config` | `regrid_atmosphere` |
+| `prepare_atmosphere` | `grid_config`, `atmosphere_config` | `regrid_atmosphere` |
 | `run_simulation` | `run_config` | `run_loops` |
 | `validate_simulation` | `run_config`, `bathymetry_config` | `score_run` |
 | `build_simulation` | `run_config` and the whole setup | `assemble_simulation` |
@@ -208,7 +208,7 @@ No built-in implementation.
 | `time_stepping` | required | ✓ |
 | `initial_conditions` | required | ✓ |
 | `start_date` | required | ✓ |
-| `stop_time` | required | ✓ |
+| `stop_date` | required | ✓ |
 | `loops` | required | ✓ |
 | `pickup` | required | ✓ |
 

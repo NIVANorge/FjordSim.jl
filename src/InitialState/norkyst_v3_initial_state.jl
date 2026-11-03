@@ -48,6 +48,8 @@ published from 2024-11-23, and before that the reference run `m00` is the fill.
   (Oslofjord). Required.
 - `parent_member`: The member whose 800 m file fills outside the nest. Required.
 - `parameters`: Variable names to extract (e.g. `["temperature", "salinity"]`). Required.
+- `start_date`: The instant the state is for, independent of the run's; a run starting from it
+  with `FromInitialState` must start at the same instant. Required.
 """
 Base.@kwdef mutable struct NorKystV3InitialStateConfig <: AbstractInitialStateConfig
     data_root::String
@@ -57,6 +59,7 @@ Base.@kwdef mutable struct NorKystV3InitialStateConfig <: AbstractInitialStateCo
     nest_member::String
     parent_member::String
     parameters::Vector{String}
+    start_date::DateTime
 end
 
 """

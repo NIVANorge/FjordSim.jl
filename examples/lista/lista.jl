@@ -51,9 +51,11 @@ using Dates: DateTime, Month, Second
 
 data_root = fjord_data_root("lista")
 FT = Float32
-# The hourly NorKyst-800m collection ends on 2025-10-05 on thredds.met.no, so 2025 is the last year
-# the boundary data can reach.
-years = [2024, 2025]
+# 1 January 2024 to 1 October 2025: 366 + 273 days. The hourly NorKyst-800m collection ends on
+# 2025-10-05 on thredds.met.no, so this is the last whole month the boundary data covers. Every
+# dataset below is downloaded and prepared for the same period.
+start_date = DateTime(2024, 1, 1)
+stop_date = DateTime(2025, 10, 1)
 # `oslofjorden.jl`'s levels from a 1 m surface cell stretching by 1.25, with 41-132 m split into
 # eighteen 5.06 m levels as in `examples/oslofjorden/oslofjorden.jl`. There five 11-27 m levels let
 # WENO's implicit vertical diffusion, ~|w|Δz, mix the sill basins at 5-10 times CATKE's κ, and the
@@ -137,12 +139,14 @@ FjordConfig(
         output_directory = "norkyst_initial",
         output_file      = "initial_state.nc",
         parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
+        start_date       = start_date,
     ),
     river_config = NVERiversConfig(
         data_root   = data_root,
         output_file = "rivers_nve.nc",
         plot_file   = "rivers_nve.png",
-        years       = years,
+        start_date  = start_date,
+        stop_date   = stop_date,
         # Mouths are discovered from NVE's ELVIS network and REGINE catchments. At 0.5 m³/s
         # that finds 20 of them, carrying 310.8 of the 315.0 m³/s that the 35 mouths above
         # 0.15 m³/s carry. Sira (130.5), Kvina (89.5) and Lygna (39.6) dominate.
@@ -199,7 +203,8 @@ FjordConfig(
         parameters       = [
             "temperature", "salinity", "u_eastward", "v_northward", "zeta", "ubar", "vbar",
         ],
-        years            = years,
+        start_date       = start_date,
+        stop_date        = stop_date,
     ),
     atmosphere_config = NORA3Config(
         data_root        = data_root,
@@ -208,7 +213,8 @@ FjordConfig(
         plot_file        = "atmosphere.png",
         resolution       = 0.02,
         padding          = 0.1,
-        years            = years,
+        start_date       = start_date,
+        stop_date        = stop_date,
     ),
     model_config = CoupledHydrostaticModel(
         buoyancy           = SeawaterBuoyancy(FT, equation_of_state = TEOS10EquationOfState(FT)),
@@ -317,10 +323,8 @@ FjordConfig(
         ),
         # The NorKyst daily mean of `start_date`: T, S, u and v.
         initial_conditions = FromInitialState(),
-        # 1 January 2024 to 1 October 2025: 366 + 273 days. NorKyst ends on 2025-10-05, so this is
-        # the last whole month the boundary data covers.
-        start_date         = DateTime(2024, 1, 1),
-        stop_time          = 639days,
+        start_date         = start_date,
+        stop_date          = stop_date,
         loops              = 1,
         pickup             = false,
     ),

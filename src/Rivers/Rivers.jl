@@ -19,7 +19,7 @@ using Oceananigans.OutputReaders: Cyclical, AbstractInMemoryBackend, FlavorOfFTS
 using Oceananigans.Operators: Az, volume
 using Oceananigans: fill_halo_regions!, interior
 using Oceananigans.Grids: x_domain, y_domain
-using Dates: Date, DateTime, Day
+using Dates: Date, DateTime, Day, Millisecond, year
 using Adapt
 using NCDatasets
 
@@ -34,8 +34,7 @@ using ..Configs:
     grid_config,
     bathymetry_config,
     river_config,
-    forcing_config,
-    run_config
+    forcing_config
 using ..Utils: coverage_window
 using ..Grids: domain_grid, simulation_grid
 using ..Plotting: Plotting, plot_rivers
@@ -456,7 +455,7 @@ end
     add_rivers(config)
 
 Place the rivers a setup names on its simulation grid and write their inflow file. Returns `nothing`
-for a `nothing` river config. Only picks out the five components this step reads and hands them to
+for a `nothing` river config. Only picks out the four components this step reads and hands them to
 `place_rivers`.
 """
 add_rivers(config::AbstractFjordConfig) = place_rivers(
@@ -464,12 +463,11 @@ add_rivers(config::AbstractFjordConfig) = place_rivers(
     bathymetry_config(config),
     river_config(config),
     forcing_config(config),
-    run_config(config),
 )
 
 """
-    place_rivers(grid_config, bathymetry_config, river_config, forcing_config, run_config)
-    place_rivers(target_grid, rivers::AbstractRiverConfig; coverage = nothing)
+    place_rivers(grid_config, bathymetry_config, river_config, forcing_config)
+    place_rivers(target_grid, rivers::AbstractRiverConfig; coverage = coverage_window(rivers))
 
 Write the river inflow file at `river_forcing_path(rivers)`. Returns `nothing` for a `nothing`
 river config.
@@ -477,27 +475,26 @@ river config.
 Each river is a volume of water — `river_discharge` m³/s carrying the `river_series` values — that
 enters through the surface of the columns `river_mouths` gives it. The file stores that already on
 the grid: the inflow speed of every column, and the values of the water entering it, on a daily axis
-spanning the run window. So the run only reads gridded series, and everything about *where* a river
+spanning `coverage`, the river config's own period. So the run only reads gridded series, and everything about *where* a river
 enters is decided here, once, against the same land mask the run uses.
 
 The file stands alone. It is not a copy of the prepared forcing, so this step needs only the
 bathymetry and works with no forcing config at all, a change to the forcing needs no re-run of it,
-and `FromForcing` initial conditions read a forcing file no river has touched. Its time axis comes from the run window, so it needs
-`coverage` — a change of `start_date` or `stop_time` means re-running this step.
+and `FromForcing` initial conditions read a forcing file no river has touched. Its time axis is the
+river config's period, independent of the run's, so a change of the river config's `start_date` or
+`stop_date` means re-running this step, and a run inside that period needs none.
 
 The component form reads the grid from the processed bathymetry, so the rivers are placed against
-the same land mask the model sees, downloads the river data first, and takes `coverage` from the
-run config; the forcing config is read only to refuse a river file that would overwrite the
-prepared forcing.
+the same land mask the model sees, and downloads the river data first; the forcing config is read
+only to refuse a river file that would overwrite the prepared forcing.
 """
-place_rivers(grid_config, bathymetry_config, ::Nothing, forcing_config, run_config) = nothing
+place_rivers(grid_config, bathymetry_config, ::Nothing, forcing_config) = nothing
 
 function place_rivers(
     grid_config,
     bathymetry_config,
     rivers::AbstractRiverConfig,
     forcing_config,
-    run_config,
 )
     validate_river_output(rivers, forcing_config)
     bathymetry_file = resolve_bathymetry_file(bathymetry_config)
@@ -510,7 +507,7 @@ function place_rivers(
 
     # The grid stays on the CPU: building the land masks walks `peripheral_node` cell by cell.
     grid = simulation_grid(grid_config, bathymetry_file, CPU())
-    result = place_rivers(grid, rivers; coverage = coverage_window(run_config))
+    result = place_rivers(grid, rivers)
 
     plot_file = plot_rivers(grid, rivers, river_forcing_path(rivers), result.mouths)
 
@@ -539,7 +536,7 @@ function validate_river_output(rivers::AbstractRiverConfig, forcing_config::Abst
     return nothing
 end
 
-function place_rivers(target_grid, rivers::AbstractRiverConfig; coverage = nothing)
+function place_rivers(target_grid, rivers::AbstractRiverConfig; coverage = coverage_window(rivers))
     times = river_forcing_times(coverage)
     locations = river_locations(rivers)
     discharge = river_discharge(rivers, times)
@@ -593,8 +590,8 @@ end
 """
     river_forcing_times(coverage)
 
-The time axis a river file is written on: daily, anchored at the run window's first instant and
-extended until it passes the last, so `river_date_range` reports a span `validate_time_coverage`
+The time axis a river file is written on: daily, anchored at the river config's period's first
+instant and extended until it passes the last, so `river_date_range` reports a span `validate_time_coverage`
 accepts — the reader indexes time `Cyclical()`, which wraps rather than failing outside its data,
 and the coverage check is what keeps that wrap unreachable.
 
@@ -603,11 +600,6 @@ date*, so a finer cadence would ask for the same record several times over. A su
 want a hook here.
 """
 function river_forcing_times(coverage)
-    isnothing(coverage) && error(
-        "A river file takes its time axis from the run window, but this setup names no " *
-        "`run_config` to read `start_date` and `stop_time` from. Name one.",
-    )
-
     first_date, last_date = coverage
     dates = collect(first_date:RIVER_TIME_SPACING:last_date)
     # Extend until the axis reaches past the window's end, and to at least two records: the reader

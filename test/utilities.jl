@@ -67,12 +67,12 @@ end
 struct MinimalRun <: AbstractRunConfig
     root::String
     first_date::DateTime
-    duration::Float64
+    last_date::DateTime
 end
 
 FjordSim.Configs.results_root(config::MinimalRun) = config.root
 FjordSim.Configs.start_date(config::MinimalRun) = config.first_date
-FjordSim.Configs.stop_time(config::MinimalRun) = config.duration
+FjordSim.Configs.stop_date(config::MinimalRun) = config.last_date
 
 # The supertypes `RunConfig` nests, plus the free surface one level further down, each with
 # no hook overloaded, so the "Config extensibility" testset can assert that a missing hook surfaces
@@ -226,7 +226,8 @@ test_forcing_config(; data_root = tempdir(), kwargs...) = NorKystConfig(;
     data_root,
     output_directory = "norkyst",
     parameters = ["temperature", "salinity", "u_eastward", "v_northward"],
-    years = [2020],
+    start_date = DateTime(2020, 1, 1),
+    stop_date = DateTime(2021, 1, 1),
     kwargs...,
 )
 
@@ -235,14 +236,16 @@ test_boundaries_config(; data_root = tempdir(), kwargs...) = NorKystBoundaryData
     output_directory = "norkyst_hourly",
     open_edges = :south,
     parameters = ["temperature", "salinity", "u_eastward", "v_northward", "zeta", "ubar", "vbar"],
-    years = [2020],
+    start_date = DateTime(2020, 1, 1),
+    stop_date = DateTime(2021, 1, 1),
     kwargs...,
 )
 
 test_atmosphere_config(; data_root = tempdir(), kwargs...) = NORA3Config(;
     data_root,
     output_directory = "nora3",
-    years = [2020],
+    start_date = DateTime(2020, 1, 1),
+    stop_date = DateTime(2021, 1, 1),
     kwargs...,
 )
 
@@ -378,7 +381,7 @@ function test_run_fields(; kwargs...)
         # Noon, matching what `write_prepared_forcing` puts on its time axis, so a config from this
         # fixture passes `validate_time_coverage` against a fixture forcing file.
         :start_date => DateTime(2020, 1, 1, 12),
-        :stop_time => 1minute,
+        :stop_date => DateTime(2020, 1, 1, 12, 1),
         :loops => 1,
         :pickup => false,
     )
@@ -391,10 +394,10 @@ end
 
 A `RunConfig` on the test suite's own values, with `kwargs` overriding named fields.
 
-Every duration is written with an `Oceananigans.Units` constant, which is the style `RunConfig`'s
-own field types force: `Base.@kwdef` on a parametric struct dispatches rather than converting, so
-`stop_time = 3600` is a `MethodError` where `1hour` is fine. The nested configs each have a
-hand-written keyword constructor that *does* convert, so an integer duration is fine in one of those.
+Every field is given in its declared type, which is what `RunConfig`'s own field types force:
+`Base.@kwdef` on a parametric struct dispatches rather than converting, so `loops = 1.0` is a
+`MethodError` where `1` is fine. The nested configs each have a hand-written keyword constructor that
+*does* convert, so an integer duration is fine in one of those.
 
 Overriding `writers`, `time_stepping` or `initial_conditions` yields a different `RunConfig`
 type, and so a fresh `build_simulation` specialization — a full recompile of the coupled model. Vary

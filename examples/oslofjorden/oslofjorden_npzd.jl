@@ -44,7 +44,7 @@
 # `add_rivers` needs `NVE_API_KEY`, exactly as `oslofjorden.jl` does.
 
 using FjordSim
-using FjordSim: BoundaryData, Rivers, Simulations
+using FjordSim: BoundaryData, Rivers, Simulations, Utils
 using FjordSim.Configs:
     AbstractBiogeochemistryConfig, AbstractBoundaryDataConfig, AbstractRiverConfig
 using Oceananigans
@@ -450,6 +450,7 @@ Rivers.river_maximum_inflow_velocity(rivers::NPZDRivers) =
     Rivers.river_maximum_inflow_velocity(rivers.base)
 Rivers.fetch_rivers(target_grid, rivers::NPZDRivers) =
     Rivers.fetch_rivers(target_grid, rivers.base)
+Utils.coverage_window(rivers::NPZDRivers) = Utils.coverage_window(rivers.base)
 
 """
     river_series(rivers::NPZDRivers, times)
@@ -523,7 +524,7 @@ BoundaryData.fetch_boundary_data(target_grid, config::NPZDBoundaries) =
     BoundaryData.fetch_boundary_data(target_grid, config.base)
 
 """
-    regrid_boundary_data(target_grid, config::NPZDBoundaries; coverage)
+    regrid_boundary_data(target_grid, config::NPZDBoundaries)
 
 Regrid `base`'s exterior state, then append the biogeochemical variables to the file it wrote.
 
@@ -531,8 +532,8 @@ Appended after the pipeline rather than inside it: `boundary_source_slab` can *d
 from others in the download, but `prepared_boundary_variable` still validates the source name
 against the downloaded file, so a variable with no source at all has no place there.
 """
-function BoundaryData.regrid_boundary_data(target_grid, config::NPZDBoundaries; coverage = nothing)
-    result = BoundaryData.regrid_boundary_data(target_grid, config.base; coverage)
+function BoundaryData.regrid_boundary_data(target_grid, config::NPZDBoundaries)
+    result = BoundaryData.regrid_boundary_data(target_grid, config.base)
     edges = config.open_edges
     append_boundary_variables!(result.output_file, edges, NPZD_PROFILES)
 
@@ -581,7 +582,8 @@ boundaries = TideCorrectedBoundaries(
             architecture = source.architecture,
             member = source.member,
             parameters = source.parameters,
-            years = source.years,
+            start_date = source.start_date,
+            stop_date = source.stop_date,
         ),
     ),
     base.boundary_data_config.gains,
@@ -662,7 +664,7 @@ FjordConfig(
             map(profile -> (λ, φ, z) -> profile(z, base_run.start_date), NPZD_PROFILES),
         ),
         start_date = base_run.start_date,
-        stop_time = base_run.stop_time,
+        stop_date = base_run.stop_date,
         loops = base_run.loops,
         pickup = base_run.pickup,
     ),

@@ -41,6 +41,8 @@ centred half a day after `start_date`.
 - `catalog_url`, `opendap_url`: The NorKyst dataset's own public endpoints; the only defaulted
   fields besides `output_file`.
 - `parameters`: Variable names to extract (e.g. `["temperature", "salinity"]`). Required.
+- `start_date`: The instant the state is for, independent of the run's; a run starting from it
+  with `FromInitialState` must start at the same instant. Required.
 """
 Base.@kwdef mutable struct NorKystInitialStateConfig <: AbstractInitialStateConfig
     data_root::String
@@ -49,6 +51,7 @@ Base.@kwdef mutable struct NorKystInitialStateConfig <: AbstractInitialStateConf
     catalog_url::String = NORKYST_CATALOG_URL
     opendap_url::String = NORKYST_OPENDAP_URL
     parameters::Vector{String}
+    start_date::DateTime
 end
 
 """

@@ -83,7 +83,7 @@ A new data source is a new config type, not an edit to the pipeline: `docs/addin
   to the config's own `data_root`; an absolute path relocates just that one.
 - **Sharing a download** with another fjord is an absolute path into that fjord's root, built from
   `fjord_data_root("<other>")` so a relocation moves both. Share only from a domain that
-  *contains* the new one, for the same years: a month missing from the shared directory is
+  *contains* the new one, over the same period: a month missing from the shared directory is
   downloaded subset to the smaller box and then shrinks the larger setup's own prepare step. The
   examples share nothing: each downloads into its own root, so any one prepares and runs alone.
 - **Never shared:** prepared files (their names carry no fjord, so two setups would overwrite each
@@ -168,8 +168,8 @@ spacing have to be worked out for the new grid rather than copied:
 - **`CATKEVerticalDiffusivity`'s `minimum_tke`** sets the background `κ = 0.098·e_min/N` wherever the
   prognostic TKE is below it, which in a stratified fjord is most of the column, so it is effectively
   the vertical-mixing knob.
-- **River inflow.** `NVERiversConfig` requires `data_root`, `outlets`, `years` and
-  `maximum_inflow_velocity`. `maximum_inflow_velocity` bounds the vertical Courant number
+- **River inflow.** `NVERiversConfig` requires `data_root`, `outlets`, `start_date`, `stop_date`
+  and `maximum_inflow_velocity`. `maximum_inflow_velocity` bounds the vertical Courant number
   `w·Δt/Δz` through the top cell: at 1e-3 m/s, a 1 m top cell and a 180 s `max_time_step` it is
   0.18. `minimum_discharge` defaults to `Inf`, meaning no discovery: `outlets` must then state every
   river and its mouth. A discharge in m³/s instead discovers every mouth at or above it from NVE's
@@ -186,12 +186,18 @@ spacing have to be worked out for the new grid rather than copied:
 - **Open boundaries.** `OpenLateralBoundaryFromData`'s `inflow_timescale` relaxes by `Δt/τ` per step;
   compare that with the advective rate into the boundary cell, `u/Δx`, or the nudging does nothing.
   Too strong an inflow nudge reflects. A `BoundarySponge` damps what the open edges radiate.
-- **Initial conditions.** `FromInitialState()` needs an `initial_state_config` and downloads one day
-  for `start_date`; `FromForcing()` needs a `forcing_config`, whose download covers whole years;
+- **Initial conditions.** `FromInitialState()` needs an `initial_state_config` whose `start_date` is
+  the run's, and downloads one day for it; `FromForcing()` needs a `forcing_config`, whose download
+  covers its whole period;
   `FromResults(path)` continues from an earlier run's snapshot; a `NamedTuple` of constants or
   functions needs nothing.
-- **Run window.** `start_date` and `stop_time` decide what the prepare steps write, since they pad
-  every time axis to the window — changing either is a data change too.
+- **Periods.** Every dataset config — forcing, rivers, open-boundary data, atmosphere — states its
+  own `start_date` and `stop_date`: the months its download fetches, its end exclusive, and the
+  interval its prepared file is padded to. The run config states its own `start_date` and
+  `stop_date`, and `build_simulation` checks every prepared file spans them. A dataset's period may
+  be longer than the run, so one download and prepare serves several runs; changing a dataset's
+  period is a data change, changing the run's inside it is not. A setup wanting them all equal
+  states the two dates once as variables and passes them everywhere, as the examples do.
 
 ## Bringing a new setup up
 

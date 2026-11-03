@@ -39,9 +39,8 @@ using ..Configs:
     AbstractFjordConfig,
     grid_config,
     bathymetry_config,
-    boundary_data_config,
-    run_config
-using ..Utils: coverage_window
+    boundary_data_config
+using ..Utils: coverage_months, coverage_window, month_span
 using ..Grids:
     domain_grid,
     open_edges,
@@ -306,8 +305,8 @@ end
 """
     boundary_time_steps(config)
 
-Every source time record available to `config`, as `SourceRecord`s sorted by date with duplicates
-dropped. `prepare_boundary_data` completes them to a gap-free hourly axis.
+Every downloaded source time record of `config`'s own period (`coverage_window`), as `SourceRecord`s
+sorted by date with duplicates dropped. `prepare_boundary_data` completes them to a gap-free hourly axis.
 
 A new dataset implements this on its `AbstractBoundaryDataConfig` subtype.
 """
@@ -476,7 +475,7 @@ function prepared_boundary_variable(
 end
 
 """
-    regrid_boundary_data(target_grid, config::AbstractBoundaryDataConfig; coverage = nothing)
+    regrid_boundary_data(target_grid, config::AbstractBoundaryDataConfig)
 
 Regrid the hourly source files already downloaded into `boundary_data_directory(config)` onto the
 open edge rows of `target_grid`, and write the boundary NetCDF at `boundary_data_path(config)` that
@@ -494,14 +493,13 @@ most of it *is* `regrid_forcing`'s own machinery applied to a one-cell-thick tar
 `water_mask`, `SourceFill`, `projected_target_nodes` and the trilinear interpolation kernel are all
 reused unchanged.
 
-`coverage` is the `(first, last)` interval the run needs, from `coverage_window`, padded to by
-`pad_time_steps` at most one record spacing at each end. `nothing` prepares exactly the downloaded
-range.
+The prepared file spans the config's own period, `coverage_window(config)`, independent of any run,
+padded to by `pad_time_steps` at most one record spacing at each end.
 
 # Returns
 A named tuple with `output_file`, `times` and `variables` (the written variable names).
 """
-function regrid_boundary_data(target_grid, config::AbstractBoundaryDataConfig; coverage = nothing)
+function regrid_boundary_data(target_grid, config::AbstractBoundaryDataConfig)
     architecture = interpolation_architecture(config)
     edges = open_edges(config)
 
@@ -512,7 +510,7 @@ function regrid_boundary_data(target_grid, config::AbstractBoundaryDataConfig; c
         "Known $(nameof(typeof(config))) variables: $(sort(collect(keys(variable_names)))).",
     )
 
-    steps = pad_time_steps(hourly_time_steps(boundary_time_steps(config)), coverage)
+    steps = pad_time_steps(hourly_time_steps(boundary_time_steps(config)), coverage_window(config))
     reference_file = first(steps).lower.filepath
     source = boundary_source_grid(config, reference_file)
     @info "Preparing the $(join(edges, ", ")) boundary from " *
@@ -540,14 +538,14 @@ function regrid_boundary_data(target_grid, config::AbstractBoundaryDataConfig; c
     )
 end
 
-regrid_boundary_data(target_grid, ::Nothing; coverage = nothing) = nothing
+regrid_boundary_data(target_grid, ::Nothing) = nothing
 
 """
     prepare_boundary_data(config)
 
 Regrid the open-boundary data a setup names onto its simulation grid, and write the diagnostic plot.
-Returns `nothing` for a `nothing` boundary data config. Only picks out the four components this step
-reads and hands them to `regrid_boundary_data`.
+Returns `nothing` for a `nothing` boundary data config. Only picks out the three components this
+step reads and hands them to `regrid_boundary_data`.
 
 # Returns
 The `regrid_boundary_data(target_grid, config)` named tuple with `plot_file` added.
@@ -556,26 +554,24 @@ prepare_boundary_data(config::AbstractFjordConfig) = regrid_boundary_data(
     grid_config(config),
     bathymetry_config(config),
     boundary_data_config(config),
-    run_config(config),
 )
 
 """
-    regrid_boundary_data(grid_config, bathymetry_config, boundary_data_config, run_config)
+    regrid_boundary_data(grid_config, bathymetry_config, boundary_data_config)
 
 `prepare_boundary_data`'s work, on the components it reads. The grid comes from the processed
 bathymetry so the boundary row's land mask matches the model exactly, which means
-`prepare_bathymetry` must have run first, and the coverage window comes from the run config.
+`prepare_bathymetry` must have run first; the period comes from the boundary data config itself.
 """
-regrid_boundary_data(grid_config, bathymetry_config, ::Nothing, run_config) = nothing
+regrid_boundary_data(grid_config, bathymetry_config, ::Nothing) = nothing
 
 function regrid_boundary_data(
     grid_config,
     bathymetry_config,
     boundaries::AbstractBoundaryDataConfig,
-    run_config,
 )
     grid = simulation_grid(grid_config, resolve_bathymetry_file(bathymetry_config), CPU())
-    result = regrid_boundary_data(grid, boundaries; coverage = coverage_window(run_config))
+    result = regrid_boundary_data(grid, boundaries)
     plot_file = plot_boundary_data(boundaries, boundary_data_path(boundaries))
 
     @info "Prepared boundary variables: $(join(result.variables, ", "))"

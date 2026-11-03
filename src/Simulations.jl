@@ -71,7 +71,7 @@ using ..Configs:
     time_stepping,
     initial_conditions,
     start_date,
-    stop_time,
+    stop_date,
     loops,
     pickup
 using ..Utils: progress, cell_advection_timescale_coupled_model
@@ -478,7 +478,7 @@ existed.
 The keyword constructor is hand-written rather than `Base.@kwdef`, because `extra_kwargs` needs
 validating at construction. That also puts this type in the same category as `SnapshotWriter` and
 `ProgressCallback` rather than `RunConfig`'s: the `Base.@kwdef`-on-a-parametric-struct rule
-that makes `stop_time = 3600` a `MethodError` there does not apply here.
+that makes `loops = 1.0` a `MethodError` there does not apply here.
 """
 struct CoupledHydrostaticModel{B,C,TA,MA,TR,CO,SI,FS,EK<:NamedTuple} <: AbstractModelConfig
     buoyancy::B
@@ -1248,7 +1248,7 @@ and its boundary conditions, are not here: they are the setup's `model_config` a
   `resolve_initial_conditions`, so what reaches `coupled_model` is always a `NamedTuple` `set!`
   accepts.
 - `start_date`: the calendar instant model time zero stands for.
-- `stop_time`: seconds of simulated time one pass through the run window lasts.
+- `stop_date`: the calendar instant the run window ends at, so one pass lasts `run_duration`.
 - `loops`: how many times to run that window, carrying the ocean state across each restart. `1`
   runs it once. See `run_simulation`.
 - `pickup`: resume from the newest checkpoint under `results_root` instead of starting fresh.
@@ -1262,14 +1262,13 @@ open-boundary files and which atmosphere reader all come from `forcing_config`, 
 file has its *own* first record, and each reader used to zero its own axis there: the Oslofjord
 forcing starts at 12:00 and its atmosphere at 00:00, which silently ran the two twelve hours out
 of phase. One stated instant is the only thing they can all agree on, and
-`validate_time_coverage` checks each file actually spans `[start_date, start_date + stop_time]`
+`validate_time_coverage` checks each file actually spans `[start_date, stop_date]`
 rather than letting `Cyclical()` wrap the shortfall.
 
-Every duration is in seconds. `Base.@kwdef` on a *parametric* struct generates a constructor that
-does not convert, so `stop_time = 3600` is a `MethodError` where `stop_time = 1hour` is fine — write
-durations with `Oceananigans.Units`, whose constants are already `Float64`. `loops` is the exception,
-being an `Int` already, and the nested configs are the other one: each has a hand-written keyword
-constructor that converts, so an integer duration is fine in a writer or a time-stepping config.
+`Base.@kwdef` on a *parametric* struct generates a constructor that does not convert, so every
+field has to be given in its declared type — `loops = 1`, not `1.0`. The nested configs are the
+exception: each has a hand-written keyword constructor that converts, so an integer duration is fine
+in a writer or a time-stepping config.
 """
 Base.@kwdef mutable struct RunConfig{W,CB,TS,I} <: AbstractRunConfig
     results_root::String
@@ -1279,7 +1278,7 @@ Base.@kwdef mutable struct RunConfig{W,CB,TS,I} <: AbstractRunConfig
     time_stepping::TS
     initial_conditions::I
     start_date::DateTime
-    stop_time::Float64
+    stop_date::DateTime
     loops::Int
     pickup::Bool
 end
@@ -1290,7 +1289,15 @@ Configs.callbacks(config::RunConfig) = config.callbacks
 Configs.time_stepping(config::RunConfig) = config.time_stepping
 Configs.initial_conditions(config::RunConfig) = config.initial_conditions
 Configs.start_date(config::RunConfig) = config.start_date
-Configs.stop_time(config::RunConfig) = config.stop_time
+Configs.stop_date(config::RunConfig) = config.stop_date
+
+"""
+    run_duration(config)
+
+Seconds of simulated time one pass through the run window lasts: `start_date` to `stop_date`. The
+`stop_time` Oceananigans' `Simulation` takes.
+"""
+run_duration(config) = (stop_date(config) - start_date(config)) / Second(1)
 Configs.loops(config::RunConfig) = config.loops
 Configs.pickup(config::RunConfig) = config.pickup
 
@@ -1335,8 +1342,8 @@ FromForcing() = FromForcing(nothing)
     FromInitialState()
 
 Initial conditions read from the file `prepare_initial_state` wrote: a single record on the model
-grid, at the run's `start_date`. Needs an `initial_state_config`, and the file must have been prepared
-for this `start_date` — see `initial_state_variables`.
+grid, at the initial-state config's `start_date`. Needs an `initial_state_config`, and the file must
+have been prepared for the run's own `start_date` — see `initial_state_variables`.
 """
 struct FromInitialState <: AbstractInitialConditionsConfig end
 
@@ -1470,7 +1477,8 @@ function initial_state_variables(filepath, grid, start_date, tracers)
         prepared_date = DateTime(ds.attrib[INITIAL_STATE_DATE_ATTRIBUTE])
         prepared_date == start_date || error(
             "$filepath was prepared for start_date $prepared_date, but this run starts at $start_date. " *
-            "Re-run download_initial_state and prepare_initial_state.",
+            "Set the initial-state config's `start_date` to the run's and re-run " *
+            "download_initial_state and prepare_initial_state.",
         )
         @info "Reading the initial state recorded at $(only(ds["time"][:]))"
         return state_variables(ds, 1, eltype(grid), tracers)
@@ -1647,7 +1655,7 @@ function resolve_forcing_file(forcing_config::AbstractForcingConfig)
 end
 
 """
-    validate_time_coverage(label, range, start_date, stop_time, remedy)
+    validate_time_coverage(label, range, start_date, stop_date, remedy)
 
 Check a prepared file's date `range` contains the run's whole interval.
 
@@ -1656,19 +1664,18 @@ it wraps, so a run that outlasts its forcing quietly replays the beginning and a
 before it quietly reads the end. This is what makes that unreachable instead of merely unlikely.
 A `nothing` range is a source that cannot report its dates, and is skipped.
 """
-validate_time_coverage(label, ::Nothing, start_date, stop_time, remedy) = nothing
+validate_time_coverage(label, ::Nothing, start_date, stop_date, remedy) = nothing
 
-function validate_time_coverage(label, range, start_date, stop_time, remedy)
+function validate_time_coverage(label, range, start_date, stop_date, remedy)
     first_available, last_available = range
-    end_date = start_date + Second(round(Int, stop_time))
 
     start_date >= first_available || error(
         "The run starts at $start_date but the $label only begins at $first_available. Move the " *
         "run config's `start_date` to $first_available or later, or $remedy.",
     )
-    end_date <= last_available || error(
-        "The run ends at $end_date but the $label stops at $last_available. Shorten `stop_time` " *
-        "to $(Second(last_available - start_date).value) seconds or less, or $remedy.",
+    stop_date <= last_available || error(
+        "The run ends at $stop_date but the $label stops at $last_available. Move the run " *
+        "config's `stop_date` to $last_available or earlier, or $remedy.",
     )
 
     return nothing
@@ -2683,7 +2690,7 @@ function assemble_simulation(run::AbstractRunConfig, config)
     mkpath(results_root(run))
 
     model = coupled_model(model_config(config), grid; model_inputs(config, grid, run)...)
-    simulation = Simulation(model; Δt = initial_time_step(time_stepping(run)), stop_time = stop_time(run))
+    simulation = Simulation(model; Δt = initial_time_step(time_stepping(run)), stop_time = run_duration(run))
 
     attach_callbacks!(simulation, run)
 
@@ -2713,35 +2720,35 @@ function validate_model_inputs(config::AbstractFjordConfig, run)
     rivers = river_config(config)
     river_file = resolve_river_file(rivers)
     first_date = start_date(run)
-    duration = stop_time(run)
+    last_date = stop_date(run)
 
     validate_time_coverage(
         "forcing $forcing_file",
         forcing_date_range(forcing_config(config), forcing_file),
         first_date,
-        duration,
-        "prepare more years of forcing",
+        last_date,
+        "widen the forcing config's `start_date`/`stop_date` and download and prepare it again",
     )
     validate_time_coverage(
         "rivers $river_file",
         river_date_range(rivers),
         first_date,
-        duration,
-        "re-run add_rivers for this run window",
+        last_date,
+        "widen the river config's `start_date`/`stop_date` and re-run add_rivers",
     )
     validate_time_coverage(
         "atmosphere",
         atmosphere_date_range(atmosphere_config(config)),
         first_date,
-        duration,
-        "prepare more years of atmosphere",
+        last_date,
+        "widen the atmosphere config's `start_date`/`stop_date` and download and prepare it again",
     )
     validate_time_coverage(
         "open-boundary data",
         boundary_date_range(boundary_data_config(config)),
         first_date,
-        duration,
-        "prepare more years of open-boundary data",
+        last_date,
+        "widen the boundary data config's `start_date`/`stop_date` and download and prepare it again",
     )
 
     return nothing
@@ -2796,7 +2803,7 @@ function model_inputs(config::AbstractFjordConfig, grid, run)
         radiation = prescribed_radiation(atmosphere, architecture; reference_date),
         boundary_data_config = boundary_data,
         river_columns = read_river_columns(rivers),
-        stop_time = stop_time(run),
+        stop_time = run_duration(run),
         initial_time_step = initial_time_step(time_stepping(run)),
     )
 end
@@ -2852,12 +2859,12 @@ run_simulation(config::AbstractFjordConfig) = run_loops(build_simulation(config)
 
 `run_simulation`'s work: run the built `simulation`'s window `loops(run)` times.
 
-Each repetition replays `[start_date, start_date + stop_time]` with the ocean state carried over, so
+Each repetition replays `[start_date, stop_date]` with the ocean state carried over, so
 `loops > 1` is a spin-up: one forcing year run again and again until the deep basins stop drifting.
 `restart_loop!` does the carrying over — the clock goes back to zero, the state does not — and each
 repetition writes its own file, so the loops can be compared rather than overwriting one another.
 
-The clock is reset rather than left to run on for `loops * stop_time` because that keeps the run
+The clock is reset rather than left to run on for `loops * run_duration` because that keeps the run
 inside `[t¹, tᴺ]` of every prepared file. Both readers use `Cyclical()` time indexing, and a
 monotonic clock would lean on its wrap-around, whose period is inferred from the file's own axis and
 so stops matching the loop the moment a file is padded to a different window.

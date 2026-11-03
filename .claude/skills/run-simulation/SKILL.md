@@ -11,7 +11,7 @@ relevant one first; this is the order to work through.
 1. **Ask before launching data steps.** `prepare_*` and `download_*` take minutes to days and can
    download hundreds of GB. Confirm with the user which steps to run and where (laptop or VM).
 2. **Find out what is stale.** Compare the config against what was prepared: a changed
-   `start_date`/`stop_time`, or `z_faces`/`size`/a bathymetry knob, needs the prepare steps listed in
+   dataset `start_date`/`stop_date`, or `z_faces`/`size`/a bathymetry knob, needs the steps listed in
    `docs/running.md` ("What to re-run after a config change"), in that order.
 3. **Check the results directory.** If `results_root` (locally, and `results/<name>/` in the bucket
    for a GCP run) already holds checkpoints:

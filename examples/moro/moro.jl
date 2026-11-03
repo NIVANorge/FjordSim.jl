@@ -46,7 +46,9 @@ using Dates: DateTime, Second
 
 data_root = fjord_data_root("moro")
 FT = Float32
-years = [2023]
+# The calendar year 2023. Every dataset below is downloaded and prepared for the same period.
+start_date = DateTime(2023, 1, 1)
+stop_date = DateTime(2024, 1, 1)
 
 # `oslofjorden.jl`'s top levels down to 41 m, then 10 m levels to 131 m and five levels thickening
 # from 13 to 28.5 m down to 232.5 m. `examples/oslofjorden/oslofjorden.jl` splits 41-132 m into
@@ -128,13 +130,15 @@ FjordConfig(
         output_directory = "norkyst_initial",
         output_file      = "initial_state.nc",
         parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
+        start_date       = start_date,
     ),
     # Salinity 0 (`NVERiversConfig`'s default `constants`) and NVE's temperature.
     river_config = NVERiversConfig(
         data_root   = data_root,
         output_file = "rivers_nve.nc",
         plot_file   = "rivers_nve.png",
-        years       = years,
+        start_date  = start_date,
+        stop_date   = stop_date,
         # Mouths are discovered from NVE's ELVIS network and REGINE catchments at 0.5 m³/s, as on
         # `oslofjorden.jl`, where that kept 99.6 % of the discharge.
         minimum_discharge = 0.5,
@@ -178,7 +182,8 @@ FjordConfig(
         parameters       = [
             "temperature", "salinity", "u_eastward", "v_northward", "zeta", "ubar", "vbar",
         ],
-        years            = years,
+        start_date       = start_date,
+        stop_date        = stop_date,
     ),
     atmosphere_config = NORA3Config(
         data_root        = data_root,
@@ -187,7 +192,8 @@ FjordConfig(
         plot_file        = "atmosphere.png",
         resolution       = 0.02,
         padding          = 0.1,
-        years            = years,
+        start_date       = start_date,
+        stop_date        = stop_date,
     ),
     model_config = CoupledHydrostaticModel(
         buoyancy           = SeawaterBuoyancy(FT, equation_of_state = TEOS10EquationOfState(FT)),
@@ -299,9 +305,8 @@ FjordConfig(
         ),
         # The NorKyst daily mean of `start_date` for T, S, u and v.
         initial_conditions = FromInitialState(),
-        # The calendar year 2023.
-        start_date         = DateTime(2023, 1, 1),
-        stop_time          = 365days,
+        start_date         = start_date,
+        stop_date          = stop_date,
         loops              = 1,
         pickup             = false,
     ),

@@ -1,16 +1,28 @@
 # FjordSim.jl
 
-A framework for regional ocean simulations built on top of
+A package for regional ocean and lake simulations built on top of
 [Oceananigans](https://github.com/CliMA/Oceananigans.jl) and
 [NumericalEarth](https://github.com/NumericalEarth/NumericalEarth.jl).
 
-A simulation is completely defined in a config file, for example
-[`examples/oslofjorden/oslofjorden.jl`](examples/oslofjorden/oslofjorden.jl).
-It contains the simulation parameters and the programming objects that define the logic of a simulation.
-It is done using Julia's main feature/paradigm — multiple dispatch.
-Providing new structs and overloading existing/new methods on them, a user can change anything.
-At the same time, since the entire simulation is a config type file, all the parts are in one place,
-compact, and readable.
+FjordSim gives you a streamlined way to:
+
+1. download and prepare the data for a 3D regional ocean simulation, and
+2. run the simulation itself, for a fjord, a stretch of coast or a lake.
+
+Out of the box, it comes with data sources for Norway: Geonorge bathymetry, NorKyst-800m ocean
+data, NVE rivers and the NORA3 atmosphere. You can add your own sources without changing
+FjordSim's code: a new source subtypes one of FjordSim's config types and overloads a few methods
+on it. The helpers for downloading and preparing data live in the matching folders under
+[`src/`](src/), and [`docs/adding-a-source.md`](docs/adding-a-source.md) walks you through it.
+The quickest way to add a source or set up a new simulation is to ask an AI coding agent — see
+[Working with AI coding agents](#working-with-ai-coding-agents).
+
+Each simulation is defined entirely by a single config file, such as
+[`examples/oslofjorden/oslofjorden.jl`](examples/oslofjorden/oslofjorden.jl). It holds both the
+simulation's parameters and the objects that decide how the simulation behaves. This works through
+Julia's central feature, multiple dispatch: by defining new types and adding methods for them, you
+can change any part of a simulation. And because the whole simulation lives in one file, every
+piece of it is in one place, compact and easy to read.
 
 ## Examples
 

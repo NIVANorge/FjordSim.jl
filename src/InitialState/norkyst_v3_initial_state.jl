@@ -15,7 +15,7 @@ using ..NorKyst:
     norkyst_source_grid,
     norkyst_v3_url,
     record_index,
-    open_remote,
+    open_v3_file,
     read_remote,
     subset_ranges,
     concrete_float_data,
@@ -106,8 +106,8 @@ function fetch_initial_state(target_grid, config::NorKystV3InitialStateConfig, d
     nest_url = norkyst_v3_url(config.opendap_url, NORKYST_V3_NEST_RESOLUTION, config.nest_member, date)
     @info "Downloading the Norkyst-v3 state at $date from $nest_url and $parent_url"
 
-    open_remote(parent_url) do parent
-        open_remote(nest_url) do nest
+    open_v3_file(parent_url, date) do parent
+        open_v3_file(nest_url, date) do nest
             projection(ds) = NCDatasets.variable(ds, NORKYST_PROJECTION_VARIABLE).attrib["proj4"]
             projection(parent) == projection(nest) ||
                 error("The nest and its parent are on different projections.")

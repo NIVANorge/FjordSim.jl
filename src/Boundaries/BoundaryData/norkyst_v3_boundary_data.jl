@@ -23,7 +23,7 @@ using ..NorKyst:
     NORKYST_V3_OPENDAP_URL,
     list_v3_days,
     norkyst_v3_url,
-    open_remote,
+    open_v3_file,
     subset_ranges,
     time_length,
     define_output_file,
@@ -207,10 +207,9 @@ function process_v3_boundary_month(year, month, longitude, latitude, config::Nor
     datasets = NCDataset[]
     try
         for day in days
-            url = norkyst_v3_url(
-                config.opendap_url, NORKYST_V3_BOUNDARY_RESOLUTION, config.member, Date(year, month, day),
-            )
-            push!(datasets, open_remote(url))
+            date = Date(year, month, day)
+            url = norkyst_v3_url(config.opendap_url, NORKYST_V3_BOUNDARY_RESOLUTION, config.member, date)
+            push!(datasets, open_v3_file(url, date))
         end
 
         subset = subset_ranges(first(datasets), longitude, latitude, downloaded)

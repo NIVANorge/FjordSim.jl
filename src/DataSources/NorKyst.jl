@@ -194,6 +194,29 @@ open_remote(body, url) =
     with_retries(() -> paced(() -> NCDataset(body, url), NORKYST_OPEN_REQUESTS), url)
 
 """
+    open_v3_file(url, date)
+    open_v3_file(body, url, date)
+
+`open_remote` for the operational Norkyst-v3 file `url` of the day `date`, failing with a plain
+message when THREDDS has no such file. A day's folder can be listed in the catalog and still be
+empty, as 2024-03-07 and 2024-03-08 are for every member.
+"""
+open_v3_file(url, date) = with_v3_file_check(() -> open_remote(url), url, date)
+open_v3_file(body, url, date) = with_v3_file_check(() -> open_remote(body, url), url, date)
+
+function with_v3_file_check(open, url, date)
+    try
+        return open()
+    catch exception
+        exception isa NCDatasets.NetCDFError && exception.code == NCDatasets.NC_ENOTFOUND || rethrow()
+        error(
+            "Norkyst-v3 data is missing on THREDDS for $(Dates.Date(date)): $url does not exist. " *
+            "Choose a `start_date`/`stop_date` that leaves this day out.",
+        )
+    end
+end
+
+"""
     read_remote(variable, indices, source)
 
 The `indices` of `variable` from the OPeNDAP dataset `source`, paced and retried.

@@ -289,9 +289,8 @@ The model config it pairs with takes the new keyword in its own `coupled_model` 
 follows the same shape as the built-in ones: a one-line method on the setup type that picks out the
 components, and a work function of another name on those components.
 
-The `coverage` keyword `regrid_forcing`, `place_rivers`, `regrid_boundary_data` and
-`regrid_atmosphere` take is a pipeline *argument*, not a hook: the steps derive it from the run config with `coverage_window`
-and every source inherits the padding unchanged. No source gains a hook for it.
+The period a prepare step covers is the dataset config's own, `coverage_window(config)`, never the
+run's, and every source inherits the padding to it unchanged. No source gains a hook for it.
 
 Required fields are listed in each supertype's docstring in `src/Configs.jl`, and its hooks under
 "# Methods a subtype provides", one bullet per hook, saying `Required.`, `Optional` or `Only if …`.

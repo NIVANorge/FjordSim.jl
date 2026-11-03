@@ -90,9 +90,10 @@ that includes it. Oceananigans writes `zero(eltype)` into every immersed tracer 
 `update_state!`, and most of a fjord grid is land — so the array form reported the land mask as the
 minimum temperature for the whole run. It also keeps the reduction on the GPU.
 
-`coverage_window(run_config)` is the `(first, last)` interval the run needs. Every prepare
-step that has a time axis — forcing, rivers, boundaries, atmosphere — and `validate_simulation` take
-it as their `coverage`.
+`coverage_window(run_config)` is the `(first, last)` interval the run needs: `build_simulation`
+checks every prepared file spans it, and `validate_simulation` scores over it by default. A
+time-dependent dataset's config — forcing, rivers, boundaries, atmosphere — has its own
+`coverage_window`, its period, which its download and prepare steps cover.
 
 ## 3. Grids (`src/Grids.jl`)
 

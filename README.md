@@ -26,15 +26,15 @@ piece of it is in one place, compact and easy to read.
 
 ## Examples
 
-[`examples/oslofjorden/oslofjorden.jl`](examples/oslofjorden/oslofjorden.jl): April 2014 to December 2015.
+[`examples/oslofjorden/oslofjorden.jl`](examples/oslofjorden/oslofjorden.jl): October 2024 to October 2026.
 
 ![Oslofjorden surface temperature, salinity and currents](artifacts/oslofjorden_surface.gif)
 
-[`examples/moro/moro.jl`](examples/moro/moro.jl): Møre og Romsdal, January 2023.
+[`examples/moro/moro.jl`](examples/moro/moro.jl): Møre og Romsdal, 2023.
 
 ![Møre og Romsdal surface temperature, salinity and currents](artifacts/moro_surface.gif)
 
-[`examples/lista/lista.jl`](examples/lista/lista.jl): 2024.
+[`examples/lista/lista.jl`](examples/lista/lista.jl): January 2024 to October 2025.
 
 ![Lista surface temperature, salinity and currents](artifacts/lista_surface.gif)
 
@@ -64,12 +64,12 @@ Data lives under `~/FjordSim_data/<fjord>/` and results under `~/FjordSim_result
 Set `FJORDSIM_DATA_ROOT` or `FJORDSIM_RESULTS_ROOT` to change the default directories,
 or set the destination in a config file.
 
-## Quick start: Oslofjorden
+## Quick start: Møre og Romsdal
 
-[`examples/oslofjorden/oslofjorden.jl`](examples/oslofjorden/oslofjorden.jl) is the reference setup: Geonorge bathymetry,
-an initial state from one NorKyst-800m daily mean, NVE rivers, hourly NorKyst-800m open-boundary
-data along the southern edge, and NORA3 atmosphere. It names no forcing, so `download_forcing` and
-`prepare_forcing` report that and do nothing.
+[`examples/moro/moro.jl`](examples/moro/moro.jl) is the simplest complete setup: Geonorge bathymetry
+on a 500 m grid, an initial state from one NorKyst-800m daily mean, NVE rivers, hourly NorKyst-800m
+open-boundary data along the western and northern edges, and NORA3 atmosphere, over 2023 with T and
+S only. It names no forcing, so `download_forcing` and `prepare_forcing` report that and do nothing.
 Please note: It may take several hours to download the data.
 
 `add_rivers` also needs a free NVE HydAPI key — sign up at https://hydapi.nve.no/Users and set it
@@ -80,22 +80,22 @@ required of every setup; the others belong to optional components (see
 [What a run is made of](#what-a-run-is-made-of)):
 
 ```bash
-julia --project -m FjordSim prepare_bathymetry     --config examples/oslofjorden/oslofjorden.jl  # required
-julia --project -m FjordSim download_initial_state --config examples/oslofjorden/oslofjorden.jl  # optional: initial state
-julia --project -m FjordSim prepare_initial_state  --config examples/oslofjorden/oslofjorden.jl  # optional: initial state
-julia --project -m FjordSim add_rivers             --config examples/oslofjorden/oslofjorden.jl  # optional: rivers
-julia --project -m FjordSim download_boundary_data --config examples/oslofjorden/oslofjorden.jl  # optional: open boundaries
-julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden/oslofjorden.jl  # optional: open boundaries
-julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden/oslofjorden.jl  # optional: atmosphere
-julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden/oslofjorden.jl  # optional: atmosphere
-julia --project -m FjordSim run_simulation         --config examples/oslofjorden/oslofjorden.jl  # the run itself
+julia --project -m FjordSim prepare_bathymetry     --config examples/moro/moro.jl  # required
+julia --project -m FjordSim download_initial_state --config examples/moro/moro.jl  # optional: initial state
+julia --project -m FjordSim prepare_initial_state  --config examples/moro/moro.jl  # optional: initial state
+julia --project -m FjordSim add_rivers             --config examples/moro/moro.jl  # optional: rivers
+julia --project -m FjordSim download_boundary_data --config examples/moro/moro.jl  # optional: open boundaries
+julia --project -m FjordSim prepare_boundary_data  --config examples/moro/moro.jl  # optional: open boundaries
+julia --project -m FjordSim download_atmosphere    --config examples/moro/moro.jl  # optional: atmosphere
+julia --project -m FjordSim prepare_atmosphere     --config examples/moro/moro.jl  # optional: atmosphere
+julia --project -m FjordSim run_simulation         --config examples/moro/moro.jl  # the run itself
 ```
 
 Each subcommand is named after the function it calls, so the same steps run from the REPL:
 
 ```julia
 using FjordSim
-config = fjord_config("examples/oslofjorden/oslofjorden.jl")
+config = fjord_config("examples/moro/moro.jl")
 prepare_bathymetry(config)
 download_initial_state(config)
 prepare_initial_state(config)
@@ -109,7 +109,7 @@ run_simulation(config)
 
 `build_simulation(config)` returns the assembled simulation without starting it, which is the entry
 point for the REPL and the debugger. Snapshots and a per-launch log land in
-`~/FjordSim_results/oslofjorden/`; `julia --project -m FjordSim --help` lists every subcommand.
+`~/FjordSim_results/moro/`; `julia --project -m FjordSim --help` lists every subcommand.
 
 What to re-run after changing the run window or the grid, how to archive a run before a fresh
 rerun, and how to resume are in [`docs/running.md`](docs/running.md).

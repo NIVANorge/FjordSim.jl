@@ -80,6 +80,13 @@ of a step's own name on anything but a setup type. The model (`model_config`), i
 its boundary conditions and the run (`run_config`, read only through its accessors) are separate
 setup components (`docs/architecture.md`, Configs).
 
+**Component configs are independent of each other.** Each states its own values — a dataset config
+(forcing, rivers, open-boundary data, atmosphere) its own `start_date`/`stop_date` period, an
+initial-state config its own `start_date` — and no download or prepare step derives anything from
+another component, the run config included. Only `build_simulation`/`run_simulation` combine them,
+checking the run window lies inside every prepared file, so one prepared dataset can serve any run
+inside its period.
+
 The modules, in `include` order from `src/FjordSim.jl`:
 
 1. **Configs** (`src/Configs.jl`) — the abstract supertypes, `AbstractFjordConfig` and its

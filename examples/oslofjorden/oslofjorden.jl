@@ -323,13 +323,20 @@ struct TidalGain
 end
 
 # Observed at Viker over the operational Norkyst-v3's boundary, each phase shift the observed phase
-# minus the boundary's: to be measured with `scripts/measure_boundary_tide.jl` once
-# `download_boundary_data` has run. For comparison, the hindcast's over 2014-05-01 to 2015-12-31,
+# minus the boundary's, measured with `scripts/measure_boundary_tide.jl` over 2024-10-01 to
+# 2026-09-30. For comparison, the hindcast's over 2014-05-01 to 2015-12-31,
 # measured against the model at Viker, were M2 x0.713 +2.7°, S2 x2.071 -34.0°, N2 x0.903 -4.1°,
 # K2 x1.254 +32.7°, O1 x1.552 +7.7°, K1 x0.353 +17.8°. On that run Oscarsborg and Oslo gave the same
 # gains within 0.02 for M2 and 0.15 for S2, and their M2 phase was 11° ahead against Viker's 3°, a
 # fault of the interior that a boundary correction cannot reach.
-const VIKER_TIDE_GAINS = TidalGain[]
+const VIKER_TIDE_GAINS = [
+    TidalGain("M2", 0.704, 3.3),     # 17.41 cm at the boundary, 12.26 observed, ± 0.08
+    TidalGain("S2", 1.377, -27.6),   # 1.72 cm at the boundary, 2.37 observed, ± 0.08
+    TidalGain("N2", 2.05, 1.7),      # 1.44 cm at the boundary, 2.95 observed, ± 0.08
+    TidalGain("K2", 1.315, -10.0),   # 0.52 cm at the boundary, 0.68 observed, ± 0.08
+    TidalGain("O1", 2.175, 21.0),    # 1.24 cm at the boundary, 2.7 observed, ± 0.08
+    TidalGain("K1", 0.244, -95.1),   # 1.11 cm at the boundary, 0.27 observed, ± 0.08
+]
 
 """
     TideCorrectedBoundaries(source, gains)

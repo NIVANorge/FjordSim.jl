@@ -6,7 +6,7 @@
 # two directories the host bind-mounts onto FJORDSIM_DATA_ROOT and FJORDSIM_RESULTS_ROOT.
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
-ARG JULIA_VERSION=1.12.7
+ARG JULIA_VERSION=1.13.3
 
 # JULIA_CPU_TARGET is what makes the precompile caches below portable, and it has to be set at
 # run time too — Julia checks a cache file's targets against the *current* setting — which is why

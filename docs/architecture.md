@@ -441,7 +441,7 @@ compensating deep inflow over the sills, so basins were diluted from above and n
 - `RiverMouthMixing` (opt-in) adds NumericalEarth's river-mouth diffusivity over the river columns,
   since CATKE does not mix down a 1 m fresh layer over salt water.
 - `RiverMouthAdvection` (opt-in) upwinds the horizontal tracer fluxes around the river columns,
-  where WENO overshoots across the fresh front (section 14).
+  where WENO overshoots across the fresh front, and optionally in narrow columns (section 14).
 
 ### NVE: HydAPI says what, the map services say where
 
@@ -619,6 +619,19 @@ first-order upwind's flux, every other face `interior`'s.
   `coupled_model` like `model_closure`. The zone is a 2D field of ones and zeros with filled halos.
 - **On a grid too small for `interior`'s order** Oceananigans adapts it into a `FluxFormAdvection`,
   which drops a bounded WENO's bounds; a model grid is never that small.
+
+**Narrow cells.** A front through a one-cell channel or a corner breaks WENO far from any mouth.
+Water leaving through a face beside land is reconstructed partly from the water across the front,
+so the cell exports heat it does not hold. On the Oslofjord at 160 m, cells with two wet neighbours
+at a fresh/brackish front sat 3-8 K below every neighbour within a month (31 October 2024: six
+surface cells; at the Numedalslågen bend, 2.4 °C under 44 m³/s of 8-11 °C throughflow). Replaying
+Oceananigans' `div_Uc` on that snapshot gave −17 K/day with WENO against +397 K/day upwind. Bounded
+WENO does not help: its limiter only enforces global bounds. In winter the cell reaches freezing and
+WENO keeps cooling it (−51 K/day at 0 °C), which NumericalEarth's frazil reset turns into ice:
+`SlabSeaIce` grew to 305 m in two cells and over 2 m in five more. `narrow_cells` adds every column
+whose surface cell has at most two wet horizontal neighbours (`narrow_columns`, read on a CPU copy
+of the grid) to the zone, 2.8 % of the Oslofjord's wet columns, and the replay then gives +397
+K/day.
 
 ## 15. Simulations (`src/Simulations.jl`)
 

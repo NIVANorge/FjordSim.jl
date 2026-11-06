@@ -4,27 +4,31 @@ export RiverMouthAdvection
 
 using Adapt
 using Oceananigans: Oceananigans, Center
-using Oceananigans.Architectures: Architectures, on_architecture
+using Oceananigans.Architectures: Architectures, CPU, on_architecture
 using Oceananigans.Advection: Advection, AbstractAdvectionScheme, BoundsPreservingWENO, UpwindBiased,
     LeftBias, RightBias, _biased_interpolate_xᶠᵃᵃ, _biased_interpolate_yᵃᶠᵃ, _biased_interpolate_zᵃᵃᶠ,
     rescaled_reconstruction, upwind_biased_product
 using Oceananigans.BoundaryConditions: fill_halo_regions!
 using Oceananigans.Fields: Field, set!
-using Oceananigans.Grids: AbstractGrid
+using Oceananigans.Grids: AbstractGrid, inactive_node
 using Oceananigans.Operators: Axᶠᶜᶜ, Ayᶜᶠᶜ, Azᶜᶜᶠ
 using Oceananigans.TimeSteppers: TimeSteppers
 
 """
-    RiverMouthAdvection(; interior, width_cells)
+    RiverMouthAdvection(; interior, width_cells, narrow_cells)
 
-A tracer advection config: first-order upwind for the horizontal fluxes near the river mouths,
-`interior` everywhere else.
+A tracer advection config: first-order upwind for the horizontal fluxes near the river mouths, and
+optionally in the narrow columns, `interior` everywhere else.
 
 A river holds its mouth columns near fresh against salt water a cell away, and a high-order
 reconstruction across that front overshoots both ways, creating water saltier or colder than any
 source that the mouth keeps feeding. First-order upwind cannot overshoot, at the price of numerical
-diffusion of about |u|Δx/2, which this keeps to the mouths. Every face carries one flux shared by
+diffusion of about |u|Δx/2, which this keeps to the zone. Every face carries one flux shared by
 both cells, so the tracer stays conserved; vertical fluxes are `interior`'s everywhere.
+
+A front through a one-cell channel or a corner does the same far from any mouth: water leaving
+through a face beside land is reconstructed from the water across the front, so the cell exports
+heat or salt it does not hold and settles below every neighbour. `narrow_cells` upwinds those too.
 
 Opt-in, and only for a setup with rivers. Applies to the tracers it is given for, so
 `tracer_advection = (; T = RiverMouthAdvection(...), S = RiverMouthAdvection(...), ...)` limits it
@@ -35,13 +39,17 @@ to temperature and salinity.
   `WENO` included.
 - `width_cells`: the zone around every river column, in cells; a horizontal face is upwinded when
   either cell beside it lies within `width_cells` of a river column in both `i` and `j`.
+- `narrow_cells`: whether the zone also holds every column whose surface cell has at most two wet
+  horizontal neighbours (`narrow_columns`).
 """
 struct RiverMouthAdvection{I}
     interior::I
     width_cells::Int
+    narrow_cells::Bool
 end
 
-RiverMouthAdvection(; interior, width_cells) = RiverMouthAdvection(interior, Int(width_cells))
+RiverMouthAdvection(; interior, width_cells, narrow_cells) =
+    RiverMouthAdvection(interior, Int(width_cells), Bool(narrow_cells))
 
 """
     RiverMouthScheme(interior, upwind, zone)
@@ -85,24 +93,42 @@ function model_tracer_advection(config::RiverMouthAdvection, grid, river_columns
         "names no rivers. Name a `river_config` on the `FjordConfig`, or drop RiverMouthAdvection.",
     )
     upwind = UpwindBiased(eltype(grid); order = 1)
-    return RiverMouthScheme(config.interior, upwind, river_mouth_zone(grid, river_columns, config.width_cells))
+    zone = river_mouth_zone(grid, river_columns, config.width_cells, config.narrow_cells)
+    return RiverMouthScheme(config.interior, upwind, zone)
 end
 
 """
-    river_mouth_zone(grid, river_columns, width_cells)
+    river_mouth_zone(grid, river_columns, width_cells, narrow_cells)
 
-A 2D field on `grid`, one within `width_cells` of a river column in both `i` and `j`, zero elsewhere.
+A 2D field on `grid`, one within `width_cells` of a river column in both `i` and `j`, and with
+`narrow_cells` in every `narrow_columns(grid)` column, zero elsewhere.
 """
-function river_mouth_zone(grid, river_columns, width_cells)
+function river_mouth_zone(grid, river_columns, width_cells, narrow_cells)
     Nx, Ny = size(grid, 1), size(grid, 2)
     mask = zeros(eltype(grid), Nx, Ny, 1)
     for (i, j) in zip(river_columns.target_i, river_columns.target_j)
         mask[max(1, i - width_cells):min(Nx, i + width_cells), max(1, j - width_cells):min(Ny, j + width_cells), 1] .= 1
     end
+    narrow_cells && (mask[narrow_columns(grid), 1] .= 1)
     zone = Field{Center, Center, Nothing}(grid)
     set!(zone, mask)
     fill_halo_regions!(zone)
     return zone
+end
+
+"""
+    narrow_columns(grid)
+
+A `Bool` matrix over the columns of `grid`, true where the surface cell is wet and has at most two
+wet horizontal neighbours: one-cell channels, corners and dead ends. A neighbour outside the domain
+counts as land. Read on a CPU copy of the grid, since a GPU grid cannot be indexed from the host.
+"""
+function narrow_columns(grid)
+    cpu_grid = on_architecture(CPU(), grid)
+    Nx, Ny, Nz = size(cpu_grid)
+    wet(i, j) = 1 <= i <= Nx && 1 <= j <= Ny && !inactive_node(i, j, Nz, cpu_grid, Center(), Center(), Center())
+    neighbours(i, j) = count(n -> wet(n...), ((i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1)))
+    return [wet(i, j) && neighbours(i, j) <= 2 for i in 1:Nx, j in 1:Ny]
 end
 
 #####

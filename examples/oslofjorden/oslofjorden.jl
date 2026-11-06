@@ -844,11 +844,15 @@ FjordConfig(
         # Salinity's WENO bounded: on this box plain WENO drove the
         # surface cells beside Numedalslågen's mouth below TEOS10's -32 psu floor at day 1.5.
         #
+        # Narrow cells upwinded too: with WENO, one-cell channels and corners at a fresh front sat
+        # 3-8 K below every neighbour, and in winter the frazil reset turned that into slab ice
+        # growing up to 4 m a day (Larvik, the Glomma sound, Svelvik).
+        #
         # Oceananigans gives any tracer a NamedTuple omits the unbounded `Centered()` default,
         # so it names CATKE's `e`, and a setup adding tracers must name those too.
         tracer_advection   = (
-            T = RiverMouthAdvection(interior = WENO(FT), width_cells = 3),
-            S = RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 3),
+            T = RiverMouthAdvection(interior = WENO(FT), width_cells = 3, narrow_cells = true),
+            S = RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 3, narrow_cells = true),
             e = WENO(FT),
         ),
         momentum_advection = WENOVectorInvariant(FT),

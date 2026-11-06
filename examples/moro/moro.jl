@@ -229,8 +229,8 @@ FjordConfig(
         # 2 m Surna column −1 °C. Three cells is WENO5's stencil, so no face outside reconstructs
         # across a river column; 4.1 % of the wet cells.
         tracer_advection   = (
-            T = RiverMouthAdvection(interior = WENO(FT), width_cells = 3),
-            S = RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 3),
+            T = RiverMouthAdvection(interior = WENO(FT), width_cells = 3, narrow_cells = false),
+            S = RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 3, narrow_cells = false),
             e = WENO(FT),
         ),
         momentum_advection = WENOVectorInvariant(FT),

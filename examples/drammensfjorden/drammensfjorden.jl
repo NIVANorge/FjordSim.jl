@@ -204,8 +204,8 @@ FjordConfig(
         # `oslofjorden.jl`, where both are argued. Oceananigans gives any tracer a NamedTuple omits
         # the unbounded `Centered()` default, so it names CATKE's `e`.
         tracer_advection   = (
-            T = RiverMouthAdvection(interior = WENO(FT), width_cells = 3),
-            S = RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 3),
+            T = RiverMouthAdvection(interior = WENO(FT), width_cells = 3, narrow_cells = false),
+            S = RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 3, narrow_cells = false),
             e = WENO(FT),
         ),
         momentum_advection = WENOVectorInvariant(FT),

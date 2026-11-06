@@ -163,8 +163,8 @@ FjordConfig(
         # Upwinded around the river mouths, as in `oslofjorden.jl`; Oceananigans gives a tracer
         # the NamedTuple omits an unbounded `Centered()`, so `e` is named.
         tracer_advection   = (
-            T = RiverMouthAdvection(interior = WENO(FT), width_cells = 3),
-            S = RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 3),
+            T = RiverMouthAdvection(interior = WENO(FT), width_cells = 3, narrow_cells = false),
+            S = RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 3, narrow_cells = false),
             e = WENO(FT),
         ),
         momentum_advection = WENOVectorInvariant(FT),

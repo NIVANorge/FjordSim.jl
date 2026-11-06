@@ -23,7 +23,7 @@ using FjordSim.Rivers: place_rivers, river_discharge, river_forcing_path, river_
     river_maximum_inflow_velocity, river_search_radius, river_series
 using FjordSim.BoundaryConditions: boundary_condition_sides, model_boundary_conditions,
     top_bottom_boundary_conditions
-using FjordSim.AdvectionSchemes: model_tracer_advection, river_mouth_zone, RiverMouthScheme
+using FjordSim.AdvectionSchemes: model_tracer_advection, narrow_columns, river_mouth_zone, RiverMouthScheme
 using FjordSim.BoundaryData: boundary_data_directory, boundary_data_path, boundary_variable_name,
     boundary_variable_names, regrid_boundary_data
 using FjordSim.Simulations: attach_callback!, attach_time_stepping!, attach_writer!,
@@ -486,14 +486,27 @@ end
         grid = ImmersedBoundaryGrid(underlying, GridFittedBottom((x, y) -> y < 1 ? 0.0 : -6.0))
         columns = (; target_i = [4], target_j = [5])
 
-        zone = interior(river_mouth_zone(grid, columns, 1))[:, :, 1]
+        zone = interior(river_mouth_zone(grid, columns, 1, false))[:, :, 1]
         @test findall(==(1), zone) == vec(CartesianIndex.(3:5, (4:6)'))
         @test sum(zone) == 9
-        clipped = interior(river_mouth_zone(grid, (; target_i = [1], target_j = [8]), 2))[:, :, 1]
+        clipped = interior(river_mouth_zone(grid, (; target_i = [1], target_j = [8]), 2, false))[:, :, 1]
         @test findall(==(1), clipped) == vec(CartesianIndex.(1:3, (6:8)'))
 
+        # A one-cell channel along j = 4 entering a basin at i ≥ 5: the channel, its dead end and the
+        # basin's corners have at most two wet neighbours, the basin's edges and interior more.
+        basin = ImmersedBoundaryGrid(
+            RectilinearGrid(CPU(); size = (8, 8, 2), halo = (3, 3, 3), x = (0, 8), y = (0, 8), z = (-2, 0)),
+            GridFittedBottom((x, y) -> x > 4 || 3 < y < 4 ? -2.0 : 0.0),
+        )
+        narrow = narrow_columns(basin)
+        @test Set(findall(narrow)) == Set(CartesianIndex.([(1, 4), (2, 4), (3, 4), (4, 4), (5, 1), (8, 1), (5, 8), (8, 8)]))
+        with_narrow = interior(river_mouth_zone(basin, (; target_i = [7], target_j = [5]), 0, true))[:, :, 1]
+        @test Set(findall(==(1), with_narrow)) == Set([findall(narrow); CartesianIndex(7, 5)])
+        @test findall(==(1), interior(river_mouth_zone(basin, (; target_i = [7], target_j = [5]), 0, false))[:, :, 1]) ==
+            [CartesianIndex(7, 5)]
+
         # A setup with no rivers has no mouths to upwind around.
-        config = RiverMouthAdvection(interior = WENO(order = 5), width_cells = 1)
+        config = RiverMouthAdvection(interior = WENO(order = 5), width_cells = 1, narrow_cells = false)
         @test_throws ErrorException model_tracer_advection(config, grid, nothing)
 
         # Anything else passes through, and per-tracer schemes are resolved one by one.
@@ -541,7 +554,7 @@ end
         model = HydrostaticFreeSurfaceModel(
             grid;
             tracer_advection = model_tracer_advection(
-                RiverMouthAdvection(interior = WENO(order = 5; bounds = (0, 1)), width_cells = 1),
+                RiverMouthAdvection(interior = WENO(order = 5; bounds = (0, 1)), width_cells = 1, narrow_cells = false),
                 grid,
                 columns,
             ),

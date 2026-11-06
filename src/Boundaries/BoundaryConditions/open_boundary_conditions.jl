@@ -62,7 +62,7 @@ boundary_radiation_scheme(config) = NormalRadiation(;
 ##### one place the fill can live — see that function for why a sentinel reaching a scheme is not
 ##### hypothetical.
 
-@inline boundary_value(series, i, k, time) = @inbounds series[i, 1, k, time]
+@inline boundary_value(series, i, j, time) = @inbounds series[i, j, 1, time]
 
 @inline exterior_state(velocity, elevation, depth) = (velocity * depth, elevation)
 
@@ -106,8 +106,8 @@ As `south_boundary_transport`, at the western boundary face `(1, j)`, from `ubar
     time = Time(clock.time)
     depth = column_depthᶠᶜᵃ(1, j, grid.Nz + 1, grid, model_fields.η)
     return exterior_state(
-        boundary_value(parameters.ubar, j, 1, time),
-        boundary_value(parameters.eta, j, 1, time),
+        boundary_value(parameters.ubar, 1, j, time),
+        boundary_value(parameters.eta, 1, j, time),
         depth,
     )
 end
@@ -121,8 +121,8 @@ As `west_boundary_transport`, at the eastern boundary face `(Nx + 1, j)`.
     time = Time(clock.time)
     depth = column_depthᶠᶜᵃ(grid.Nx + 1, j, grid.Nz + 1, grid, model_fields.η)
     return exterior_state(
-        boundary_value(parameters.ubar, j, 1, time),
-        boundary_value(parameters.eta, j, 1, time),
+        boundary_value(parameters.ubar, 1, j, time),
+        boundary_value(parameters.eta, 1, j, time),
         depth,
     )
 end

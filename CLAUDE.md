@@ -22,7 +22,7 @@ and the `new-setup` skill (`.claude/skills/new-setup/`) the one for writing a ne
 ## Commands
 
 ```bash
-julia --project test/runtests.jl                                   # all tests
+julia --project -e 'using Pkg; Pkg.test()'                        # all tests (see Tests first)
 julia --project -m FjordSim --help                                 # subcommands
 julia --project -m FjordSim <step> --config <setup.jl>             # one pipeline step
 ```
@@ -179,6 +179,11 @@ forcings.
 
 ## Tests
 
+- **Ask before running the suite.** `Pkg.test` forces `--check-bounds=yes`, as PkgEval does, which
+  catches out-of-bounds reads that `@inbounds` hides; it recompiles every package, and its first model
+  build exceeds 30 GB of RAM on Julia 1.12 but peaks at 6 GB on 1.13 (about 70 min on 4 vCPU). Check free memory first and say whether
+  it fits. Without bounds checks,
+  `julia --project test/runtests.jl` needs about 5 GB.
 - **Tests are general, never setup-specific.** Never assert a value a setup states — a grid size, a
   box, a year, a `start_date`, a station list, which dataset it picks. Those are the setup author's
   to change, and a test that pins them turns every scientific choice into a test failure. The suite

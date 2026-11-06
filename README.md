@@ -27,6 +27,8 @@ piece of it is in one place, compact and easy to read.
 ## Examples
 
 [`examples/oslofjorden/oslofjorden.jl`](examples/oslofjorden/oslofjorden.jl): October 2024 to October 2026.
+The animation below is an earlier setup, April 2014 to December 2015:
+[`examples/oslofjorden_validation.jl` at 49e1eaa](https://github.com/NIVANorge/FjordSim.jl/blob/49e1eaad897aa4cd741404a54d918b8a8baf40d7/examples/oslofjorden_validation.jl).
 
 ![Oslofjorden surface temperature, salinity and currents](artifacts/oslofjorden_surface.gif)
 

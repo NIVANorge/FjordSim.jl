@@ -1,10 +1,10 @@
 # The Oslofjord setup: Geonorge Sjøkart Dybdedata bathymetry, an operational Norkyst-v3 initial
 # state (its 160 m Oslofjord nest, filled out by the 800 m reference run), NVE rivers, hourly
 # operational Norkyst-v3 data on the open southern edge with its tide corrected to Viker, NORA3
-# atmosphere with snowfall and a slab sea ice, on a 424 x 681 x 39 grid of 160 m cells covering
-# 10.00-11.20°E, 58.95-59.93°N. It runs from 1 October 2024 to 1 October 2026, two winters, and
-# writes what `validate_simulation` scores it with: tide gauges, CTD stations, current moorings, a
-# section along the Drammensfjord and fixed-point temperature sites.
+# atmosphere with snowfall, and the water held at or above freezing, on a 424 x 681 x 39 grid of
+# 160 m cells covering 10.00-11.20°E, 58.95-59.93°N. It runs from 1 October 2024 to 1 October
+# 2026, two winters, and writes what `validate_simulation` scores it with: tide gauges, CTD
+# stations, current moorings, a section along the Drammensfjord and fixed-point temperature sites.
 #
 # The box is the one MET Norway's ROMS model FjordOs CL covers (Røed et al., *A high-resolution,
 # curvilinear ROMS model for the Oslofjord*, METreport 4/2016, evaluated in Hjelmervik et al.,
@@ -20,10 +20,12 @@
 # - *South to 58.95°N*: LA-1, at 59.019°N, about 7.7 km inside the southern edge rather than inside
 #   its 3.2 km `BoundarySponge`.
 #
-# The sea ice is there because the surface freezes. On this box's 193 m run of 2014-15, a mild
-# winter, with the ocean temperature only clamped at freezing, surface cells sat at freezing on 115
-# of 641 days, up to 5.6 % of the wet surface (2014-12-27): Drammensfjorden above all, then the
-# Glomma estuary and the inner fjord off Oslo, all brackish at 1-10 g/kg.
+# The surface freezes, but the water is only clamped at freezing, with no ice. On this box's 193 m
+# run of 2014-15, a mild winter, surface cells sat at freezing on 115 of 641 days, up to 5.6 % of
+# the wet surface (2014-12-27): Drammensfjorden above all, then the Glomma estuary and the inner
+# fjord off Oslo, all brackish at 1-10 g/kg. A non-drifting slab ice, run on this setup through
+# 2024-25, turned every heat deficit the advection left in a column into ice that stayed: 305 m in
+# a one-cell channel at Larvik, 0.9 m in the fast-flowing Svelvik sound.
 #
 # The physics was measured against the NIVA casts of 2014-15 on this box at 193 m, in the runs
 # archived as `oslofjorden_validation_2026-10-16` and `oslofjorden_validation_2026-10-21`: 5.06 m
@@ -114,6 +116,7 @@ using FjordSim.Configs: AbstractBoundaryDataConfig
 using FjordSim.Validation: TIDAL_CONSTITUENTS
 using LinearAlgebra: qr
 using NCDatasets: NCDataset
+using NumericalEarth: FreezingLimitedOceanTemperature
 
 # --- Station positions ------------------------------------------------------------------------
 #
@@ -772,7 +775,7 @@ FjordConfig(
         padding          = 0.1,
         start_date       = start_date,
         stop_date        = stop_date,
-        # Snow on the ice, which insulates it far better than ice does.
+        # Snow falls into the water, which supplies the heat that melts it.
         snowfall         = true,
     ),
     # CoupledHydrostaticModel overloads coupled_model and model_tracers — the model hooks
@@ -845,7 +848,7 @@ FjordConfig(
         # surface cells beside Numedalslågen's mouth below TEOS10's -32 psu floor at day 1.5.
         #
         # Coastal cells upwinded too: with WENO, one-cell channels and corners at a fresh front sat
-        # 3-8 K below every neighbour, and in winter the frazil reset turned that into slab ice
+        # 3-8 K below every neighbour, and under a slab ice the frazil reset turned that into ice
         # growing up to 4 m a day (Larvik, the Glomma sound, Svelvik). Upwinding only cells with two
         # wet neighbours moved it to the next cell at Larvik, which has three.
         #
@@ -859,11 +862,8 @@ FjordConfig(
         momentum_advection = WENOVectorInvariant(FT),
         tracers            = (:T, :S),
         coriolis           = HydrostaticSphericalCoriolis(FT),
-        # A slab that grows and melts in place and never drifts, as the landfast ice of the
-        # sheltered inner basins does. The ice takes no salt: it forms in water of 1-10 g/kg, and
-        # a fixed ice salinity above the water's would drive the water's salinity negative.
-        # 2 W m⁻¹ K⁻¹ is ClimaSeaIce's conductivity.
-        sea_ice            = SlabSeaIce(ice_salinity = 0, conductivity = 2),
+        # Every level clamped at freezing, the heat that takes discarded: see the top of the file.
+        sea_ice            = FreezingLimitedOceanTemperature(FT),
         # Overloads free_surface(config, grid) — its own hook, called from inside
         # coupled_model once the grid exists.
         free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),
@@ -935,15 +935,6 @@ FjordConfig(
                 output_file        = "snapshots_surface.jld2",
                 variables          = (:η, :T, :S, :u, :v),
                 interval           = 1hour,
-                split_times        = monthly_splits,
-                overwrite_existing = true,
-            ),
-            # Ice and snow thickness and ice concentration, daily, a new file every month.
-            SeaIceSnapshotWriter(
-                name               = :sea_ice,
-                output_file        = "snapshots_sea_ice.jld2",
-                variables          = (:h, :ℵ, :hs),
-                interval           = 1day,
                 split_times        = monthly_splits,
                 overwrite_existing = true,
             ),

@@ -493,13 +493,14 @@ end
         @test findall(==(1), clipped) == vec(CartesianIndex.(1:3, (6:8)'))
 
         # A one-cell channel along j = 4 entering a basin at i ≥ 5: the channel, its dead end and the
-        # basin's corners have at most two wet neighbours, the basin's edges and interior more.
+        # basin's edges have land beside them; the basin's interior and the channel's entrance do not.
         basin = ImmersedBoundaryGrid(
             RectilinearGrid(CPU(); size = (8, 8, 2), halo = (3, 3, 3), x = (0, 8), y = (0, 8), z = (-2, 0)),
             GridFittedBottom((x, y) -> x > 4 || 3 < y < 4 ? -2.0 : 0.0),
         )
         narrow = narrow_columns(basin)
-        @test Set(findall(narrow)) == Set(CartesianIndex.([(1, 4), (2, 4), (3, 4), (4, 4), (5, 1), (8, 1), (5, 8), (8, 8)]))
+        basin_edges = [(i, j) for i in 5:8, j in 1:8 if (i in (5, 8) || j in (1, 8)) && (i, j) != (5, 4)]
+        @test Set(findall(narrow)) == Set(CartesianIndex.([[(i, 4) for i in 1:4]; basin_edges]))
         with_narrow = interior(river_mouth_zone(basin, (; target_i = [7], target_j = [5]), 0, true))[:, :, 1]
         @test Set(findall(==(1), with_narrow)) == Set([findall(narrow); CartesianIndex(7, 5)])
         @test findall(==(1), interior(river_mouth_zone(basin, (; target_i = [7], target_j = [5]), 0, false))[:, :, 1]) ==

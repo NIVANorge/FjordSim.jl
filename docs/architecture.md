@@ -441,7 +441,7 @@ compensating deep inflow over the sills, so basins were diluted from above and n
 - `RiverMouthMixing` (opt-in) adds NumericalEarth's river-mouth diffusivity over the river columns,
   since CATKE does not mix down a 1 m fresh layer over salt water.
 - `RiverMouthAdvection` (opt-in) upwinds the horizontal tracer fluxes around the river columns,
-  where WENO overshoots across the fresh front, and optionally in narrow columns (section 14).
+  where WENO overshoots across the fresh front, and optionally in coastal columns (section 14).
 
 ### NVE: HydAPI says what, the map services say where
 
@@ -629,9 +629,11 @@ Oceananigans' `div_Uc` on that snapshot gave −17 K/day with WENO against +397 
 WENO does not help: its limiter only enforces global bounds. In winter the cell reaches freezing and
 WENO keeps cooling it (−51 K/day at 0 °C), which NumericalEarth's frazil reset turns into ice:
 `SlabSeaIce` grew to 305 m in two cells and over 2 m in five more. `narrow_cells` adds every column
-whose surface cell has at most two wet horizontal neighbours (`narrow_columns`, read on a CPU copy
-of the grid) to the zone, 2.8 % of the Oslofjord's wet columns, and the replay then gives +397
-K/day.
+whose surface cell has at most three wet horizontal neighbours (`narrow_columns`, read on a CPU copy
+of the grid) to the zone, 8.6 % of the Oslofjord's wet columns. Two neighbours are not enough:
+upwinding only those (2.8 %) fixed the bend cell (−17 → +397 K/day) but moved the runaway to the
+next cell along the coast, which has three; it froze on 2 January and reached 47 m by 12 February.
+On that 2 January snapshot at freezing, WENO gave it −10 to −29 K/day and upwind +91 to +96 K/day.
 
 ## 15. Simulations (`src/Simulations.jl`)
 

@@ -164,9 +164,9 @@ spacing have to be worked out for the new grid rather than copied:
   omits, such as CATKE's `e`, fall back to an unbounded `Centered()` scheme.
 - **`RiverMouthAdvection(interior = ..., width_cells = ..., narrow_cells = ...)`** in place of a
   tracer's scheme upwinds its horizontal fluxes within `width_cells` of every river column, and with
-  `narrow_cells` in every column with at most two wet neighbours (one-cell channels, corners), and
-  uses `interior` elsewhere, a bounded `WENO` included. It needs a `river_config`. Turn
-  `narrow_cells` on where a front runs through one-cell channels: WENO leaves such a cell below
+  `narrow_cells` in every column with land beside it (at most three wet neighbours), and uses
+  `interior` elsewhere, a bounded `WENO` included. It needs a `river_config`. Turn `narrow_cells`
+  on where a front runs along the coast or through one-cell channels: WENO leaves such a cell below
   every neighbour, and with sea ice that becomes runaway ice growth.
 - **`CATKEVerticalDiffusivity`'s `minimum_tke`** sets the background `κ = 0.098·e_min/N` wherever the
   prognostic TKE is below it, which in a stratified fjord is most of the column, so it is effectively

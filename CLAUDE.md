@@ -118,7 +118,7 @@ The modules, in `include` order from `src/FjordSim.jl`:
     (`download_boundary_data`, `prepare_boundary_data`, `boundary_series`) and its NorKyst adapters.
     Independent of `BoundaryConditions`; `build_simulation` hands one's output to the other.
 14. **Advection schemes** (`src/AdvectionSchemes.jl`) — `RiverMouthAdvection` (first-order upwind
-    horizontally around the river mouths and, optionally, in narrow columns) and
+    horizontally around the river mouths and, optionally, in coastal columns) and
     `model_tracer_advection`, the hook `coupled_model` builds the tracer advection through.
 15. **Simulations** (`src/Simulations.jl`) — `CoupledHydrostaticModel` and `coupled_model`,
     `RunConfig`, `build_simulation` (staged in `assemble_simulation`: `validate_model_inputs`,

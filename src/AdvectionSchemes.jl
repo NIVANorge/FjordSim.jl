@@ -26,9 +26,9 @@ source that the mouth keeps feeding. First-order upwind cannot overshoot, at the
 diffusion of about |u|Δx/2, which this keeps to the zone. Every face carries one flux shared by
 both cells, so the tracer stays conserved; vertical fluxes are `interior`'s everywhere.
 
-A front through a one-cell channel or a corner does the same far from any mouth: water leaving
-through a face beside land is reconstructed from the water across the front, so the cell exports
-heat or salt it does not hold and settles below every neighbour. `narrow_cells` upwinds those too.
+A front along the coast does the same far from any mouth: water leaving through a face beside land
+is reconstructed from the water across the front, so the cell exports heat or salt it does not hold
+and settles below every neighbour. `narrow_cells` upwinds those too.
 
 Opt-in, and only for a setup with rivers. Applies to the tracers it is given for, so
 `tracer_advection = (; T = RiverMouthAdvection(...), S = RiverMouthAdvection(...), ...)` limits it
@@ -39,8 +39,8 @@ to temperature and salinity.
   `WENO` included.
 - `width_cells`: the zone around every river column, in cells; a horizontal face is upwinded when
   either cell beside it lies within `width_cells` of a river column in both `i` and `j`.
-- `narrow_cells`: whether the zone also holds every column whose surface cell has at most two wet
-  horizontal neighbours (`narrow_columns`).
+- `narrow_cells`: whether the zone also holds every column whose surface cell has land beside it
+  (`narrow_columns`).
 """
 struct RiverMouthAdvection{I}
     interior::I
@@ -119,16 +119,17 @@ end
 """
     narrow_columns(grid)
 
-A `Bool` matrix over the columns of `grid`, true where the surface cell is wet and has at most two
-wet horizontal neighbours: one-cell channels, corners and dead ends. A neighbour outside the domain
-counts as land. Read on a CPU copy of the grid, since a GPU grid cannot be indexed from the host.
+A `Bool` matrix over the columns of `grid`, true where the surface cell is wet and has at most three
+wet horizontal neighbours: every coastal cell, one-cell channels, corners and dead ends included. A
+neighbour outside the domain counts as land. Read on a CPU copy of the grid, since a GPU grid cannot
+be indexed from the host.
 """
 function narrow_columns(grid)
     cpu_grid = on_architecture(CPU(), grid)
     Nx, Ny, Nz = size(cpu_grid)
     wet(i, j) = 1 <= i <= Nx && 1 <= j <= Ny && !inactive_node(i, j, Nz, cpu_grid, Center(), Center(), Center())
     neighbours(i, j) = count(n -> wet(n...), ((i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1)))
-    return [wet(i, j) && neighbours(i, j) <= 2 for i in 1:Nx, j in 1:Ny]
+    return [wet(i, j) && neighbours(i, j) <= 3 for i in 1:Nx, j in 1:Ny]
 end
 
 #####

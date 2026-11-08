@@ -5,7 +5,6 @@
 
 using Dates: Date, DateTime, @dateformat_str
 import Dates
-using Oceananigans.Grids: x_domain, y_domain
 
 using ..NorKyst:
     NORKYST_CATALOG_URL,
@@ -15,6 +14,7 @@ using ..NorKyst:
     list_opendap_files,
     open_remote,
     subset_ranges,
+    download_box,
     time_length,
     define_output_file,
     write_parameter_chunk!,
@@ -38,6 +38,8 @@ centred half a day after `start_date`.
 - `data_root`: Directory holding this setup's initial-state files. Required.
 - `output_directory`: Name of the directory the daily download is written to. Required.
 - `output_file`: Name of the prepared NetCDF written by `prepare_initial_state`.
+- `margin`: Degrees of longitude/latitude the download reaches past the domain on every side, so
+  the rotated source grid covers its corners.
 - `catalog_url`, `opendap_url`: The NorKyst dataset's own public endpoints; the only defaulted
   fields besides `output_file`.
 - `parameters`: Variable names to extract (e.g. `["temperature", "salinity"]`). Required.
@@ -48,6 +50,7 @@ Base.@kwdef mutable struct NorKystInitialStateConfig <: AbstractInitialStateConf
     data_root::String
     output_directory::String
     output_file::String = "initial_state.nc"
+    margin::Float64 = 0.05
     catalog_url::String = NORKYST_CATALOG_URL
     opendap_url::String = NORKYST_OPENDAP_URL
     parameters::Vector{String}
@@ -103,7 +106,7 @@ function fetch_initial_state(target_grid, config::NorKystInitialStateConfig, dat
     @info "Downloading the NorKyst-800m daily mean for $(Date(date)) from $url"
 
     open_remote(url) do ds
-        subset = subset_ranges(ds, x_domain(target_grid), y_domain(target_grid), config.parameters)
+        subset = subset_ranges(ds, download_box(target_grid, config.margin)..., config.parameters)
         # Written under a temporary name and renamed once complete, so an interrupted download is
         # redone on the next run rather than skipped as already present.
         temporary_path = output_path * ".tmp"

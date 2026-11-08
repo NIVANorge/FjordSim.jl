@@ -5,7 +5,6 @@
 
 using Dates: Date, DateTime, @dateformat_str
 import Dates
-using Oceananigans.Grids: x_domain, y_domain
 
 using ..Regridding: nested_slab
 using ..NorKyst:
@@ -18,6 +17,7 @@ using ..NorKyst:
     open_v3_file,
     read_remote,
     subset_ranges,
+    download_box,
     concrete_float_data,
     decoded_attributes,
     define_subset_variable!
@@ -43,6 +43,8 @@ published from 2024-11-23, and before that the reference run `m00` is the fill.
 - `data_root`: Directory holding this setup's initial-state files. Required.
 - `output_directory`: Name of the directory the merged download is written to. Required.
 - `output_file`: Name of the prepared NetCDF written by `prepare_initial_state`.
+- `margin`: Degrees of longitude/latitude the download reaches past the domain on every side, so
+  the rotated source grid covers its corners.
 - `opendap_url`: The collection's public endpoint. Defaulted.
 - `nest_member`: The member whose 160 m nest is read: `"m70"` (Sulafjorden) or `"m71"`
   (Oslofjord). Required.
@@ -55,6 +57,7 @@ Base.@kwdef mutable struct NorKystV3InitialStateConfig <: AbstractInitialStateCo
     data_root::String
     output_directory::String
     output_file::String = "initial_state.nc"
+    margin::Float64 = 0.05
     opendap_url::String = NORKYST_V3_OPENDAP_URL
     nest_member::String
     parent_member::String
@@ -114,7 +117,7 @@ function fetch_initial_state(target_grid, config::NorKystV3InitialStateConfig, d
             parent["depth"][:] == nest["depth"][:] ||
                 error("The nest and its parent have different depth levels.")
 
-            subset = subset_ranges(parent, x_domain(target_grid), y_domain(target_grid), config.parameters)
+            subset = subset_ranges(parent, download_box(target_grid, config.margin)..., config.parameters)
             coarse_x = Float64.(parent["X"][subset.ranges["X"]])
             coarse_y = Float64.(parent["Y"][subset.ranges["Y"]])
             fine_x = Float64.(nest["X"][:])

@@ -9,6 +9,7 @@ using Dates: DateTime, @dateformat_str
 import Dates
 using Downloads
 using NCDatasets
+using Oceananigans.Grids: x_domain, y_domain
 
 using ..Utils: with_retries
 using ..Regridding: ProjectedSourceGrid
@@ -265,6 +266,20 @@ struct NorKystSubset{M<:AbstractArray,S<:Tuple}
     spatial_dimensions::S
     parameters::Vector{String}
 end
+
+"""
+    download_box(target_grid, margin)
+
+The longitude/latitude box a download covers: `target_grid`'s own, widened by `margin` degrees on
+every side. Norkyst's grid is rotated against longitude and latitude, so the source cells whose
+centres fall inside the bare box leave the box's corners outside their bounding box: on the
+Oslofjord box the 800 m run's ended 535-617 m short of the south-west corner, whose wet cells then
+interpolated to 0.
+"""
+download_box(target_grid, margin) = (
+    (x_domain(target_grid)[1] - margin, x_domain(target_grid)[2] + margin),
+    (y_domain(target_grid)[1] - margin, y_domain(target_grid)[2] + margin),
+)
 
 """
     subset_ranges(ds, longitude, latitude, parameters)

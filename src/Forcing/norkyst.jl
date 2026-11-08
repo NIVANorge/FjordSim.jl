@@ -5,7 +5,6 @@
 # in `Forcing.jl` and `Regridding.jl`, and what is NorKyst's own — its endpoints, grid and subset
 # I/O — from `src/DataSources/NorKyst.jl`.
 
-using Oceananigans.Grids: x_domain, y_domain
 
 using ..NorKyst:
     NORKYST_CATALOG_URL,
@@ -15,6 +14,7 @@ using ..NorKyst:
     list_opendap_files,
     open_remote,
     subset_ranges,
+    download_box,
     time_length,
     define_output_file,
     write_parameter_chunk!,
@@ -51,6 +51,8 @@ overrides `data_root` for that entry only.
 - `plot_file`: Name of the diagnostic forcing plot.
 - `architecture`: Where `prepare_forcing` interpolates — `:auto`, `:cpu` or `:gpu`, resolved by
   `interpolation_architecture`. `:auto` keeps one config usable on a GPU machine and a laptop.
+- `margin`: Degrees of longitude/latitude the download reaches past the domain on every side, so
+  the rotated source grid covers its corners.
 - `catalog_url`: THREDDS catalog URL listing available files.
 - `opendap_url`: OPeNDAP base URL for streaming data.
 - `parameters`: Variable names to extract (e.g. `["temperature", "salinity"]`). Required.
@@ -68,6 +70,7 @@ Base.@kwdef mutable struct NorKystConfig <: AbstractNorKystConfig
     output_file::String = "forcing.nc"
     plot_file::String = "forcing.png"
     architecture::Symbol = :auto
+    margin::Float64 = 0.05
     catalog_url::String = NORKYST_CATALOG_URL
     opendap_url::String = NORKYST_OPENDAP_URL
     parameters::Vector{String}
@@ -182,7 +185,7 @@ function process_month(year, month, target_grid, config::NorKystConfig; files = 
             @info "    Opened: $url"
         end
 
-        longitude, latitude = x_domain(target_grid), y_domain(target_grid)
+        longitude, latitude = download_box(target_grid, config.margin)
         subset = subset_ranges(first(datasets), longitude, latitude, config.parameters)
         total_time = sum(time_length, datasets)
 

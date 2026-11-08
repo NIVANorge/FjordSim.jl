@@ -4,7 +4,6 @@
 # what is different — where the files are, what they are called, and that a day is 24 hourly
 # records rather than one daily mean.
 
-using Oceananigans.Grids: x_domain, y_domain
 
 using ..NorKyst:
     NORKYST_HINDCAST_CATALOG_URL,
@@ -13,6 +12,7 @@ using ..NorKyst:
     list_hindcast_files,
     open_remote,
     subset_ranges,
+    download_box,
     time_dimension,
     define_output_file,
     write_parameter_chunk!,
@@ -55,6 +55,8 @@ Two differences are worth knowing before using it:
 - `output_file`: Name of the prepared forcing NetCDF written by `prepare_forcing`.
 - `plot_file`: Name of the diagnostic forcing plot.
 - `architecture`: Where `prepare_forcing` interpolates — `:auto`, `:cpu` or `:gpu`.
+- `margin`: Degrees of longitude/latitude the download reaches past the domain on every side, so
+  the rotated source grid covers its corners.
 - `catalog_url`: THREDDS catalog base URL; `YYYY/MM/catalog.xml` is appended per month.
 - `opendap_url`: OPeNDAP base URL; `YYYY/MM/<file>` is appended per day.
 - `parameters`: Variable names to extract. Required.
@@ -66,6 +68,7 @@ Base.@kwdef mutable struct NorKystHindcastConfig <: AbstractNorKystConfig
     output_file::String = "forcing.nc"
     plot_file::String = "forcing.png"
     architecture::Symbol = :auto
+    margin::Float64 = 0.05
     catalog_url::String = NORKYST_HINDCAST_CATALOG_URL
     opendap_url::String = NORKYST_HINDCAST_OPENDAP_URL
     parameters::Vector{String}
@@ -179,7 +182,7 @@ function process_hindcast_month(year, month, target_grid, config::NorKystHindcas
             return nothing
         end
 
-        longitude, latitude = x_domain(target_grid), y_domain(target_grid)
+        longitude, latitude = download_box(target_grid, config.margin)
         spatial_subset = subset_ranges(first(datasets), longitude, latitude, config.parameters)
         time_name = time_dimension(first(datasets))
 

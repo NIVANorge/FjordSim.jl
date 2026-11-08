@@ -17,10 +17,6 @@
 - The run of stamp 20261107T210205 started before `CastCorrectedInitialState`: its sill-basin water
   starts 1–3 g/kg too salty and about 2 °C too cold, and is renewed only slowly (Ep1 at 120 m:
   34.1 to 33.9 g/kg from October to January, the casts 32.9).
-- The initial state has T = S = 0 in 20 wet cells: the south-west corner of the open edge, i 1–2,
-  j 1, the top ten levels. Those nodes lie 535–617 m west of the downloaded Norkyst subset (see
-  "Downloads" below), where the interpolation returns 0; no level of their columns is covered, so
-  `TargetFill` leaves them.
 - In November 2024 – January 2025 the top 5 m are 3.9 g/kg too salty against the NIVA casts, and
   the 25 m − 1 m salinity difference 2.9 g/kg too weak. Norkyst has the same error (+3.8 g/kg); the
   cause, river input, mixing or the boundary, is unknown. In the Inner Oslofjord the top 5 m are
@@ -79,15 +75,6 @@
 - The run is not scored against NIVA's Mjøsa monitoring profiles (Skreia, Brøttum, Furnes) in
   Vannmiljø. Unchecked: the Vorma outlet's mean against the ~344 m³/s at Ertesekken, η against the
   120.3–123.0 m observed at Hamar in 2025, and whether T stays smooth in the outlet's columns.
-
-## Downloads
-
-- The Norkyst initial-state and forcing downloads (`NorKystV3InitialStateConfig`,
-  `NorKystInitialStateConfig`, `NorKystConfig`, `NorKystHindcastConfig`) take the bounding box of the
-  source cells whose centres lie inside the target's longitude–latitude box, with no margin. On the
-  rotated Norkyst grid the box's corners can lie outside it, and a wet target cell there
-  interpolates beyond the subset to 0 (Oslofjord, above). The boundary-data configs have a `margin`
-  for this.
 
 ## Design
 

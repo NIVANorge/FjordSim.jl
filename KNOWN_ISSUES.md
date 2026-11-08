@@ -9,6 +9,33 @@
 - `validate_simulation` has no CTD observations for 2024–2026: the cached NIVA exports are
   2014-15. Kartverket water level it fetches itself.
 - `oslofjorden_npzd.jl` runs 2024–2026 with nutrient profiles measured in 2020.
+- No sea ice. `SlabSeaIce` (no drift) grew runaway ice on this setup, so it runs
+  `FreezingLimitedOceanTemperature`, which clamps every level at freezing and discards the heat: no
+  ice insulates the surface and no melt freshens it. In January 2025 the surface is 0.3–2.6 g/kg
+  saltier than the slab-ice run where that run sat at freezing, and 1729 surface cells sit at
+  freezing on 6 Jan against its 473. The slab-ice runs are archived as `oslofjorden_2026-11-06`,
+  `oslofjorden_2026-11-07` and `oslofjorden_2026-11-07-2`:
+  - The cause is WENO's fallback at a boundary. Oceananigans' default `WENO()` drops to order 3
+    and then to `Centered(order=2)` on faces too close to land, the seabed or the surface to fit
+    its stencil. A centred face exports the mean of the two cells, so flow out of a cell colder than
+    its neighbour removes heat the cell does not have, and the frazil reset turns the deficit into
+    ice. At Larvik this happened on horizontal faces beside land: 305 m of ice by April 2025 at
+    (17, 61) in the Numedalslågen channel, fixed by upwinding coastal columns (`narrow_cells`),
+    after which Larvik peaked at 0.19 m.
+  - At Svelvik it happens on the face under the top cell, which `RiverMouthAdvection` leaves to
+    WENO. Ice in (147, 458) and (148, 458), 4 m and 2 m deep beside the channel, grew from 16 to
+    93 cm on 10–16 January 2025. A 1 m fresh top layer (S 2–3) sits at freezing over water 6–7 K
+    warmer (S 22–28), and the converging flow sinks out of it at 2–6·10⁻⁴ m/s. Replayed on the
+    daily snapshots of 11–13 January, every downwelling face under a top cell carried exactly the
+    two-cell mean, and every top cell at freezing in i 146–148, j 452–461 was cooled by 7–121 K/day
+    while horizontal advection mostly warmed it. With `WENO(FT; minimum_buffer_upwind_order = 1)`,
+    which falls back to first-order upwind instead, 14 of those 16 are no longer cooled. That is
+    untested in a run. Under the clamp the same sink is discarded instead of growing ice. The ice
+    also outlived the warm water because NumericalEarth's default `ThreeEquationHeatFlux` uses a
+    fixed friction velocity of 0.002 m/s.
+- The same fallback takes two bottom cells to −1.90 °C in October: (346, 39, 24) at 64 m, a corner,
+  and (344, 35, 27) at 49 m, a dead end draining through its top face. The coastal rule misses
+  them: their surface columns have four wet neighbours, and it upwinds only horizontal faces.
 
 ## `examples/mjosa/mjosa.jl`
 

@@ -1,10 +1,11 @@
 # The Oslofjord setup: Geonorge Sjøkart Dybdedata bathymetry, an operational Norkyst-v3 initial
-# state (its 160 m Oslofjord nest, filled out by the 800 m reference run), NVE rivers, hourly
-# operational Norkyst-v3 data on the open southern edge with its tide corrected to Viker, NORA3
-# atmosphere with snowfall, and the water held at or above freezing, on a 424 x 681 x 39 grid of
-# 160 m cells covering 10.00-11.20°E, 58.95-59.93°N. It runs from 1 October 2024 to 1 October
-# 2026, two winters, and writes what `validate_simulation` scores it with: tide gauges, CTD
-# stations, current moorings, a section along the Drammensfjord and fixed-point temperature sites.
+# state (its 160 m Oslofjord nest, filled out by the 800 m reference run, with NIVA casts over the
+# sill basins), NVE rivers, hourly operational Norkyst-v3 data on the open southern edge with its
+# tide corrected to Viker, NORA3 atmosphere with snowfall, and the water held at or above freezing,
+# on a 424 x 681 x 39 grid of 160 m cells covering 10.00-11.20°E, 58.95-59.93°N. It runs from 1
+# October 2024 to 1 October 2026, two winters, and writes what `validate_simulation` scores it with:
+# tide gauges, CTD stations, current moorings, a section along the Drammensfjord and fixed-point
+# temperature sites.
 #
 # The box is the one MET Norway's ROMS model FjordOs CL covers (Røed et al., *A high-resolution,
 # curvilinear ROMS model for the Oslofjord*, METreport 4/2016, evaluated in Hjelmervik et al.,
@@ -109,11 +110,11 @@ using Oceananigans:
     WENOVectorInvariant
 using Oceananigans.TurbulenceClosures: HorizontalScalarBiharmonicDiffusivity
 using Oceananigans.Units: day, days, hour, hours, minutes, second
-using Dates: DateTime, Dates, Month, Second
+using Dates: DateTime, Dates, Day, Month, Second
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
-using FjordSim: BoundaryData, Grids, Plotting
-using FjordSim.Configs: AbstractBoundaryDataConfig
-using FjordSim.Validation: TIDAL_CONSTITUENTS
+using FjordSim: BoundaryData, Grids, InitialState, Plotting
+using FjordSim.Configs: AbstractBoundaryDataConfig, AbstractInitialStateConfig
+using FjordSim.Validation: CsvObservations, TIDAL_CONSTITUENTS, observation_series
 using LinearAlgebra: qr
 using NCDatasets: NCDataset
 using NumericalEarth: FreezingLimitedOceanTemperature
@@ -288,6 +289,27 @@ const OSLOFJORD_TEMPERATURE_STATIONS = [
     Station(name = "Sjøstrand",    longitude = 10.471, latitude = 59.811),
     Station(name = "Hvalstrand",   longitude = 10.483, latitude = 59.837),
     Station(name = "Storøyodden",  longitude = 10.630, latitude = 59.894),
+]
+
+# The NIVA stations whose casts start the water below the Drøbak and Svelvik sills
+# (`CastCorrectedInitialState`), at AquaMonitor's positions
+# (`observations/niva_ctd_2024-2025/stations.csv`).
+# Exact. Every one has a cast in the 14 days before `start_date` and lies in that water.
+const OSLOFJORD_BASIN_CAST_STATIONS = [
+    Station(name = "D-2", longitude = 10.420983, latitude = 59.627766),  # Drammensfjord
+    Station(name = "D-3", longitude = 10.313517, latitude = 59.705883),  # Drammensfjord
+    Station(name = "Hm4", longitude = 10.612483, latitude = 59.675934),  # Oscarsborg
+    Station(name = "En-1", longitude = 10.553669, latitude = 59.679659), # Engene
+    Station(name = "Gk1", longitude = 10.543083, latitude = 59.701218),  # Gråøyrenna
+    Station(name = "Gl2", longitude = 10.579634, latitude = 59.717384),  # Håøya
+    Station(name = "Fl1", longitude = 10.574734, latitude = 59.754066),  # Vestfjorden
+    Station(name = "Ej1", longitude = 10.516217, latitude = 59.793167),  # VEAS
+    Station(name = "Dk1", longitude = 10.569384, latitude = 59.814999),  # Steilene
+    Station(name = "Dm1", longitude = 10.617300, latitude = 59.827200),  # Steilene Nord
+    Station(name = "Ep1", longitude = 10.723783, latitude = 59.786301),  # Bunnefjorden
+    Station(name = "Cp2", longitude = 10.701384, latitude = 59.865002),  # Oksvalflua
+    Station(name = "Cq1", longitude = 10.736667, latitude = 59.872849),  # Bekkelagsbassenget
+    Station(name = "Bn1", longitude = 10.646733, latitude = 59.880634),  # Lysakerfjorden
 ]
 
 # --- The boundary tide ------------------------------------------------------------------------
@@ -476,6 +498,232 @@ function correct_boundary_tide!(path, edges, gains)
     return path
 end
 
+# --- The basin water ---------------------------------------------------------------------------
+#
+# The 160 m Norkyst-v3 nest is 76-104 m deep within 1.5 km of D-2, Dk1, Fl1 and Ep1, whose casts
+# reach 98-166 m, and its z-levels end at 65-100 m there. The regrid carries each basin's deepest
+# covered water down below that (`Regridding.TargetFill`), but that water is itself wrong. Regridded
+# for 2024-10-01, Bunnefjorden (Ep1) has 33.90 g/kg and 6.18 °C at 120 m against 32.91 and 8.45 in
+# the cast of 2024-09-26, and 33.47 g/kg and 6.20 °C at 60 m against 32.55 and 8.12; the Drammensfjord
+# (D-2) 33.53 g/kg and 7.51 °C at 100 m against 31.65 and 8.09 on 2024-09-20. These basins are
+# renewed only by occasional inflows: started from Norkyst's state, Ep1 at 120 m freshened by 0.2 g/kg
+# from October 2024 to January 2025 (run of stamp 20261107T210205). `CastCorrectedInitialState` gives
+# the columns over the basins the NIVA casts nearest `start_date` instead, those of 2024-09-20 and
+# -26, which the casts of the following weeks match within 0.1 g/kg and 0.2 °C below 50 m. The outer
+# fjord's trapped pockets (S-9, MO-2, SF-3) keep Norkyst's water, which the casts there match within
+# 0.1 g/kg below 50 m.
+
+"""
+    CastCorrectedInitialState(source, casts, maximum_cast_offset)
+
+`source`'s initial state with T and S in the columns over the sill basins replaced by observed casts.
+
+`prepare_initial_state` writes the file exactly as `source` would, then corrects it in place
+(`correct_basin_water!`). Every other hook is `source`'s: where the file is, its date, the download.
+`casts` names the stations and where their casts are; a station is used when it has a cast within
+`maximum_cast_offset` of the start.
+"""
+struct CastCorrectedInitialState{C <: AbstractInitialStateConfig} <: AbstractInitialStateConfig
+    source::C
+    casts::CsvObservations
+    maximum_cast_offset::Day
+end
+
+InitialState.initial_state_path(config::CastCorrectedInitialState) =
+    InitialState.initial_state_path(config.source)
+InitialState.initial_state_directory(config::CastCorrectedInitialState) =
+    InitialState.initial_state_directory(config.source)
+InitialState.initial_state_date(config::CastCorrectedInitialState) =
+    InitialState.initial_state_date(config.source)
+InitialState.fetch_initial_state(target_grid, config::CastCorrectedInitialState, date) =
+    InitialState.fetch_initial_state(target_grid, config.source, date)
+
+function InitialState.regrid_initial_state(
+    target_grid,
+    config::CastCorrectedInitialState,
+    date;
+    edges = nothing,
+)
+    result = InitialState.regrid_initial_state(target_grid, config.source, date; edges)
+    correct_basin_water!(result.output_file, edges, config, date)
+    return result
+end
+
+"""
+    trapped_water(wet, edges)
+
+Label the water below a sill: at each level, the wet cells that cannot reach an open edge through
+cells wet at that level. `0` where the water is open, otherwise a number per horizontally connected
+group of such cells at a level.
+"""
+function trapped_water(wet, edges)
+    Nx, Ny, Nz = size(wet)
+    labels = zeros(Int, Nx, Ny, Nz)
+    neighbours = ((1, 0), (-1, 0), (0, 1), (0, -1))
+    on_edge(i, j) = (:south in edges && j == 1) || (:north in edges && j == Ny) ||
+                    (:west in edges && i == 1) || (:east in edges && i == Nx)
+    # Every cell reachable from `queue` through wet cells of level `k` not yet `marked`, marked.
+    function spread!(marked, queue, k)
+        while !isempty(queue)
+            i, j = pop!(queue)
+            for (di, dj) in neighbours
+                a, b = i + di, j + dj
+                (1 <= a <= Nx && 1 <= b <= Ny && wet[a, b, k] && marked[a, b] == 0) || continue
+                marked[a, b] = marked[i, j]
+                push!(queue, (a, b))
+            end
+        end
+        return marked
+    end
+    group = 0
+    for k in 1:Nz
+        level = zeros(Int, Nx, Ny)
+        open = [(i, j) for i in 1:Nx, j in 1:Ny if wet[i, j, k] && on_edge(i, j)]
+        foreach(c -> level[c...] = -1, open)
+        spread!(level, open, k)
+        for i in 1:Nx, j in 1:Ny
+            (wet[i, j, k] && level[i, j] == 0) || continue
+            group += 1
+            level[i, j] = group
+            spread!(level, [(i, j)], k)
+        end
+        labels[:, :, k] = max.(level, 0)
+    end
+    return labels
+end
+
+"""
+    nearest_cast(casts, station, variable, date, offset)
+
+The cast of `variable` at `station` nearest `date` within `offset`, as `(time, depths, values)`
+without its missing samples, or `nothing`.
+"""
+function nearest_cast(casts, station, variable, date, offset)
+    series = observation_series(casts, station, variable; window = (date - offset, date + offset))
+    isnothing(series) && return nothing
+    n = argmin(abs.(series.times .- date))
+    keep = findall(isfinite, series.values[n, :])
+    isempty(keep) && return nothing
+    return (time = series.times[n], depths = series.depths[keep], values = series.values[n, keep])
+end
+
+"The cast's value at `depth`, linear between samples and the nearest sample beyond them."
+function cast_value(cast, depth)
+    d, v = cast.depths, cast.values
+    depth <= first(d) && return first(v)
+    depth >= last(d) && return last(v)
+    n = searchsortedlast(d, depth)
+    w = (depth - d[n]) / (d[n+1] - d[n])
+    return (1 - w) * v[n] + w * v[n+1]
+end
+
+"""
+    correct_basin_water!(path, edges, config, date)
+
+Replace T and S in the prepared initial state at `path`, whole columns, with the cast of the station
+nearest each column: in every column that reaches water below a sill (`trapped_water`) whose trapped
+group, at its level or a shallower one, holds one of `config.casts`' stations; and, up to
+`fringe_cells` cells from those, in every column with no open water at or below the corrected
+neighbour's topmost trapped cell: the coastal columns too shallow to reach it, and pockets trapped
+apart from every station, such as the Oslo harbour basins. A station's column is the deepest wet one
+within a cell of its position. Other columns keep `config.source`'s values. A file this has already
+corrected is refused.
+
+Whole columns, because Norkyst's water above the sills is 2-3 g/kg saltier than the casts: kept above
+the cast water it lay up to 6.5 kg/m³ denser than the water below it, and blended linearly into it,
+it gave twice as many inversions. The fringe, because the coastal columns otherwise kept Norkyst's
+surface water, 6.9 g/kg (median) saltier than the corrected columns beside them.
+"""
+function correct_basin_water!(path, edges, config::CastCorrectedInitialState, date; fringe_cells = 8)
+    isempty(something(edges, Symbol[])) && error("Telling trapped water from open needs an open edge.")
+    NCDataset(path, "a") do ds
+        haskey(ds.attrib, "basin_correction") && error(
+            "$path already has its basin water corrected ($(ds.attrib["basin_correction"])). " *
+            "Re-run `prepare_initial_state` to start from the uncorrected state.",
+        )
+        longitude, latitude, depth = ds["Nx"][:], ds["Ny"][:], -ds["Nz"][:]
+        T = Float32.(coalesce.(ds["T"][:, :, :, 1], NaN32))
+        S = Float32.(coalesce.(ds["S"][:, :, :, 1], NaN32))
+        wet = isfinite.(T)
+        labels = trapped_water(wet, edges)
+
+        stations = []
+        for station in config.casts.stations
+            casts = [nearest_cast(config.casts, station, v, date, config.maximum_cast_offset)
+                     for v in ("T", "S")]
+            if any(isnothing, casts)
+                @warn "No T and S cast at $(station.name) within $(config.maximum_cast_offset) of $date; " *
+                      "not used"
+                continue
+            end
+            i0 = argmin(abs.(longitude .- station.longitude))
+            j0 = argmin(abs.(latitude .- station.latitude))
+            column = argmax(c -> count(@view wet[c..., :]),
+                            [(i, j) for i in max(i0 - 1, 1):min(i0 + 1, length(longitude)),
+                                        j in max(j0 - 1, 1):min(j0 + 1, length(latitude))])
+            push!(stations, (; station, column, T = casts[1], S = casts[2]))
+        end
+
+        distance(s, i, j) =
+            hypot((longitude[i] - s.station.longitude) * cosd(latitude[j]), latitude[j] - s.station.latitude)
+        Nx, Ny, Nz = size(wet)
+        # Per column: the station whose cast it takes (0: none) and the depth of its topmost trapped cell.
+        assigned = zeros(Int, Nx, Ny)
+        top_depth = fill(Inf, Nx, Ny)
+        for j in 1:Ny, i in 1:Nx
+            top = findlast(>(0), @view labels[i, j, :])
+            isnothing(top) && continue
+            # The stations in the top trapped cell's group, at its level or the nearest shallower one
+            # that has any.
+            candidates = Int[]
+            for level in top:Nz
+                labels[i, j, level] == 0 && break
+                candidates =
+                    [n for (n, s) in enumerate(stations) if labels[s.column..., level] == labels[i, j, level]]
+                isempty(candidates) || break
+            end
+            isempty(candidates) && continue
+            assigned[i, j] = argmin(m -> distance(stations[m], i, j), candidates)
+            top_depth[i, j] = depth[top]
+        end
+        closed_below(i, j, d) = all(k -> !wet[i, j, k] || depth[k] < d || labels[i, j, k] > 0, 1:Nz)
+        front = [(i, j) for j in 1:Ny, i in 1:Nx if assigned[i, j] > 0]
+        for _ in 1:fringe_cells
+            next = Tuple{Int,Int}[]
+            for (i, j) in front, (a, b) in ((i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1))
+                (1 <= a <= Nx && 1 <= b <= Ny && assigned[a, b] == 0 && wet[a, b, Nz]) || continue
+                closed_below(a, b, top_depth[i, j]) || continue
+                assigned[a, b] = assigned[i, j]
+                top_depth[a, b] = top_depth[i, j]
+                push!(next, (a, b))
+            end
+            front = next
+        end
+
+        corrected = zeros(Int, length(stations))
+        for j in 1:Ny, i in 1:Nx
+            n = assigned[i, j]
+            n == 0 && continue
+            for k in 1:Nz
+                wet[i, j, k] || continue
+                T[i, j, k] = cast_value(stations[n].T, depth[k])
+                S[i, j, k] = cast_value(stations[n].S, depth[k])
+                corrected[n] += 1
+            end
+        end
+
+        ds["T"][:, :, :, 1] = T
+        ds["S"][:, :, :, 1] = S
+        used = ["$(s.station.name) $(Dates.Date(s.T.time))" for s in stations]
+        ds.attrib["basin_correction"] =
+            "T and S in the columns over the sill basins from the casts of " * join(used, ", ")
+        for (s, n) in zip(stations, corrected)
+            @info "Basin water from the $(Dates.Date(s.T.time)) cast at $(s.station.name): $n cells"
+        end
+    end
+    return path
+end
+
 
 data_root = fjord_data_root("oslofjorden")
 start_date = DateTime(2024, 10, 1)
@@ -615,14 +863,29 @@ FjordConfig(
     # two-way parent is published only from 2024-11-23, after `start_date`. On 2024-10-01T00 the
     # two differ at the seam by a median 1.0 g/kg in surface salinity and 0.15 °C in temperature,
     # against 0.03 g/kg and 0.01 °C between neighbouring cells elsewhere.
-    initial_state_config = NorKystV3InitialStateConfig(
-        data_root        = data_root,
-        output_directory = "norkyst_v3_initial",
-        output_file      = "initial_state.nc",
-        nest_member      = "m71",
-        parent_member    = "m00",
-        parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
-        start_date       = start_date,
+    #
+    # Over the Drøbak and Svelvik sill basins the water is the NIVA casts' instead
+    # (`CastCorrectedInitialState`, "The basin water" above), from the AquaMonitor export of
+    # projects 12914 and 6302 (`export_aquamonitor_ctd.py` in that folder), which has to be in place
+    # before `prepare_initial_state`. Casts are practical salinity and in-situ temperature, taken as
+    # S and T as Norkyst's are.
+    initial_state_config = CastCorrectedInitialState(
+        NorKystV3InitialStateConfig(
+            data_root        = data_root,
+            output_directory = "norkyst_v3_initial",
+            output_file      = "initial_state.nc",
+            nest_member      = "m71",
+            parent_member    = "m00",
+            parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
+            start_date       = start_date,
+        ),
+        CsvObservations(
+            data_root        = data_root,
+            output_directory = joinpath("observations", "niva_ctd_2024-2025"),
+            variables        = ["T", "S"],
+            stations         = OSLOFJORD_BASIN_CAST_STATIONS,
+        ),
+        Day(14),
     ),
     # NVERiversConfig overloads river_locations, river_series, river_discharge and
     # fetch_rivers (all required, hooks add_rivers calls), all dispatching on this

@@ -6,8 +6,25 @@
   deepest sounding is 470 m) were measured on 193 m cells, not on the 160 m grid.
 - The eight gauge overrides were chosen for 2020. Whether each has daily values on HydAPI over
   2024–2026 is unchecked.
-- `validate_simulation` has no CTD observations for 2024–2026: the cached NIVA exports are
-  2014-15. Kartverket water level it fetches itself.
+- `validate_simulation` scores only Kartverket water level, which it fetches itself. The NIVA casts
+  of June 2024 – December 2025 are exported to `observations/niva_ctd_2024-2025`, but it reads them
+  only from a `CsvObservations` passed to it. AquaMonitor holds no 2026 CTD casts yet, only bottle
+  chemistry (checked 2026-11-08).
+- `CastCorrectedInitialState` is untested in a run. It leaves 121 surface cell pairs between cast
+  and Norkyst columns, 6.3 g/kg apart (median), at the Drøbak and Svelvik sills and around inner-fjord
+  pockets it does not reach; the cast profiles add 3200 small density inversions (≤ 0.43 kg/m³,
+  against 1.31 without them).
+- The run of stamp 20261107T210205 started before `CastCorrectedInitialState`: its sill-basin water
+  starts 1–3 g/kg too salty and about 2 °C too cold, and is renewed only slowly (Ep1 at 120 m:
+  34.1 to 33.9 g/kg from October to January, the casts 32.9).
+- In November 2024 – January 2025 the top 5 m are 3.9 g/kg too salty against the NIVA casts, and
+  the 25 m − 1 m salinity difference 2.9 g/kg too weak. Norkyst has the same error (+3.8 g/kg); the
+  cause, river input, mixing or the boundary, is unknown.
+- The non-tidal water level has 60 % of the observed variance at all three gauges, as in Norkyst,
+  whose surge the open boundary carries in; the set-down of 9 December 2024 reached −0.25 m against
+  −0.6 m observed.
+- Single cells reach 29.6 °C (23 November 2024), with at most two above 25 °C on any day of
+  October 2024 – January 2025; which cells, and why, is unexamined.
 - `oslofjorden_npzd.jl` runs 2024–2026 with nutrient profiles measured in 2020.
 - No sea ice. `SlabSeaIce` (no drift) grew runaway ice on this setup, so it runs
   `FreezingLimitedOceanTemperature`, which clamps every level at freezing and discards the heat: no

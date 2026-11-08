@@ -191,7 +191,7 @@ const INNER_OSLOFJORD_STATIONS = [
 # A section along the Drammensfjord's deepest water, from the Drammenselva mouth (the river's own
 # cell in `rivers_nve.nc`) through the basin, over the Svelvik sill and down Sandebukta to the head of
 # Breiangen. Not an observation programme: it is there to show the basin's vertical mixing and its
-# renewal over the sill, the deep freshening `TODO.md` calls the main open problem. The
+# renewal over the sill, and the deep freshening the 2014-15 runs at 7e-6 showed. The
 # positions are cell centres of the deepest path through the 193 m grid's 39-level `bathymetry.nc`,
 # found by Dijkstra over wet cells with a step cost of distance / depth², every second cell of its
 # 150 plus the last and the sill's shallowest. On the 160 m grid each snaps to the nearest cell, and

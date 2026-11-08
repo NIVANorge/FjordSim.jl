@@ -185,8 +185,8 @@ FjordConfig(
             base = (
                 # CATKE takes `w★ = sqrt(max(minimum_tke, e))`, so this floor, not the
                 # prognostic TKE, sets κ = 0.098·e_min/N over most of the column.
-                # `oslofjorden.jl` has moved to 7e-7, measured there; whether this setup follows
-                # is open (TODO.md, "Vertical mixing is too strong").
+                # `oslofjorden.jl` has moved to 7e-7, measured there; this setup has not been
+                # run at 7e-7.
                 CATKEVerticalDiffusivity(FT; minimum_tke = 7e-6),
                 # A biharmonic coefficient is only meaningful against Δx⁴, and this grid's
                 # 99 m cell is a factor 14 smaller in Δx⁴ than Oslofjord's 193 m one. 1e3

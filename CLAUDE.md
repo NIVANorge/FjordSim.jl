@@ -14,7 +14,7 @@
 | [`docs/adding-a-source.md`](docs/adding-a-source.md) | adding a grid, bathymetry, forcing, river, boundary, atmosphere or observation source |
 | [`docs/setups.md`](docs/setups.md) | writing a new setup or changing a setup's parameters |
 | [`README.md`](README.md) | user-facing overview, quick start, `run_simulation` fields |
-| [`TODO.md`](TODO.md) | open work and the measurements behind it |
+| [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) | relying on a setup's results, or on a component working for a new kind of grid or writer |
 
 The `run-simulation` skill (`.claude/skills/run-simulation/`) is the checklist for running steps,
 and the `new-setup` skill (`.claude/skills/new-setup/`) the one for writing a new setup.
@@ -206,10 +206,10 @@ forcings.
   what the code does and why, and measured numbers with what they were measured on. Never the
   author's situation or the file's history: not "the FileGDB is already on this machine", "Lista
   has no run yet", "the 42 m layers this file had", "from your environment". A machine's state
-  belongs nowhere in the repo; a task's progress goes in `TODO.md`; history goes in the commit
+  belongs nowhere in the repo; an open problem goes in `KNOWN_ISSUES.md`; history goes in the commit
   message.
 
-## Writing docs, CLAUDE.md and TODO.md
+## Writing docs, CLAUDE.md and KNOWN_ISSUES.md
 
 - **No user- or account-specific information in any checked-in file** — no names, email addresses,
   personal account permissions ("this account cannot …"), local paths of one machine, or one
@@ -217,9 +217,9 @@ forcings.
   two Cloud Run jobs"), not who can do what. Personal facts and preferences go in Claude's memory.
 - **CLAUDE.md holds only what every task needs.** Procedures and rationale go in `docs/` or
   `gcp/README.md`, with a row in the docs table above; don't copy their content here.
-- **Remove completed items from `TODO.md`** when finishing them — don't tick them off and leave them.
-  If an open item needs a result the finished one produced, fold that result into the open item in a
-  line or two; the full record of what was done goes in the commit message.
+- **Remove fixed issues from `KNOWN_ISSUES.md`** when fixing them — don't mark them and leave them.
+  If an open issue needs a result the fix produced, fold that result into the open issue in a line
+  or two; the full record of what was done goes in the commit message.
 
 ## Common Pitfalls
 

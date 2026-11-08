@@ -31,5 +31,5 @@ relevant one first; this is the order to work through.
 5. **Watch it.** `gcp/fjordsim-gcp status`, `gcp/fjordsim-gcp logs <run-id>`; stop any monitoring
    loop you started once it's no longer needed.
 6. **After the run.** `gcp/fjordsim-gcp pull-results <name>`, archive the run (step 3), then
-   `julia --project -m FjordSim validate_simulation --config <config>`. Record findings and open
-   problems in `TODO.md`; remove the items the run completed.
+   `julia --project -m FjordSim validate_simulation --config <config>`. Record open problems in
+   `KNOWN_ISSUES.md`; remove the issues the run resolved.

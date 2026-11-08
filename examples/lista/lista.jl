@@ -70,7 +70,7 @@ stop_date = DateTime(2025, 10, 1)
 # cell, the raw Geonorge soundings reach below -433.5 m in only a few cells, all on the southern
 # open edge, and by at most about 9 m. A layer to -467 m would leave those as thin, isolated pits
 # beside the open boundary, the kind that sat at the freezing point for most of the Oslofjord
-# validation run (TODO.md › "Fill single-cell pits on open edges"). Cut at -433.5 m,
+# validation run, walled on three sides beside the edge. Cut at -433.5 m,
 # `PartialCellBottom` clamps them to the face, inside the boundary sponge. It also keeps `grid.Lz`,
 # which sets the barotropic substep through `sqrt(g·Lz)`, to water that exists.
 #

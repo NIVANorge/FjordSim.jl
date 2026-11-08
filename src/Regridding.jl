@@ -110,6 +110,36 @@ struct SourceFill
 end
 
 """
+    TargetFill
+
+Which target water cells the source does not reach, and where each takes its value from instead.
+
+`SourceFill` makes the source free of `NaN` by filling every masked source cell from the nearest
+valid one at the same depth; that serves the interpolation, but beyond the source's own coastline
+and below its own bottom the value it gives can come from water the target cell is not joined to.
+A basin deeper than the source behind a sill was filled with the water from outside the sill: on
+the Oslofjord, where the 160 m Norkyst-v3 nest is 76-104 m deep in basins whose casts reach 98-166 m,
+34.1 g/kg and 6.1 °C at 120 m in Bunnefjorden against 32.9 g/kg and 8.4 °C observed.
+
+So after the interpolation, a target cell below the source's bottom — one the source does not
+fully cover although it covers a shallower cell of the same column — is replaced: by the nearest
+cell of its own level that the source fully covers, nearest along a path through the target's own
+water at that level, or, if no such cell is joined to it at that level, by the cell above it. A basin
+deeper than the source behind a sill thus carries its own deepest covered water down rather than
+taking the water outside, while a cell on an open slope still takes the covered water at its own
+depth. A cell beyond the source's coastline, which no level of its column covers, keeps the
+interpolated value, as before.
+
+`cells` and `origins` are linear indices into the target array, in the order they are applied:
+level by level from the surface down, so a cell taking the one above it gets that cell's final
+value.
+"""
+struct TargetFill
+    cells::Vector{Int}
+    origins::Vector{Int}
+end
+
+"""
     SourceRecord
 
 One time record present in a downloaded source file.
@@ -150,7 +180,8 @@ end
     PreparedVariable
 
 Everything needed to write one forcing variable: where it comes from, the land mask and target
-nodes of its Oceananigans location, how to fill its source mask, and its relaxation lambdas.
+nodes of its Oceananigans location, how to fill its source mask and the target cells below the
+source's bottom, and its relaxation lambdas.
 
 `x` and `y` are the target nodes projected into the source coordinate system, held as 2D arrays
 so the interpolation kernel only indexes them.
@@ -171,24 +202,36 @@ struct PreparedVariable{N}
     y::Matrix{Float64}
     z::Vector{Float64}
     mask_fill::SourceFill
+    target_fill::TargetFill
     lambda::Array{Float32,3}
 end
 
 # A hand-written constructor because `Base.@kwdef`-style automatic conversion does not happen for a
 # *parametric* struct: the generated constructor keeps the declared field types in its signature, so
 # the `BitArray` `water_mask` returns would not match `Array{Bool,3}`.
-PreparedVariable(source_name, name, dimensions::NTuple{N,String}, mask, x, y, z, mask_fill, lambda) where {N} =
-    PreparedVariable{N}(
-        String(source_name),
-        String(name),
-        dimensions,
-        Array{Bool,3}(mask),
-        Matrix{Float64}(x),
-        Matrix{Float64}(y),
-        Vector{Float64}(z),
-        mask_fill,
-        Array{Float32,3}(lambda),
-    )
+PreparedVariable(
+    source_name,
+    name,
+    dimensions::NTuple{N,String},
+    mask,
+    x,
+    y,
+    z,
+    mask_fill,
+    target_fill,
+    lambda,
+) where {N} = PreparedVariable{N}(
+    String(source_name),
+    String(name),
+    dimensions,
+    Array{Bool,3}(mask),
+    Matrix{Float64}(x),
+    Matrix{Float64}(y),
+    Vector{Float64}(z),
+    mask_fill,
+    target_fill,
+    Array{Float32,3}(lambda),
+)
 
 """
     uniform_time_steps(records, spacing; max_gap, unit)
@@ -699,6 +742,78 @@ function fill_source!(slab, mask_fill::SourceFill)
     end
 
     return slab
+end
+
+"""
+    target_fill(source_grid, x, y, z, mask, valid)
+
+Build the `TargetFill` for target nodes `x`, `y`, `z` with water `mask`, on a CPU `source_grid`
+whose cells `valid` (as `source_validity` returns it) says hold data. A target cell counts as
+covered when the source validity, interpolated by the same kernel as the data, is 1: every corner
+it draws on is valid.
+"""
+function target_fill(source_grid, x, y, z, mask, valid)
+    validity = Field{Center,Center,Center}(source_grid)
+    set!(validity, reverse(Float32.(valid), dims = 3))
+    fill_halo_regions!(validity)
+    covered = zeros(Float32, size(mask))
+    interpolate_to_target!(covered, validity, x, y, z, mask, CPU())
+
+    Nx, Ny, Nz = size(mask)
+    index = LinearIndices(mask)
+    is_covered(i, j, k) = mask[i, j, k] && covered[i, j, k] >= 1 - 1.0f-4
+    cells = Int[]
+    origins = Int[]
+    origin = zeros(Int, Nx, Ny)
+    covered_above = falses(Nx, Ny)
+    queue = Tuple{Int,Int}[]
+    for k in Nz:-1:1
+        fill!(origin, 0)
+        empty!(queue)
+        for j in 1:Ny, i in 1:Nx
+            is_covered(i, j, k) || continue
+            origin[i, j] = index[i, j, k]
+            push!(queue, (i, j))
+        end
+        # Breadth first from every covered cell at once, through all of the level's water, so each
+        # cell below the source's bottom takes the nearest by path.
+        head = 1
+        while head <= length(queue)
+            i, j = queue[head]
+            head += 1
+            for (a, b) in ((i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1))
+                (1 <= a <= Nx && 1 <= b <= Ny && mask[a, b, k] && origin[a, b] == 0) || continue
+                origin[a, b] = origin[i, j]
+                push!(queue, (a, b))
+                covered_above[a, b] || continue
+                push!(cells, index[a, b, k])
+                push!(origins, origin[i, j])
+            end
+        end
+        for j in 1:Ny, i in 1:Nx
+            (mask[i, j, k] && origin[i, j] == 0 && covered_above[i, j] && mask[i, j, k+1]) || continue
+            push!(cells, index[i, j, k])
+            push!(origins, index[i, j, k+1])
+        end
+        for j in 1:Ny, i in 1:Nx
+            is_covered(i, j, k) && (covered_above[i, j] = true)
+        end
+    end
+
+    return TargetFill(cells, origins)
+end
+
+"""
+    fill_target!(output, target_fill::TargetFill)
+
+Replace the cells `target_fill` names in the interpolated `output`, a host array. Mutates and
+returns `output`.
+"""
+function fill_target!(output, target_fill::TargetFill)
+    for (cell, origin) in zip(target_fill.cells, target_fill.origins)
+        @inbounds output[cell] = output[origin]
+    end
+    return output
 end
 
 """

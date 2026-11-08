@@ -38,6 +38,8 @@ using ..Regridding:
     projected_target_nodes,
     source_validity,
     source_fill,
+    target_fill,
+    fill_target!,
     source_level_coordinate,
     source_field_grid,
     set_source_field!,
@@ -594,6 +596,8 @@ function prepared_variable(source_name, target_grid, source, filepath, config::A
 
     x, y = projected_target_nodes(longitude, latitude, source)
     shape = (length(longitude), length(latitude))
+    x, y = reshape(x, shape), reshape(y, shape)
+    z = source_level_coordinate(source, znodes(target_grid, LZ()))
     mask_fill = source_fill(source_validity(filepath, source_name))
     # Zero everywhere: the interior relaxation band is gone. See `prepare_forcing`.
     lambda = zeros(Float32, size(mask))
@@ -603,10 +607,11 @@ function prepared_variable(source_name, target_grid, source, filepath, config::A
         name,
         forcing_dimension_names(name),
         mask,
-        reshape(x, shape),
-        reshape(y, shape),
-        source_level_coordinate(source, znodes(target_grid, LZ())),
+        x,
+        y,
+        z,
         mask_fill,
+        target_fill(source_field_grid(source), x, y, z, mask, mask_fill.valid),
         lambda,
     )
 end
@@ -668,6 +673,7 @@ function write_forcing_file(filepath, target_grid, variables, steps, source, arc
                         device.output, source_field, device.x, device.y, device.z, device.mask, architecture,
                     )
                     copyto!(device.host, device.output)
+                    fill_target!(device.host, variable.target_fill)
                     ds[variable.name][:, :, :, index] = device.host
                     ds[variable.name*"_lambda"][:, :, :, index] = variable.lambda
                 end

@@ -2566,6 +2566,36 @@ end
         @test_throws ErrorException source_fill(falses(2, 2, 2))  # no data anywhere
         @test_throws DimensionMismatch fill_source!(zeros(Float32, 3, 3, 3), mask_fill)
 
+        # Below the source's bottom the target takes the nearest covered water of its own level
+        # joined to it through the target's water, and otherwise the water above it. A channel of
+        # six columns: a basin (1-2) behind a sill (3, surface only) and an open slope (4-6). The
+        # source has the basin and column 4 only to 10 m; its fill alone gives the basin's 20 m the
+        # outside water, 20 m of column 5.
+        target_fill = FjordSim.Regridding.target_fill
+        fill_target! = FjordSim.Regridding.fill_target!
+        set_source_field! = FjordSim.Regridding.set_source_field!
+        source = ProjectedSourceGrid(collect(1.0:6.0), [0.0, 1.0, 2.0], [0.0, 10.0, 20.0], "")
+        valid = trues(6, 3, 3)
+        valid[3, :, 2:3] .= false                    # the sill
+        valid[[1, 2, 4], :, 3] .= false              # the source's basin and slope end at 10 m
+        data = Float32[100level + i for i in 1:6, j in 1:3, level in 1:3]
+        data[.!valid] .= NaN32
+        mask_fill = source_fill(valid)
+        field = Field{Center,Center,Center}(source_field_grid(source))
+        set_source_field!(field, copy(data), mask_fill)
+        mask = trues(6, 1, 3)                        # target levels from the bottom up: 20, 10, 0 m
+        mask[3, 1, 1:2] .= false
+        x, y = reshape(collect(1.0:6.0), 6, 1), fill(1.0, 6, 1)
+        z = source_level_coordinate(source, [-20.0, -10.0, 0.0])
+        output = zeros(Float32, 6, 1, 3)
+        interpolate_to_target!(output, field, x, y, z, mask, CPU())
+        @test output[1, 1, 1] == 305.0f0             # the source fill alone: the water outside
+        fill_target!(output, target_fill(field.grid, x, y, z, mask, valid))
+        @test output[1, 1, 1] == 201.0f0 && output[2, 1, 1] == 202.0f0  # the basin's own, from above
+        @test output[4, 1, 1] == 305.0f0             # the slope: covered water of its level, joined
+        @test output[5, 1, 1] == 305.0f0 && output[6, 1, 1] == 306.0f0  # covered cells untouched
+        @test output[3, 1, 3] == 103.0f0             # the sill's surface, covered, untouched
+
         # `prepare_forcing` writes zero lambdas everywhere: the interior relaxation band it used to
         # carry along the open edge is gone, because the boundary itself now nudges towards hourly
         # exterior data and a band relaxing the same variables a few cells in would fight it.

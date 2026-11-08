@@ -289,6 +289,15 @@ file layout, and `Atmospheres` only the source-grid rotation.
   `LatitudeLongitudeGrid`, but NorKyst's grid is rotated ~59° here, so the source is expressed as a
   `RectilinearGrid` in projected metres (`ProjectedSourceGrid`). And `inpaint_mask!` cannot fill a
   fully masked level — on this subset it never terminates or writes zeros — hence `SourceFill`.
+- **Below the source's bottom the target is filled by connectivity, after the interpolation**
+  (`TargetFill`). `SourceFill` fills masked source cells from the nearest valid one at the same
+  depth, which for a basin deeper than the source behind a sill is the water outside the sill. So a
+  target cell the source covers at a shallower level of its column but not at its own takes the
+  nearest covered cell of its level joined to it through the target's water, or else the cell above:
+  the basin carries its own water down. It needs the target's water, which the source does not
+  have, hence a pass on the target. The map depends only on the masks, so it is built once per
+  variable and applied to every interpolated step. Cells beyond the source's coastline keep
+  `SourceFill`'s value.
 
 ### Time-axis padding
 

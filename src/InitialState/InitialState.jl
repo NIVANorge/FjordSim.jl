@@ -29,6 +29,8 @@ using ..Regridding:
     projected_target_nodes,
     source_validity,
     source_fill,
+    target_fill,
+    fill_target!,
     source_level_coordinate,
     source_field_grid,
     set_source_field!,
@@ -220,10 +222,12 @@ function write_initial_state_file(filepath, target_grid, names, record, source, 
                 x, y = projected_target_nodes(longitude, latitude, source)
                 z = source_level_coordinate(source, znodes(target_grid, LZ()))
 
+                x, y = reshape(x, shape), reshape(y, shape)
                 mask_fill = source_fill(source_validity(record.filepath, source_name))
                 set_source_field!(source_field, source_slab(reader, record, source_name), mask_fill)
                 output = zeros(Float32, size(mask))
-                interpolate_to_target!(output, source_field, reshape(x, shape), reshape(y, shape), z, mask, CPU())
+                interpolate_to_target!(output, source_field, x, y, z, mask, CPU())
+                fill_target!(output, target_fill(source_field.grid, x, y, z, mask, mask_fill.valid))
 
                 variable = defVar(ds, name, Float32, forcing_dimension_names(name);
                     deflatelevel = FORCING_DEFLATE_LEVEL, attrib = ["_FillValue" => NaN32])

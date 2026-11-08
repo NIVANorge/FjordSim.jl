@@ -64,6 +64,8 @@ using ..Regridding:
     source_validity,
     read_last_dimension,
     source_fill,
+    target_fill,
+    fill_target!,
     source_level_coordinate,
     source_field_grid,
     set_source_field!,
@@ -459,17 +461,21 @@ function prepared_boundary_variable(
 
     x, y = projected_target_nodes(longitude, latitude, source)
     shape = (length(longitude), length(latitude))
+    x, y = reshape(x, shape), reshape(y, shape)
     z = surface ? [SURFACE_TARGET_DEPTH] : source_level_coordinate(source, znodes(target_grid, Center()))
+    mask_fill = source_fill(source_validity(filepath, source_name))
+    source_grid = surface ? surface_source_field_grid(source) : source_field_grid(source)
 
     return PreparedVariable(
         source_name,
         boundary_variable_name(edge, name),
         boundary_dimension_names(Val(edge), name),
         mask,
-        reshape(x, shape),
-        reshape(y, shape),
+        x,
+        y,
         z,
-        source_fill(source_validity(filepath, source_name)),
+        mask_fill,
+        target_fill(source_grid, x, y, z, mask, mask_fill.valid),
         zeros(Float32, size(mask)),
     )
 end
@@ -656,6 +662,7 @@ function write_boundaries_file(
                         device.output, source_field, device.x, device.y, device.z, device.mask, architecture,
                     )
                     copyto!(device.host, device.output)
+                    fill_target!(device.host, variable.target_fill)
                     ds[variable.name][ntuple(_ -> Colon(), length(variable.dimensions) - 1)..., index] =
                         reshape(device.host, count_along_dimensions(variable))
                 end

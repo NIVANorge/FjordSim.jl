@@ -19,17 +19,26 @@
   34.1 to 33.9 g/kg from October to January, the casts 32.9).
 - In November 2024 – January 2025 the top 5 m are 3.9 g/kg too salty against the NIVA casts, and
   the 25 m − 1 m salinity difference 2.9 g/kg too weak. Norkyst has the same error (+3.8 g/kg); the
-  cause, river input, mixing or the boundary, is unknown. In the Inner Oslofjord the top 5 m are
-  also 1.2 °C too warm, where Norkyst is within 0.1 °C.
-- The non-tidal water level has 60 % of the observed variance at all three gauges, as in Norkyst,
-  whose surge the open boundary carries in; the set-down of 9 December 2024 reached −0.25 m against
-  −0.6 m observed. M4 is half the observed (0.6–1.6 cm against 1.2–2.5) and 31–46° early; the other
-  constituents are within 0.5 cm.
+  cause, river input, mixing or the boundary, is unknown. IMR's NorFjords 160 m hindcast (ROMS, GLS
+  mixing) is saltier still: on the casts all three reach, the November top 5 m are +4.5 g/kg in
+  FjordSim, +5.2 in Norkyst and +6.7 in NorFjords, so FjordSim's mixing is the least likely cause.
+  In the Inner Oslofjord the top 5 m are also 1.2 °C too warm, where Norkyst is within 0.1 °C.
+- From February to April 2025 the water at 20–50 m is 1.0–1.5 °C too cold. Norkyst and NorFjords
+  are 0.7–1.3 °C too cold there too, NorFjords under AROME and GLS mixing, so it does not point at
+  NORA3 or CATKE.
+- The non-tidal water level is too weak at all three gauges: as daily means over November 2024 –
+  September 2025 it has 66–67 % of the observed standard deviation, Norkyst 61–62 % and NorFjords,
+  with another open boundary, 87–88 %. The missing surge is in Norkyst's sea level, which the open
+  boundary carries in; the set-down of 9 December 2024 reached −0.25 m against −0.6 m observed. M4
+  is half the observed (0.6–1.6 cm against 1.2–2.5) and 31–46° early; the other constituents are
+  within 0.5 cm.
 - The summer heat stays in the top metre. In the heat wave of 15–29 July 2025 up to 48 088 top
   cells exceed 25 °C (21 July), the warmest 29–33.3 °C in columns two to six cells (to 9 m) deep,
   several of them river water (1–6 g/kg). The casts of 21–22 July read 24 °C uniform to 2.5 m;
   FjordSim is 0.9–1.3 °C warmer at 0.5 m and 3.1–3.5 °C colder at 2.5 m (Gk1, Bl4), and its 5–20 m
-  layer is 0.8–1.8 °C too cold in June–September, more than Norkyst's except in July. Before July
+  layer is 0.8–1.8 °C too cold in June–September, more than Norkyst's except in July. In July
+  Norkyst and NorFjords are as cold or colder there (−1.9 and −3.7 °C against −1.8) without the hot
+  top metre, so that layer's cold is not only heat held at the surface. Before July
   at most seven cells are above 25 °C on a day; the 29.6 °C cell of 23 November 2024 is unexamined.
 - The `:hydrography` station writer's list is the 2014–15 programme's: OF-1, OF-5 and SF-1 have no
   casts in 2024–2025, while the programme's SF-3, VAL-1, BO-1, I-1, I-4, KF-1 and SAN-5 have no

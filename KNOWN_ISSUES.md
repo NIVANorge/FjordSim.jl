@@ -25,8 +25,12 @@
   whose surge the open boundary carries in; the set-down of 9 December 2024 reached −0.25 m against
   −0.6 m observed. M4 is half the observed (0.6–1.6 cm against 1.2–2.5) and 31–46° early; the other
   constituents are within 0.5 cm.
-- Single cells reach 29.6 °C (23 November 2024), with at most two above 25 °C on any day of
-  October 2024 – January 2025; which cells, and why, is unexamined.
+- The summer heat stays in the top metre. In the heat wave of 15–29 July 2025 up to 48 088 top
+  cells exceed 25 °C (21 July), the warmest 29–33.3 °C in columns two to six cells (to 9 m) deep,
+  several of them river water (1–6 g/kg). The casts of 21–22 July read 24 °C uniform to 2.5 m;
+  FjordSim is 0.9–1.3 °C warmer at 0.5 m and 3.1–3.5 °C colder at 2.5 m (Gk1, Bl4), and its 5–20 m
+  layer is 0.8–1.8 °C too cold in June–September, more than Norkyst's except in July. Before July
+  at most seven cells are above 25 °C on a day; the 29.6 °C cell of 23 November 2024 is unexamined.
 - The `:hydrography` station writer's list is the 2014–15 programme's: OF-1, OF-5 and SF-1 have no
   casts in 2024–2025, while the programme's SF-3, VAL-1, BO-1, I-1, I-4, KF-1 and SAN-5 have no
   hourly output and are scored from the daily snapshots.
@@ -63,6 +67,19 @@
 - The same fallback takes two bottom cells to −1.90 °C in October: (346, 39, 24) at 64 m, a corner,
   and (344, 35, 27) at 49 m, a dead end draining through its top face. The coastal rule misses
   them: their surface columns have four wet neighbours, and it upwinds only horizontal faces.
+  (346, 39, 24) is at −1.9 °C again in July 2025.
+- Salinity overshoots: the saltiest cell is above 36 g/kg on 157 days of October 2024 – September
+  2025 (37.9 on 11 January, 37.3 in August), against 35.1 in the initial state. In the Glomma spring flood of 22–24 May
+  2025, up to 1821 cells in the Hvaler skerries (i 277–365, j 113–181), in columns one to three
+  cells (1.6–3 m) deep under a 13–25 g/kg top cell, reach up to 37.6 g/kg. From 16 to 22 May one to
+  five bottom cells there sit at freezing, e.g. (347, 166, 37) on 20 May: 35.2 g/kg and −1.2 °C
+  under 30.1 g/kg and 10.9 °C, then 25.3 g/kg and 16.7 °C. A cell saltier and colder than all
+  around it is what the centred fallback at its top face leaves when water leaves through that
+  face; unconfirmed, as the snapshots hold no vertical velocity. Where the January and August
+  maxima sit is unexamined.
+- (213, 418, 9), a 182 m pit in Breiangen with no wet neighbour at its level, climbs from 35.9 g/kg
+  on 1 May 2025 to 36.05 at the end of July under 34.4–34.7 in the cell above; from June it is the
+  saltiest cell on most days.
 
 ## `examples/mjosa/mjosa.jl`
 

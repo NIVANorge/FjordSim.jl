@@ -26,6 +26,11 @@
 - From February to April 2025 the water at 20–50 m is 1.0–1.5 °C too cold. Norkyst and NorFjords
   are 0.7–1.3 °C too cold there too, NorFjords under AROME and GLS mixing, so it does not point at
   NORA3 or CATKE.
+- Glomma's fresh water stays too close to its mouths. In the top 1.5 m over November 2024 –
+  September 2025, I-4 off Fredrikstad is 3.4 g/kg too fresh (casts 3.4 g/kg), while I-1, 8 km
+  farther south in the Hvaler skerries, is 7.9 g/kg too salty (casts 12.2) and S-9 4.8 (casts 19.6).
+  Norkyst is 3.1 and 2.8 g/kg too salty at I-1 and S-9, NorFjords 5.1 and 3.1. Unchecked: the 2/3–1/3
+  split between Østerelva and Vesterelva, and how open the skerries' channels are on the 160 m grid.
 - The non-tidal water level is too weak at all three gauges: as daily means over November 2024 –
   September 2025 it has 66–67 % of the observed standard deviation, Norkyst 61–62 % and NorFjords,
   with another open boundary, 87–88 %. The missing surge is in Norkyst's sea level, which the open

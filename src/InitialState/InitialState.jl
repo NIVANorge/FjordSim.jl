@@ -7,7 +7,8 @@ module InitialState
 export download_initial_state,
     prepare_initial_state,
     NorKystInitialStateConfig,
-    NorKystV3InitialStateConfig
+    NorKystV3InitialStateConfig,
+    TopazInitialStateConfig
 
 using Oceananigans
 using NCDatasets
@@ -243,5 +244,6 @@ end
 
 include("norkyst_initial_state.jl")
 include("norkyst_v3_initial_state.jl")
+include("topaz_initial_state.jl")
 
 end # module

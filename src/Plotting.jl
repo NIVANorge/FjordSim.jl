@@ -450,12 +450,22 @@ end
     boundary_panels(ds, edge)
 
 The `BOUNDARY_PLOT_PANELS` entries the file carries for one edge, each with the prefixed variable name
-it is read from.
+it is read from; for a file carrying none of them, every variable of the edge.
 """
-boundary_panels(ds, edge) = [
-    (; panel..., variable = string(edge, "_", panel.name))
-    for panel in BOUNDARY_PLOT_PANELS if haskey(ds, string(edge, "_", panel.name))
-]
+function boundary_panels(ds, edge)
+    known = [
+        (; panel..., variable = string(edge, "_", panel.name))
+        for panel in BOUNDARY_PLOT_PANELS if haskey(ds, string(edge, "_", panel.name))
+    ]
+    isempty(known) || return known
+
+    # A file with none of the physical variables (a biogeochemical source's) gets one panel each.
+    prefix = string(edge, "_")
+    return [
+        (name = chopprefix(name, prefix), label = chopprefix(name, prefix), colormap = :viridis, variable = name)
+        for name in sort(collect(keys(ds))) if startswith(name, prefix)
+    ]
+end
 
 """
     boundary_slice(ds, name)

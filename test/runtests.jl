@@ -83,11 +83,13 @@ end
             :NorKystHindcastConfig,
             :NorKystInitialStateConfig,
             :NorKystV3InitialStateConfig,
+            :TopazInitialStateConfig,
             :NVERiversConfig,
             :NVERiver,
             :NorKystBoundaryDataConfig,
             :NorKystHindcastBoundaryDataConfig,
             :NorKystV3BoundaryDataConfig,
+            :TopazBoundaryDataConfig,
             :NORA3Config,
             :RunConfig,
             :CoupledHydrostaticModel,
@@ -3873,7 +3875,7 @@ end
         boundary_mask_slice = FjordSim.BoundaryData.boundary_mask_slice
         boundary_domain = FjordSim.BoundaryData.boundary_domain
         fill_boundary_gaps! = FjordSim.BoundaryData.fill_boundary_gaps!
-        hourly_time_steps = FjordSim.BoundaryData.hourly_time_steps
+        hourly_time_steps = records -> FjordSim.BoundaryData.uniform_boundary_steps(records, Hour(1))
         SourceRecord = FjordSim.Regridding.SourceRecord
 
         boundary_source_slab = FjordSim.BoundaryData.boundary_source_slab

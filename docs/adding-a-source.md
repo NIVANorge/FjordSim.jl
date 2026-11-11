@@ -130,6 +130,7 @@ Open-boundary data — `AbstractBoundaryDataConfig`, consumed by `prepare_bounda
 | `fetch_boundary_data(target_grid, config)` | only if it downloads; reads its edges with `open_edges(config)`, and subsets the box `boundary_domain` derives from them | none |
 | `boundary_date_range(config)` → `(first, last)` `DateTime`s | no | reads `ds["time"]` from the prepared NetCDF |
 | `boundary_source_slab(config, reader, step, source_name)` → one source slab | no | `blended_slab`, a plain read. Override only for a variable *derived* from more than one of the source's own — a velocity component stated along the source's own grid axes is the case that needs it |
+| `boundary_record_spacing(config)` → the prepared file's time spacing | no | `Hour(1)`, which resolves the tide; a source without one, published coarser (TOPAZ's daily means), keeps its own |
 
 Like a river config, this is a `FjordConfig` field of its own, `boundary_data_config`, `nothing` for a
 setup whose lateral boundary is not data-driven: the exterior state is its own hourly file from its own

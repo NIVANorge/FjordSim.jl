@@ -91,14 +91,15 @@ No built-in implementation.
 
 ### `AbstractBoundaryDataConfig`
 
-| Hook | Status | `NorKystBoundaryDataConfig` | `NorKystHindcastBoundaryDataConfig` | `NorKystV3BoundaryDataConfig` |
-|---|---|---|---|---|
-| `boundary_time_steps` | required | ✓ | ✓ | ✓ |
-| `boundary_source_grid` | required | ✓ | ✓ | ✓ |
-| `boundary_variable_names` | required | ✓ | ✓ | ✓ |
-| `fetch_boundary_data` | only if it downloads | ✓ | ✓ | ✓ |
-| `boundary_date_range` | optional | default | default | default |
-| `boundary_source_slab` | optional | ✓ | default | default |
+| Hook | Status | `NorKystBoundaryDataConfig` | `NorKystHindcastBoundaryDataConfig` | `NorKystV3BoundaryDataConfig` | `TopazBoundaryDataConfig` |
+|---|---|---|---|---|---|
+| `boundary_time_steps` | required | ✓ | ✓ | ✓ | ✓ |
+| `boundary_source_grid` | required | ✓ | ✓ | ✓ | ✓ |
+| `boundary_variable_names` | required | ✓ | ✓ | ✓ | ✓ |
+| `fetch_boundary_data` | only if it downloads | ✓ | ✓ | ✓ | ✓ |
+| `boundary_date_range` | optional | default | default | default | default |
+| `boundary_source_slab` | optional | ✓ | default | default | default |
+| `boundary_record_spacing` | optional | default | default | default | ✓ |
 
 ### `AbstractCallbackConfig`
 
@@ -162,12 +163,12 @@ No built-in implementation.
 
 ### `AbstractInitialStateConfig`
 
-| Hook | Status | `NorKystInitialStateConfig` | `NorKystV3InitialStateConfig` |
-|---|---|---|---|
-| `initial_state_record` | required | ✓ | ✓ |
-| `initial_state_source_grid` | required | ✓ | ✓ |
-| `initial_state_variable_names` | required | ✓ | ✓ |
-| `fetch_initial_state` | only if it downloads | ✓ | ✓ |
+| Hook | Status | `NorKystInitialStateConfig` | `NorKystV3InitialStateConfig` | `TopazInitialStateConfig` |
+|---|---|---|---|---|
+| `initial_state_record` | required | ✓ | ✓ | ✓ |
+| `initial_state_source_grid` | required | ✓ | ✓ | ✓ |
+| `initial_state_variable_names` | required | ✓ | ✓ | ✓ |
+| `fetch_initial_state` | only if it downloads | ✓ | ✓ | ✓ |
 
 ### `AbstractModelConfig`
 

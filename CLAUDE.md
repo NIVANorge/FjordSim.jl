@@ -103,8 +103,9 @@ The modules, in `include` order from `src/FjordSim.jl`:
    share: source records and time axes, water masks, the projected source grid and its rotation,
    the interpolation kernel, and the prepared files' layout.
 7. **Atmosphere** (`src/Atmospheres/`) — `prepare_atmosphere`, NORA3 read/download.
-8. **NorKyst** (`src/DataSources/NorKyst.jl`) — the NorKyst-800m dataset the forcing, initial-state
-   and boundary adapters share: endpoints, variable names, source grid, subset download.
+8. **Data sources** (`src/DataSources/`) — the datasets the adapters share: NorKyst-800m
+   (`NorKyst.jl`: endpoints, variable names, source grid, subset download) and TOPAZ5-ECOSMO
+   (`Topaz.jl`, biogeochemistry for the initial-state and boundary adapters).
 9. **Forcing** (`src/Forcing/`) — the interior forcing pipeline (`prepare_forcing`,
    `download_forcing`) and its NorKyst adapters.
 10. **Initial state** (`src/InitialState/`) — `download_initial_state`, `prepare_initial_state`:

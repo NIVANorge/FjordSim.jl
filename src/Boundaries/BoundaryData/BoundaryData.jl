@@ -19,7 +19,8 @@ export download_boundary_data,
     prepare_boundary_data,
     NorKystBoundaryDataConfig,
     NorKystHindcastBoundaryDataConfig,
-    NorKystV3BoundaryDataConfig
+    NorKystV3BoundaryDataConfig,
+    TopazBoundaryDataConfig
 
 using Oceananigans
 using Oceananigans.Units: Time
@@ -351,6 +352,14 @@ boundary_source_slab(config::AbstractBoundaryDataConfig, reader, step, source_na
     blended_slab(reader, step, source_name)
 
 """
+    boundary_record_spacing(config)
+
+The spacing of the prepared file's time axis: an hour, which resolves the tide. A source with no
+tide in it, published at a coarser cadence (daily means), keeps its own.
+"""
+boundary_record_spacing(config::AbstractBoundaryDataConfig) = Hour(1)
+
+"""
     download_boundary_data(config)
 
 Fetch and subset the hourly source data a later `prepare_boundary_data` reads, into
@@ -390,13 +399,13 @@ boundary_date_range(::Nothing) = nothing
 # --- Preparation ---
 
 """
-    hourly_time_steps(records; max_gap = BOUNDARY_MAX_GAP)
+    uniform_boundary_steps(records, spacing)
 
-`uniform_time_steps` at a one-hour spacing: the cadence of the boundary data, and the reason it is a
-separate file from the daily interior forcing.
+`uniform_time_steps` at `spacing`: hourly for a source carrying the tide, the cadence that makes the
+boundary data a separate file from the daily interior forcing.
 """
-hourly_time_steps(records; max_gap = BOUNDARY_MAX_GAP) =
-    uniform_time_steps(records, Hour(1); max_gap, unit = "hour")
+uniform_boundary_steps(records, spacing) =
+    uniform_time_steps(records, spacing; max_gap = BOUNDARY_MAX_GAP, unit = lowercase(string(nameof(typeof(spacing)))))
 
 """
     surface_source_field_grid(source::ProjectedSourceGrid, architecture)
@@ -516,7 +525,10 @@ function regrid_boundary_data(target_grid, config::AbstractBoundaryDataConfig)
         "Known $(nameof(typeof(config))) variables: $(sort(collect(keys(variable_names)))).",
     )
 
-    steps = pad_time_steps(hourly_time_steps(boundary_time_steps(config)), coverage_window(config))
+    steps = pad_time_steps(
+        uniform_boundary_steps(boundary_time_steps(config), boundary_record_spacing(config)),
+        coverage_window(config),
+    )
     reference_file = first(steps).lower.filepath
     source = boundary_source_grid(config, reference_file)
     @info "Preparing the $(join(edges, ", ")) boundary from " *
@@ -1043,5 +1055,6 @@ end
 include("norkyst_boundary_data.jl")
 include("norkyst_hindcast_boundary_data.jl")
 include("norkyst_v3_boundary_data.jl")
+include("topaz_boundary_data.jl")
 
 end # module

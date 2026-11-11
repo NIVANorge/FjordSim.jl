@@ -36,7 +36,8 @@ Two ways to write one:
   budget).
 - **As a variant of another setup**: `base = include("oslofjorden.jl")` resolves beside the
   including file and returns that setup's config, whose fields the variant then changes or wraps
-  (`examples/oslofjorden/oslofjorden_npzd.jl`).
+  (`examples/oslofjorden/oslofjorden_npzd.jl`; `examples/roho/roho_ecosmo.jl`, which loads NivaEcosmo
+  and so runs in its own environment, `examples/roho/Project.toml`).
   The included script's top-level names (`data_root`, `FT`) become the variant's globals too, so
   assign the variant's own after the `include`. `gcp/fjordsim-gcp` uploads every `.jl` file beside
   the config, so the include works on the VM as well.
@@ -55,9 +56,9 @@ step whose config is `nothing` is a no-op. A setup naming a `run_config` must al
 | `grid_config` | `EvenGrid` | — | — | always |
 | `bathymetry_config` | `DybdedataConfig` (Geonorge, sea), `NVELakeBathymetryConfig` (NVE, one lake) | `prepare_bathymetry` | `bathymetry.nc` | always: it *is* the model grid |
 | `forcing_config` | `NorKystConfig`, `NorKystHindcastConfig` | `download_forcing`, `prepare_forcing` | `forcing.nc` | `FromForcing` initial conditions |
-| `initial_state_config` | `NorKystInitialStateConfig`, `NorKystV3InitialStateConfig` | `download_initial_state`, `prepare_initial_state` | `initial_state.nc` | `FromInitialState` initial conditions |
+| `initial_state_config` | `NorKystInitialStateConfig`, `NorKystV3InitialStateConfig`, `TopazInitialStateConfig` | `download_initial_state`, `prepare_initial_state` | `initial_state.nc` | `FromInitialState` initial conditions |
 | `river_config` | `NVERiversConfig` | `add_rivers` | `rivers_nve.nc` | river inflow; `RiverMouthMixing`, `RiverMouthAdvection` |
-| `boundary_data_config` | `NorKystBoundaryDataConfig`, `NorKystHindcastBoundaryDataConfig`, `NorKystV3BoundaryDataConfig` | `download_boundary_data`, `prepare_boundary_data` | `boundaries.nc` | any open edge; `OpenLateralBoundaryFromData` |
+| `boundary_data_config` | `NorKystBoundaryDataConfig`, `NorKystHindcastBoundaryDataConfig`, `NorKystV3BoundaryDataConfig`, `TopazBoundaryDataConfig` | `download_boundary_data`, `prepare_boundary_data` | `boundaries.nc` | any open edge; `OpenLateralBoundaryFromData` |
 | `atmosphere_config` | `NORA3Config` | `download_atmosphere`, `prepare_atmosphere` | `atmosphere.nc` | the prescribed atmosphere and radiation the surface fluxes are computed from |
 | `model_config` | `CoupledHydrostaticModel` | `run_simulation` | — | running at all: what the model is |
 | `biogeochemistry_config` | none (`examples/oslofjorden/oslofjorden_npzd.jl` has one) | `run_simulation` | — | a biogeochemical model |
@@ -68,7 +69,10 @@ NorKyst's operational archive (`NorKystConfig`, `NorKystInitialStateConfig`,
 `NorKystBoundaryDataConfig`) runs from 2017-02-20 to 2025-10-05; a window before that needs the
 hindcast configs, which cover 2012 to 2025-08-02 (there is no hindcast initial-state config), and a
 later one the operational Norkyst-v3 configs, from 2024-01-01 (`NorKystV3BoundaryDataConfig`,
-`NorKystV3InitialStateConfig`, which merges a 160 m nest into an 800 m member; no forcing config). Each field is a type
+`NorKystV3InitialStateConfig`, which merges a 160 m nest into an 800 m member; no forcing config).
+The TOPAZ5-ECOSMO configs (`TopazInitialStateConfig`, `TopazBoundaryDataConfig`, daily from 2019)
+carry biogeochemistry only, under TOPAZ's own names and units, so a setup prepares them beside a
+physical one and combines the two, as NivaEcosmo's FjordSim extension does. Each field is a type
 parameter of `FjordConfig`, so it is chosen when the config is built and cannot be set to `nothing`
 on an existing instance afterwards.
 

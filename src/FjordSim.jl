@@ -28,11 +28,13 @@ export
     NorKystHindcastConfig,
     NorKystInitialStateConfig,
     NorKystV3InitialStateConfig,
+    TopazInitialStateConfig,
     NVERiversConfig,
     NVERiver,
     NorKystBoundaryDataConfig,
     NorKystHindcastBoundaryDataConfig,
     NorKystV3BoundaryDataConfig,
+    TopazBoundaryDataConfig,
     NORA3Config,
     # simulation
     RunConfig,
@@ -82,6 +84,7 @@ include("Bathymetry/Bathymetry.jl")
 include("Regridding.jl")
 include("Atmospheres/Atmospheres.jl")
 include("DataSources/NorKyst.jl")
+include("DataSources/Topaz.jl")
 include("Forcing/Forcing.jl")
 include("InitialState/InitialState.jl")
 include("Rivers/Rivers.jl")

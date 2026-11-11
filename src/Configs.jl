@@ -231,6 +231,8 @@ edge is a set of new variables in the same file rather than a new file or a form
   interpolates from. Optional; defaults to `blended_slab`, a plain read. Override it only for a
   variable that must be *derived* from more than one of the source's own — which a velocity component
   is, when the source states it along its own grid axes rather than eastward/northward.
+- `boundary_record_spacing(config)`: the prepared file's time spacing. Optional; defaults to an
+  hour, which resolves the tide. A source without one, published coarser, keeps its own.
 
 `FjordSim.BoundaryData.NorKystBoundaryDataConfig` is the built-in implementation, for MET Norway's hourly
 NorKyst-800m collection; `src/Boundaries/BoundaryData/norkyst_boundary_data.jl` is the template to copy

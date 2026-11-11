@@ -1,0 +1,17 @@
+[deps]
+ArchGDAL = "c9ce4bd3-c3d5-55b8-8973-c0e20141b8c3"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+FjordSim = "70d6b63c-c5d4-46ce-8d1e-8766361373eb"
+NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
+NivaEcosmo = "0fe4996b-995b-40d0-a594-b88dbf63442d"
+NumericalEarth = "904d977b-046a-4731-8b86-9235c0d1ef02"
+Oceananigans = "9e8cae18-63c1-5223-a75c-80ca9d6e9a09"
+SeawaterPolynomials = "d496a93d-167e-4197-9f49-d3af4ff8fe40"
+YAML = "ddb6d928-2868-570f-bddf-ab3f9cf99eb6"
+
+[sources]
+FjordSim = {path = "../.."}
+NivaEcosmo = {rev = "main", url = "https://github.com/limash/NivaEcosmo.jl.git"}
+
+[compat]
+julia = "1.12"

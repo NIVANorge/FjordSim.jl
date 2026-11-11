@@ -282,7 +282,9 @@ function fetch_boundary_data(target_grid, config::NorKystBoundaryDataConfig)
           "$(join(edges, ", ")) boundary to $output_directory"
     @info "  Band: longitude $longitude, latitude $latitude"
 
-    files = list_opendap_files(catalog_url = config.catalog_url)
+    # The catalog is read only for a month still to download, so a complete download needs no server.
+    downloaded(year, month) = isfile(joinpath(output_directory, boundary_monthly_filename(config, year, month)))
+    files = all(splat(downloaded), months) ? String[] : list_opendap_files(catalog_url = config.catalog_url)
     for (year, month) in months
         process_boundary_month(year, month, longitude, latitude, config; files)
     end

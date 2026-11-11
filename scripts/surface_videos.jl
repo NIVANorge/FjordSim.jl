@@ -212,7 +212,8 @@ function main(args)
     mkpath(out)
 
     config = fjord_config(config_path)
-    grid = setup_grid(config)
+    # `invokelatest`: methods the setup file adds to a hook are newer than this call.
+    grid = Base.invokelatest(setup_grid, config)
     first_date = start_date(run_config(config))
     title_prefix = "$(first(splitext(basename(config_path)))) surface"
 

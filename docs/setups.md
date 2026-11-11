@@ -30,7 +30,8 @@ Two ways to write one:
   `examples/oslofjorden/oslofjorden.jl` (inner fjord, open southern edge),
   `examples/drammensfjorden/drammensfjorden.jl` (a small sub-domain on 99 m cells),
   `examples/lista/lista.jl` (open coast, three open edges), `examples/moro/moro.jl` (coast, shelf
-  and continental slope, open western and northern edges), `examples/mjosa/mjosa.jl` (a closed
+  and continental slope, open western and northern edges), `examples/roho/roho.jl` (coast and
+  sill fjords, open western, southern and northern edges), `examples/mjosa/mjosa.jl` (a closed
   freshwater lake: NVE depth-map bathymetry, no open edge, an outflowing river closing the water
   budget).
 - **As a variant of another setup**: `base = include("oslofjorden.jl")` resolves beside the

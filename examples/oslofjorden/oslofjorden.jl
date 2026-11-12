@@ -160,12 +160,13 @@ const OSLOFJORD_MOORINGS = [
     Station(name = "Slagen", longitude = 10.517, latitude = 59.383),
 ]
 
-# The ten NIVA CTD stations of the Ytre Oslofjord monitoring programme, from METreport 11/2017
-# Table 2. Exact, to four decimals. OF-1, OF-5 and D-3 are the three the report draws Hovmøller
-# diagrams for; OF-1, LA-1 and D-2 the three it overlays profiles at. The other nine agree with
-# AquaMonitor (`observations/niva_ctd/stations.csv`) to 200 m. OF-1 does not: AquaMonitor puts it
-# 5 km west, at 10.6652°E 59.036°N, but Kartverket's soundings there are 76 m within 500 m, and every
-# OF-1 cast reaches 440 m. The table's position has a 462 m sounding 228 m away, so it is kept.
+# NIVA CTD stations of the Ytre Oslofjord monitoring programme, from METreport 11/2017 Table 2.
+# Exact, to four decimals. OF-1, OF-5 and D-3 are the three the report draws Hovmøller diagrams
+# for; OF-1, LA-1 and D-2 the three it overlays profiles at. The other eight agree with AquaMonitor
+# (`observations/niva_ctd/stations.csv`) to 200 m. OF-1 does not: AquaMonitor puts it 5 km west, at
+# 10.6652°E 59.036°N, but Kartverket's soundings there are 76 m within 500 m, and every OF-1 cast
+# reaches 440 m. The table's position has a 462 m sounding 228 m away, so it is kept. The table's
+# SF-1 is left out: it has no casts in 2024–2026, and SF-3 below is Sandefjord's station.
 const OSLOFJORD_CTD_STATIONS = [
     Station(name = "D-2",  longitude = 10.4210, latitude = 59.6280),  # Inner Drammensfjord
     Station(name = "D-3",  longitude = 10.3140, latitude = 59.7060),  # Solumstrand
@@ -174,19 +175,36 @@ const OSLOFJORD_CTD_STATIONS = [
     Station(name = "OF-1", longitude = 10.7540, latitude = 59.0410),  # Torbjørnskjær
     Station(name = "OF-5", longitude = 10.4580, latitude = 59.4870),  # Breiangen
     Station(name = "S-9",  longitude = 11.1620, latitude = 59.1140),  # Haslau, Singlefjord
-    Station(name = "SF-1", longitude = 10.2460, latitude = 59.0770),  # Sandefjord
     Station(name = "TØ-1", longitude = 10.3550, latitude = 59.2030),  # Vestfjord
     Station(name = "Ø-1",  longitude = 10.8340, latitude = 59.1370),  # Leira, Vesterelva
 ]
 
-# The two deep basins of the Inner Oslofjord, monitored for hydrography and oxygen by NIVA on behalf
-# of Fagrådet since 1973. Not in either METreport; the positions are the programme's own, from
-# AquaMonitor (`observations/niva_ctd/stations.csv`). Exact. They are here because deep-water
-# renewal in these two basins is what this domain is judged on, and neither report covers it — this
-# is the part of the validation that goes beyond reproducing FjordOs.
+# The programme's other stations with casts in 2024–2026, not in METreport 11/2017, at AquaMonitor's
+# positions (`observations/niva_ctd_2024-2025/stations.csv`). Exact.
+const OSLOFJORD_PROGRAMME_STATIONS = [
+    Station(name = "BO-1",  longitude = 10.536233, latitude = 59.189933),  # Bolærne,          cast to 58 m
+    Station(name = "I-1",   longitude = 11.001966, latitude = 59.109432),  # Ramsø, Østerelva, cast to 51 m
+    Station(name = "I-4",   longitude = 10.951380, latitude = 59.184500),  # Kallera,          cast to 11 m
+    Station(name = "KF-1",  longitude = 10.729045, latitude = 59.288682),  # Krokstadfjorden,  cast to 15 m
+    Station(name = "SAN-5", longitude = 10.269300, latitude = 59.549400),  # Sandebukta,       cast to 51 m
+    Station(name = "SF-3",  longitude = 10.247500, latitude = 59.068000),  # Kvernberget,      cast to 83 m
+    Station(name = "VAL-1", longitude = 10.525400, latitude = 59.270100),  # Vallø,            cast to 129 m
+]
+
+# Stations of the Inner Oslofjord, monitored for hydrography and oxygen by NIVA on behalf of Fagrådet
+# since 1973. Not in either METreport; the positions are the programme's own, from AquaMonitor
+# (`observations/niva_ctd_2024-2025/stations.csv`). Exact. Dk1 and Ep1 are the two deep basins:
+# deep-water renewal in them is what this domain is judged on, and neither report covers it — this
+# is the part of the validation that goes beyond reproducing FjordOs. Im2 is the Drøbak Sound south
+# of the sill, Fl1 Vestfjorden, Gk1 the sill's inner side, Bl4 and Cj1 the shallow western bays.
 const INNER_OSLOFJORD_STATIONS = [
-    Station(name = "Dk1", longitude = 10.569384, latitude = 59.814999),  # Steilene,     cast to 99 m
-    Station(name = "Ep1", longitude = 10.723783, latitude = 59.786301),  # Bunnefjorden, cast to 149 m
+    Station(name = "Dk1", longitude = 10.569384, latitude = 59.814999),  # Steilene,         cast to 99 m
+    Station(name = "Ep1", longitude = 10.723783, latitude = 59.786301),  # Bunnefjorden,     cast to 149 m
+    Station(name = "Im2", longitude = 10.628217, latitude = 59.622032),  # Elle,             cast to 202 m
+    Station(name = "Fl1", longitude = 10.574734, latitude = 59.754066),  # Vestfjorden,      cast to 166 m
+    Station(name = "Gk1", longitude = 10.543083, latitude = 59.701218),  # Gråøyrenna,       cast to 112 m
+    Station(name = "Bl4", longitude = 10.568850, latitude = 59.880833),  # Bærumsbassenget,  cast to 31 m
+    Station(name = "Cj1", longitude = 10.506983, latitude = 59.840483),  # Holmenfjorden,    cast to 56 m
 ]
 
 # A section along the Drammensfjord's deepest water, from the Drammenselva mouth (the river's own
@@ -294,8 +312,11 @@ const OSLOFJORD_TEMPERATURE_STATIONS = [
 # The NIVA stations whose casts start the water below the Drøbak and Svelvik sills
 # (`CastCorrectedInitialState`), at AquaMonitor's positions
 # (`observations/niva_ctd_2024-2025/stations.csv`).
-# Exact. Every one has a cast in the 14 days before `start_date` and lies in that water.
+# Exact. Every one has a cast in the 14 days before `start_date` and lies in that water, except Im2,
+# which lies in the Drøbak Sound's pocket south of the sill, closed off from the open edge below
+# 104 m.
 const OSLOFJORD_BASIN_CAST_STATIONS = [
+    Station(name = "Im2", longitude = 10.628217, latitude = 59.622032),  # Elle, Drøbak Sound
     Station(name = "D-2", longitude = 10.420983, latitude = 59.627766),  # Drammensfjord
     Station(name = "D-3", longitude = 10.313517, latitude = 59.705883),  # Drammensfjord
     Station(name = "Hm4", longitude = 10.612483, latitude = 59.675934),  # Oscarsborg
@@ -512,21 +533,28 @@ end
 # -26, which the casts of the following weeks match within 0.1 g/kg and 0.2 °C below 50 m. The outer
 # fjord's trapped pockets (S-9, MO-2, SF-3) keep Norkyst's water, which the casts there match within
 # 0.1 g/kg below 50 m.
+#
+# The Drøbak Sound south of the sill (Im2) is closed off below 104 m, under open water. Norkyst does
+# not reach it, and `TargetFill` fills it from above: 9.9 °C at 150 m against 7.1 in the cast of
+# 2024-09-26. Its cast replaces that water alone. Over whole columns it would also replace the
+# surface of the open fjord above the pocket, 1825 columns, leaving 12.8 g/kg beside Norkyst's 24.5.
 
 """
-    CastCorrectedInitialState(source, casts, maximum_cast_offset)
+    CastCorrectedInitialState(source, casts, maximum_cast_offset, deep_only)
 
 `source`'s initial state with T and S in the columns over the sill basins replaced by observed casts.
 
 `prepare_initial_state` writes the file exactly as `source` would, then corrects it in place
 (`correct_basin_water!`). Every other hook is `source`'s: where the file is, its date, the download.
 `casts` names the stations and where their casts are; a station is used when it has a cast within
-`maximum_cast_offset` of the start.
+`maximum_cast_offset` of the start. The stations named in `deep_only` replace only the water below
+their sill, not whole columns.
 """
 struct CastCorrectedInitialState{C <: AbstractInitialStateConfig} <: AbstractInitialStateConfig
     source::C
     casts::CsvObservations
     maximum_cast_offset::Day
+    deep_only::Vector{String}
 end
 
 InitialState.initial_state_path(config::CastCorrectedInitialState) =
@@ -626,7 +654,8 @@ group, at its level or a shallower one, holds one of `config.casts`' stations; a
 `fringe_cells` cells from those, in every column with no open water at or below the corrected
 neighbour's topmost trapped cell: the coastal columns too shallow to reach it, and pockets trapped
 apart from every station, such as the Oslo harbour basins. A station's column is the deepest wet one
-within a cell of its position. Other columns keep `config.source`'s values. A file this has already
+within a cell of its position. A station in `config.deep_only` replaces only the trapped cells of its
+columns and has no fringe. Other columns keep `config.source`'s values. A file this has already
 corrected is refused.
 
 Whole columns, because Norkyst's water above the sills is 2-3 g/kg saltier than the casts: kept above
@@ -661,7 +690,8 @@ function correct_basin_water!(path, edges, config::CastCorrectedInitialState, da
             column = argmax(c -> count(@view wet[c..., :]),
                             [(i, j) for i in max(i0 - 1, 1):min(i0 + 1, length(longitude)),
                                         j in max(j0 - 1, 1):min(j0 + 1, length(latitude))])
-            push!(stations, (; station, column, T = casts[1], S = casts[2]))
+            push!(stations, (; station, column, T = casts[1], S = casts[2],
+                               deep_only = station.name in config.deep_only))
         end
 
         distance(s, i, j) =
@@ -687,7 +717,7 @@ function correct_basin_water!(path, edges, config::CastCorrectedInitialState, da
             top_depth[i, j] = depth[top]
         end
         closed_below(i, j, d) = all(k -> !wet[i, j, k] || depth[k] < d || labels[i, j, k] > 0, 1:Nz)
-        front = [(i, j) for j in 1:Ny, i in 1:Nx if assigned[i, j] > 0]
+        front = [(i, j) for j in 1:Ny, i in 1:Nx if assigned[i, j] > 0 && !stations[assigned[i, j]].deep_only]
         for _ in 1:fringe_cells
             next = Tuple{Int,Int}[]
             for (i, j) in front, (a, b) in ((i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1))
@@ -706,6 +736,7 @@ function correct_basin_water!(path, edges, config::CastCorrectedInitialState, da
             n == 0 && continue
             for k in 1:Nz
                 wet[i, j, k] || continue
+                stations[n].deep_only && labels[i, j, k] == 0 && continue
                 T[i, j, k] = cast_value(stations[n].T, depth[k])
                 S[i, j, k] = cast_value(stations[n].S, depth[k])
                 corrected[n] += 1
@@ -739,10 +770,9 @@ FT = Float32
 # A geometric stretch, ratio 1.25 capped at 33.5 m, from a 1 m surface cell to a deepest face at
 # -467 m, with 41-132 m split into eighteen 5.06 m levels. The deepest sounding is 470.0 m, in the
 # Hvalerdjupet, which METreport 4/2016 §1.1 describes as "a 400 m deep basin extending northeastward
-# from the Skagerrak". The rule above would add a layer to -500.5 m, and measured on the 193 m grid,
-# that layer held no water: only eight columns of the trench reached below -467 m, by at most 2.3 m,
-# and `snap_partial_bottom_cells` raises such slivers of a 33.5 m layer to the face above, so the
-# model is the same either way. `limit_bottom_slope` only ever makes the deepest column shallower;
+# from the Skagerrak". The rule above would add a layer to -500.5 m, and measured on this grid, that
+# layer held no water: only 13 columns of the trench reach below -467 m, by at most 2.4 m, and
+# `PartialCellBottom` clips such slivers of a 33.5 m layer, so the model is the same either way. `limit_bottom_slope` only ever makes the deepest column shallower;
 # a change to the gridding or the box can move it, so re-check the deepest cell in `bathymetry.nc`
 # after one.
 #
@@ -821,10 +851,11 @@ FjordConfig(
         # already and moved nine cells, none in the boundary row itself — cheap insurance rather
         # than a correction. The open edges come from `boundary_data_config` below.
         open_boundary_land_cells = 5,
-        # Six and no more. On the 193 m grid every remaining interior land component was 7 cells
-        # or larger with a minimum width of 2 to 4 cells — compact skerries, not the one-cell
-        # ridges this stage exists to remove. Raising it would delete real topography.
-        max_island_cells      = 6,
+        # No island is flooded. At 6 the stage flooded 106 islands on this grid, 412 cells, nearly all
+        # of them land on the 40 m native grid, Kaholmen in the Drøbak Sound among them. Keeping
+        # them adds no one-cell-wide channel (27 either way, `close_narrow_passages` closes them),
+        # only 751 coastal cells to the 7140, which `narrow_cells` upwinds.
+        max_island_cells      = 0,
         close_narrow_passages = true,
         spike_ratio           = 0.5,
         minimum_cell_fraction = 0.2,
@@ -886,6 +917,7 @@ FjordConfig(
             stations         = OSLOFJORD_BASIN_CAST_STATIONS,
         ),
         Day(14),
+        ["Im2"],
     ),
     # NVERiversConfig overloads river_locations, river_series, river_discharge and
     # fetch_rivers (all required, hooks add_rivers calls), all dispatching on this
@@ -1227,7 +1259,7 @@ FjordConfig(
                 interval           = 1hour,
                 overwrite_existing = true,
             ),
-            # Hourly T/S profiles at the CTD stations and the two inner-basin stations. The
+            # Hourly T/S profiles at the CTD stations of both programmes. The
             # observations are a dozen casts a year, so hourly is far more than the comparison at
             # cast dates needs — but it is what resolves a deep-water renewal event, which happens
             # over days and is the thing this domain is judged on. `e` rides along because the
@@ -1237,7 +1269,8 @@ FjordConfig(
                 name               = :hydrography,
                 output_file        = "stations_hydrography.nc",
                 variables          = (:T, :S, :e),
-                stations           = vcat(OSLOFJORD_CTD_STATIONS, INNER_OSLOFJORD_STATIONS),
+                stations           = vcat(OSLOFJORD_CTD_STATIONS, OSLOFJORD_PROGRAMME_STATIONS,
+                                          INNER_OSLOFJORD_STATIONS),
                 interval           = 1hour,
                 overwrite_existing = true,
             ),

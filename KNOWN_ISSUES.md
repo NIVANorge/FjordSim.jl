@@ -2,10 +2,13 @@
 
 ## `examples/oslofjorden/oslofjorden.jl` (160 m, 2024-10 to 2026-10)
 
-- `max_island_cells = 6` and the check of the deepest cell against `z_faces`' −467 m (the box's
-  deepest sounding is 470 m) were measured on 193 m cells, not on the 160 m grid.
-- The eight gauge overrides were chosen for 2020. Whether each has daily values on HydAPI over
-  2024–2026 is unchecked.
+- `max_island_cells = 0` (every island kept) is untested in a run: it adds 751 coastal cells to the
+  7140 that `max_island_cells = 6` left, and no one-cell-wide channel.
+- Gauge gaps, filled from the nearest date: Drammenselva's discharge (Mjøndalen bru) on 27 July –
+  13 August and 20 August – 12 September 2025, Glomma's temperature (Sarpfossen) from 18 August
+  2026 and Sandvikselva's from 4 August 2026 to the end. Lierelva (Oppsal) reads 0 m³/s from 6 May
+  2026 to the end and Mossevassdraget (Moss dam) from 7 May to early September 2026, both
+  uncontrolled values.
 - `validate_simulation` scores only Kartverket water level, which it fetches itself. The NIVA casts
   are exported to `observations/niva_ctd_2024-2025` (AquaMonitor, June 2024 – December 2025) and
   `observations/niva_ctd_odm2_2024-2026` (NIVA's ODM2 database, October 2024 – September 2026), IMR's
@@ -68,15 +71,11 @@
   July 2026 repeats it in FjordSim alone: the inner-fjord casts hold 17–19 °C down to 4.5 m where
   FjordSim has 10–15 °C, and the top 5 m are 3.0 °C too cold (Norkyst −0.8); the warmest cell is
   35.3 °C on 17 July 2026.
-- The `:hydrography` station writer's list is the 2014–15 programme's: SF-1 has no casts in
-  2024–2026 and OF-1 and OF-5 only IMR's monthly ones (Torbjørnskjær, Breiangen vest), while the
-  programme's SF-3, VAL-1, BO-1, I-1, I-4, KF-1 and SAN-5 have no hourly output and are scored from
-  the daily snapshots.
 - Holmenfjorden (Cj1) is about 25 m deep within a cell of the station against casts to 56 m.
-- Below 104 m the Drøbak Sound south of the sill (Im2) is a pocket closed off from the open edge, so
-  `TargetFill` fills it from above: 9.9 °C at 150 m on 2024-10-01 against 7.1 in the cast of
-  2024-09-26 (7.8 with the earlier same-depth fill). `TargetFill` also doubles the cells denser than
-  the one below them, 4746 to 11 278, the largest 0.72 to 1.31 kg/m³.
+- Im2's cast replaces the Drøbak Sound's pocket below 104 m alone, under Norkyst's water, which at
+  99 m is denser than the cast's top cell in 863 of its 903 columns, by at most 0.13 kg/m³.
+  `TargetFill` doubles the cells denser than the one below them, 4746 to 11 278, the largest 0.72 to
+  1.31 kg/m³.
 - `oslofjorden_npzd.jl` runs 2024–2026 with nutrient profiles measured in 2020.
 - No sea ice. `SlabSeaIce` (no drift) grew runaway ice on this setup, so it runs
   `FreezingLimitedOceanTemperature`, which clamps every level at freezing and discards the heat: no

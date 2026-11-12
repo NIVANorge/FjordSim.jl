@@ -19,7 +19,9 @@
   starts 1–3 g/kg too salty and about 2 °C too cold, and is renewed only slowly (Ep1 at 120 m:
   34.1 to 33.9 g/kg from October to January, the casts 32.9). Over June 2025 – May 2026 the Inner
   Oslofjord below 50 m is −0.28 g/kg, but Ep1 at 120 m is still 1.4–2.4 °C too cold and D-2 at 100 m
-  0.9 g/kg too salty in March 2026 (3.2 at the start).
+  0.9 g/kg too salty in March 2026 (3.2 at the start). Ep1 at 120 m is never renewed in the run: by
+  August 2026 its start-state salt has drained to 32.5 g/kg (casts 32.9) at 6.5 °C (casts 8.9), and
+  D-2 at 100 m is still 0.5 g/kg too salty in September 2026.
 - In November 2024 – January 2025 the top 5 m are 3.9 g/kg too salty against the NIVA casts, and
   the 25 m − 1 m salinity difference 2.9 g/kg too weak. Norkyst has the same error (+3.8 g/kg); the
   cause, river input, mixing or the boundary, is unknown. IMR's NorFjords 160 m hindcast (ROMS, GLS
@@ -37,7 +39,10 @@
   Færder, 30–75 m) the casts read 7.9–8.3 °C and 34.5–34.9 g/kg, FjordSim 4.7–5.0 °C and
   32.6–33.6 g/kg, Norkyst 4.4–5.3 °C; in February the casts there held a cold brackish layer at 30 m
   the models lack. Norkyst and NorFjords are 1.8–2.2 and 1.5–1.9 °C too cold below 50 m too. Norkyst
-  is the open boundary's source, so its Skagerrak water at 30–100 m is the first suspect.
+  is the open boundary's source, so its Skagerrak water at 30–100 m is the first suspect. The model
+  renews Vestfjorden and Steilene instead in early August 2026 (Fl1 at 100 m 5.7 to 7.9 °C), after
+  an inflow in July 2026 that raises the volume-mean salinity 1.1 g/kg in three weeks; the casts
+  show no inflow then.
 - Glomma's fresh water stays too close to its mouths. In the top 1.5 m over November 2024 –
   September 2025, I-4 off Fredrikstad is 3.4 g/kg too fresh (casts 3.4 g/kg), while I-1, 8 km
   farther south in the Hvaler skerries, is 7.9 g/kg too salty (casts 12.2) and S-9 4.8 (casts 19.6).
@@ -51,7 +56,7 @@
   boundary carries in; the set-down of 9 December 2024 reached −0.25 m against −0.6 m observed. M4
   is half the observed (0.6–1.6 cm against 1.2–2.5) and 31–46° early; the other constituents are
   within 0.5 cm. Over June 2025 – May 2026 the daily means carry 79 % (Norkyst 71–73 %, NorFjords
-  92 %).
+  92 %), over the whole run 74 % (Norkyst 67–69 %).
 - The summer heat stays in the top metre. In the heat wave of 15–29 July 2025 up to 48 088 top
   cells exceed 25 °C (21 July), the warmest 29–33.3 °C in columns two to six cells (to 9 m) deep,
   several of them river water (1–6 g/kg). The casts of 21–22 July read 24 °C uniform to 2.5 m;
@@ -60,6 +65,9 @@
   Norkyst and NorFjords are as cold or colder there (−1.9 and −3.7 °C against −1.8) without the hot
   top metre, so that layer's cold is not only heat held at the surface. Before July
   at most seven cells are above 25 °C on a day; the 29.6 °C cell of 23 November 2024 is unexamined.
+  July 2026 repeats it in FjordSim alone: the inner-fjord casts hold 17–19 °C down to 4.5 m where
+  FjordSim has 10–15 °C, and the top 5 m are 3.0 °C too cold (Norkyst −0.8); the warmest cell is
+  35.3 °C on 17 July 2026.
 - The `:hydrography` station writer's list is the 2014–15 programme's: SF-1 has no casts in
   2024–2026 and OF-1 and OF-5 only IMR's monthly ones (Torbjørnskjær, Breiangen vest), while the
   programme's SF-3, VAL-1, BO-1, I-1, I-4, KF-1 and SAN-5 have no hourly output and are scored from
@@ -99,10 +107,11 @@
 - The same fallback takes two bottom cells to −1.90 °C in October: (346, 39, 24) at 64 m, a corner,
   and (344, 35, 27) at 49 m, a dead end draining through its top face. The coastal rule misses
   them: their surface columns have four wet neighbours, and it upwinds only horizontal faces.
-  (346, 39, 24) is at −1.9 °C again on nine days of July–September 2025.
+  (346, 39, 24) is at −1.9 °C again on nine days of July–September 2025. In May–September 2026
+  single cells reach −1.9 °C on 28 days, most often (208, 632, 32), (251, 649, 32) and (346, 39, 24).
 - Salinity overshoots: the saltiest cell is above 36 g/kg on 157 days of October 2024 – September
-  2025 (37.9 on 11 January, 37.3 in August) and on 355 of June 2025 – May 2026 (38.0 on 2 January
-  2026), against 35.1 in the initial state. In the Glomma spring flood of 22–24 May
+  2025 (37.9 on 11 January, 37.3 in August) and on every day of October 2025 – September 2026 (38.0
+  on 2 January 2026), against 35.1 in the initial state. In the Glomma spring flood of 22–24 May
   2025, up to 1821 cells in the Hvaler skerries (i 277–365, j 113–181), in columns one to three
   cells (1.6–3 m) deep under a 13–25 g/kg top cell, reach up to 37.6 g/kg. From 16 to 22 May one to
   five bottom cells there sit at freezing, e.g. (347, 166, 37) on 20 May: 35.2 g/kg and −1.2 °C

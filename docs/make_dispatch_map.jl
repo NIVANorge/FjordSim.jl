@@ -149,8 +149,9 @@ end
 callee(code, target) = target isa Core.SSAValue ? callee(code, code[target.id]) :
     target isa GlobalRef ? getglobal(target.mod, target.name) : target
 
-# What a step's one method reads from the setup, the function its result comes from, and whether
-# that function is handed the whole setup. A step with keywords is followed into its body function.
+# What a step's one method reads from the setup, the function its result comes from, and the
+# functions other than the accessors it hands the whole setup to. A step with keywords is followed
+# into its body function.
 function step_calls(step, accessors)
     info = only(Base.code_lowered(step, Tuple{AbstractFjordConfig}))
     setup = Base.method_argnames(only(methods(step)))[2]
@@ -159,8 +160,12 @@ end
 
 function lowered_calls(info, setup, accessors)
     code = info.code
-    functions = [callee(code, statement.args[1]) for statement in code if Meta.isexpr(statement, :call)]
-    reads = unique([nameof(f) for f in functions if f in accessors])
+    calls = [statement for statement in code if Meta.isexpr(statement, :call)]
+    reads = unique([nameof(f) for f in (callee(code, call.args[1]) for call in calls) if f in accessors])
+    given_setup(call) = any(argument -> argument isa Core.SlotNumber && info.slotnames[argument.id] == setup,
+                            call.args[2:end])
+    whole = unique([nameof(callee(code, call.args[1])) for call in calls
+                    if given_setup(call) && !(callee(code, call.args[1]) in accessors)])
     # A splatted keyword set lowers to two returns, without and with keywords; the last has them.
     returned = code[last([statement for statement in code if statement isa Core.ReturnNode]).val.id]
     work = callee(code, returned.args[1])
@@ -170,8 +175,6 @@ function lowered_calls(info, setup, accessors)
     if startswith(String(nameof(work)), '#')
         return lowered_calls(only(Base.code_lowered(work)), setup, accessors)
     end
-    whole = any(argument -> argument isa Core.SlotNumber && info.slotnames[argument.id] == setup,
-                returned.args[2:end])
     return reads, work, whole
 end
 
@@ -185,11 +188,27 @@ function component_supertype(name, supertypes)
     return nothing
 end
 
+# The package's functions named after a component, the ones a supertype's docstring lists first, so
+# an accessor a built-in type adds beyond its supertype's list is drawn too.
+function component_accessors(supertype, supertypes, modules)
+    declared = [resolve_function(name, modules) for bullet in hook_bullets(supertype)
+                for name in declared_names(bullet)]
+    others = sort!(unique([getfield(mod, name) for mod in modules for name in names(mod; all=true)
+                           if isdefined(mod, name) && getfield(mod, name) isa Function &&
+                              !(getfield(mod, name) in declared)]); by = nameof)
+    return [f for f in [declared; others]
+            if !isnothing(component_supertype(nameof(f), supertypes)) &&
+               component_supertype(nameof(f), supertypes) !== supertype]
+end
+
 function component_graph(io, supertypes, modules)
     edges = Tuple{Any,Symbol,Any}[]
-    for supertype in supertypes, bullet in hook_bullets(supertype), name in declared_names(bullet)
-        component = component_supertype(last(split(name, '.')), supertypes)
-        isnothing(component) || component === supertype || push!(edges, (supertype, Symbol(name), component))
+    for supertype in supertypes
+        accessors = component_accessors(supertype, supertypes, modules)
+        for type in implementations(supertype), accessor in accessors
+            implementation(accessor, type, supertype) == "own" &&
+                push!(edges, (type, nameof(accessor), component_supertype(nameof(accessor), supertypes)))
+        end
     end
     print(io, "```mermaid\nflowchart LR\n")
     for (from, accessor, to) in edges
@@ -221,7 +240,10 @@ function dispatch_map()
 
         ## Components
 
-        Which supertype each accessor returns, by the accessor's name.
+        Which supertype each accessor returns, by the accessor's name. An arrow starts at a built-in type
+        that has a method of that accessor, so a type that adds an accessor its supertype does not list
+        gets an arrow of its own, and one that lacks a required accessor gets none (its hook table says
+        **missing**).
 
         """)
     component_graph(io, supertypes, modules)
@@ -238,7 +260,12 @@ function dispatch_map()
     steps = [last.(CLI.SUBCOMMANDS); Simulations.build_simulation]
     for step in steps
         reads, work, whole = step_calls(step, accessors)
-        read_list = join(["`$name`" for name in reads], ", ") * (whole ? " and the whole setup" : "")
+        read_list = join(["`$name`" for name in reads], ", ")
+        through = [name for name in whole if name != nameof(work)]
+        if !isempty(whole)
+            read_list *= " and the whole setup"
+            isempty(through) || (read_list *= ", through " * join(["`$name`" for name in through], ", "))
+        end
         print(io, "| `", nameof(step), "` | ", read_list, " | `", nameof(work), "` |\n")
     end
     print(io, "\n## Hooks\n")

@@ -521,6 +521,8 @@ the method's business, not the caller's.
   `FjordSim.Simulations.NamesOutputFile`. A writer that names no product file (a checkpointer,
   whose files carry no run tag and are pruned) needs no such field, and `results_path` reports that
   as an error rather than reaching for a field that is not there.
+- `name`: the writer's `output_writers` key, read by the default `writer_keys`, for the same
+  writers as `output_file`.
 
 # Methods a subtype provides
 - `attach_writer!(simulation, writer, config, loop)`: attach this writer for repetition `loop`.
@@ -529,9 +531,12 @@ the method's business, not the caller's.
   Defaults to `NotCheckpointing()`.
 - `FjordSim.Simulations.output_path_trait(writer)`: whether this writer names a file the run should
   report. Defaults to `NamesNoOutputFile()`.
+- `FjordSim.Simulations.writer_keys(writer)`: the `output_writers` keys this writer occupies, as a
+  tuple. Defaults to `(writer.name,)` for a writer that names a file and `()` otherwise.
+- `FjordSim.Simulations.station_output(writer)`: whether this writer records the per-station series
+  `validate_simulation` scores. Defaults to `false`.
 
-`FjordSim.Simulations.SnapshotWriter` and `FjordSim.Simulations.CheckpointWriter` are the built-in
-implementations.
+The built-in implementations are in `FjordSim.Simulations`; `docs/dispatch-map.md` lists them.
 """
 abstract type AbstractWriterConfig end
 

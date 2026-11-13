@@ -9,28 +9,32 @@ has none (—, or **missing** for a required hook).
 
 ## Components
 
-Which supertype each accessor returns, by the accessor's name.
+Which supertype each accessor returns, by the accessor's name. An arrow starts at a built-in type
+that has a method of that accessor, so a type that adds an accessor its supertype does not list
+gets an arrow of its own, and one that lacks a required accessor gets none (its hook table says
+**missing**).
 
 ```mermaid
 flowchart LR
-    AbstractFjordConfig -- grid_config --> AbstractGridConfig
-    AbstractFjordConfig -- bathymetry_config --> AbstractBathymetryConfig
-    AbstractFjordConfig -- forcing_config --> AbstractForcingConfig
-    AbstractFjordConfig -- initial_state_config --> AbstractInitialStateConfig
-    AbstractFjordConfig -- river_config --> AbstractRiverConfig
-    AbstractFjordConfig -- boundary_data_config --> AbstractBoundaryDataConfig
-    AbstractFjordConfig -- atmosphere_config --> AbstractAtmosphereConfig
-    AbstractFjordConfig -- model_config --> AbstractModelConfig
-    AbstractFjordConfig -- biogeochemistry_config --> AbstractBiogeochemistryConfig
-    AbstractFjordConfig -- boundary_condition_configs --> AbstractBoundaryConditionConfig
-    AbstractFjordConfig -- run_config --> AbstractRunConfig
-    AbstractRunConfig -- writers --> AbstractWriterConfig
-    AbstractRunConfig -- callbacks --> AbstractCallbackConfig
-    AbstractRunConfig -- time_stepping --> AbstractTimeSteppingConfig
-    AbstractRunConfig -- initial_conditions --> AbstractInitialConditionsConfig
+    FjordConfig -- grid_config --> AbstractGridConfig
+    FjordConfig -- bathymetry_config --> AbstractBathymetryConfig
+    FjordConfig -- forcing_config --> AbstractForcingConfig
+    FjordConfig -- initial_state_config --> AbstractInitialStateConfig
+    FjordConfig -- river_config --> AbstractRiverConfig
+    FjordConfig -- boundary_data_config --> AbstractBoundaryDataConfig
+    FjordConfig -- atmosphere_config --> AbstractAtmosphereConfig
+    FjordConfig -- model_config --> AbstractModelConfig
+    FjordConfig -- biogeochemistry_config --> AbstractBiogeochemistryConfig
+    FjordConfig -- boundary_condition_configs --> AbstractBoundaryConditionConfig
+    FjordConfig -- run_config --> AbstractRunConfig
+    FjordConfig -- observation_configs --> AbstractObservationConfig
+    RunConfig -- writers --> AbstractWriterConfig
+    RunConfig -- callbacks --> AbstractCallbackConfig
+    RunConfig -- time_stepping --> AbstractTimeSteppingConfig
+    RunConfig -- initial_conditions --> AbstractInitialConditionsConfig
 ```
 
-Not reached through an accessor: `AbstractClosureConfig`, `AbstractFreeSurfaceConfig`, `AbstractObservationConfig`, `AbstractRadiativeForcingConfig`, `AbstractSeaIceConfig`.
+Not reached through an accessor: `AbstractClosureConfig`, `AbstractFreeSurfaceConfig`, `AbstractRadiativeForcingConfig`, `AbstractSeaIceConfig`.
 
 ## Steps
 
@@ -49,8 +53,8 @@ and hands them to the work function, which dispatches on them.
 | `prepare_boundary_data` | `grid_config`, `bathymetry_config`, `boundary_data_config` | `regrid_boundary_data` |
 | `download_atmosphere` | `grid_config`, `atmosphere_config` | `fetch_atmosphere` |
 | `prepare_atmosphere` | `grid_config`, `atmosphere_config` | `regrid_atmosphere` |
-| `run_simulation` | `run_config` | `run_loops` |
-| `validate_simulation` | `run_config`, `bathymetry_config` | `score_run` |
+| `run_simulation` | `run_config` and the whole setup, through `build_simulation` | `run_loops` |
+| `validate_simulation` | `run_config`, `bathymetry_config`, `observation_configs` | `score_run` |
 | `build_simulation` | `run_config` and the whole setup | `assemble_simulation` |
 
 ## Hooks
@@ -128,6 +132,7 @@ No built-in implementation.
 | `biogeochemistry_config` | required | ✓ |
 | `boundary_condition_configs` | required | ✓ |
 | `run_config` | required | ✓ |
+| `observation_configs` | required | ✓ |
 | `FjordSim.Simulations.model_inputs` | optional | default |
 | `FjordSim.CLI.pipeline_steps` | optional | default |
 
@@ -239,3 +244,5 @@ No built-in implementation.
 | `attach_writer!` | required | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `FjordSim.Simulations.checkpoint_trait` | optional | ✓ | default | default | default | default | default | default | default |
 | `FjordSim.Simulations.output_path_trait` | optional | default | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `FjordSim.Simulations.writer_keys` | optional | default | default | ✓ | default | default | default | ✓ | default |
+| `FjordSim.Simulations.station_output` | optional | default | default | ✓ | default | default | default | ✓ | default |

@@ -191,6 +191,10 @@ spacing have to be worked out for the new grid rather than copied:
   and shields it from the wind, without drifting. In fresh water `ice_salinity` must be 0, or freezing
   drives the salinity negative. Without snow the ice grows too thick, so set
   `NORA3Config(snowfall = true)` too, which needs its own download.
+- **Shortwave below the surface.** `radiative_forcing = nothing` heats the top cell with all of the
+  transmitted shortwave. `TwoColorRadiationConfig(...)` spreads it down in two bands; the second
+  band's `second_decay_scale` is the water's clarity, a few metres in a turbid fjord against
+  NumericalEarth's 23 m open-ocean default.
 - **Open boundaries.** `OpenLateralBoundaryFromData`'s `inflow_timescale` relaxes by `Δt/τ` per step;
   compare that with the advective rate into the boundary cell, `u/Δx`, or the nudging does nothing.
   Too strong an inflow nudge reflects. A `BoundarySponge` damps what the open edges radiate.

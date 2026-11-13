@@ -272,6 +272,8 @@ FjordConfig(
         tracers            = (:T, :S),
         coriolis           = HydrostaticSphericalCoriolis(FT),
         sea_ice            = FreezingLimitedOceanTemperature(FT),
+        # All of the shortwave heats the top cell.
+        radiative_forcing  = nothing,
         free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),
         extra_kwargs       = (;),
     ),

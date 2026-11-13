@@ -301,6 +301,7 @@ FjordConfig(
         tracers = (:T, :S, ECOSMO_TRACERS...),
         coriolis = physics.coriolis,
         sea_ice = physics.sea_ice,
+        radiative_forcing = physics.radiative_forcing,
         free_surface = physics.free_surface,
         extra_kwargs = physics.extra_kwargs,
     ),

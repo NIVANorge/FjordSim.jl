@@ -4,6 +4,7 @@ export RunConfig,
     CoupledHydrostaticModel,
     SplitExplicitFreeSurfaceConfig,
     SlabSeaIce,
+    TwoColorRadiationConfig,
     BoundarySponge,
     RiverMouthMixing,
     SnapshotWriter,
@@ -33,6 +34,7 @@ using Oceananigans.Grids: x_domain, y_domain, node, λnodes, φnodes, znodes, Ce
 using Oceananigans.Fields: location
 using Oceananigans.AbstractOperations: @at
 using NumericalEarth
+using NumericalEarth: TwoColorRadiation, ChlorophyllOptics, equivalent_chlorophyll
 using ClimaSeaIce: ConductiveFlux
 using Dates: DateTime, Millisecond, Second, format, now
 using Printf: @sprintf
@@ -46,6 +48,7 @@ using ..Configs:
     AbstractModelConfig,
     AbstractFreeSurfaceConfig,
     AbstractSeaIceConfig,
+    AbstractRadiativeForcingConfig,
     AbstractClosureConfig,
     AbstractWriterConfig,
     AbstractCallbackConfig,
@@ -158,6 +161,64 @@ function model_sea_ice(config::SlabSeaIce, grid, ocean)
         clock = model_clock(),
     )
 end
+
+"""
+    TwoColorRadiationConfig(; first_color_fraction, first_decay_scale, second_decay_scale)
+
+The built-in `AbstractRadiativeForcingConfig`: NumericalEarth's `TwoColorRadiation`, the transmitted
+shortwave split into two bands, each decaying exponentially with depth. What reaches the seabed heats
+the bottom cell.
+
+- `first_color_fraction`: the share of the shortwave in the first (red) band.
+- `first_decay_scale`: the red band's e-folding depth (m).
+- `second_decay_scale`: the second (blue-green) band's e-folding depth (m), set by the water's
+  clarity. NumericalEarth expresses it as a uniform chlorophyll, which this converts it to, so it
+  must be shorter than clear water's 43 m.
+"""
+struct TwoColorRadiationConfig <: AbstractRadiativeForcingConfig
+    first_color_fraction::Float64
+    first_decay_scale::Float64
+    second_decay_scale::Float64
+end
+
+function TwoColorRadiationConfig(; first_color_fraction, first_decay_scale, second_decay_scale)
+    clear_water = 1 / ChlorophyllOptics(Float64).clear_water_attenuation
+    0 < second_decay_scale < clear_water || throw(ArgumentError(
+        "second_decay_scale must lie between 0 and clear water's $(round(clear_water, digits = 1)) m, " *
+        "got $second_decay_scale.",
+    ))
+    return TwoColorRadiationConfig(
+        Float64(first_color_fraction),
+        Float64(first_decay_scale),
+        Float64(second_decay_scale),
+    )
+end
+
+"""
+    model_radiative_forcing(config, grid)
+
+The temperature forcing a model config's `radiative_forcing` adds on `grid`, or `nothing` for none.
+"""
+model_radiative_forcing(::Nothing, grid) = nothing
+
+function model_radiative_forcing(config::TwoColorRadiationConfig, grid)
+    optics = ChlorophyllOptics(eltype(grid))
+    return TwoColorRadiation(
+        grid;
+        first_color_fraction = config.first_color_fraction,
+        first_decay_scale = config.first_decay_scale,
+        chlorophyll_optics = optics,
+        chlorophyll = equivalent_chlorophyll(optics, 1 / config.second_decay_scale),
+    )
+end
+
+"""
+    add_radiative_forcing(forcing, radiative_forcing)
+
+`forcing` with `radiative_forcing` added to its temperature term, where NumericalEarth looks for it.
+"""
+add_radiative_forcing(forcing, ::Nothing) = forcing
+add_radiative_forcing(forcing, radiative_forcing) = combine_forcing(forcing, (; T = radiative_forcing))
 
 """
     model_closure(closure, grid, boundary_data_config, river_columns)
@@ -435,7 +496,8 @@ end
 
 """
     CoupledHydrostaticModel(; buoyancy, closure, tracer_advection, momentum_advection,
-                              tracers, coriolis, sea_ice, free_surface, extra_kwargs)
+                              tracers, coriolis, sea_ice, radiative_forcing, free_surface,
+                              extra_kwargs)
 
 What the model *is*: a `HydrostaticFreeSurfaceModel` inside a NumericalEarth `OceanSeaIceModel`.
 
@@ -444,7 +506,8 @@ objects `coupled_model` consumes rather than as knobs it has to interpret. `free
 exception: it is itself an `AbstractFreeSurfaceConfig`, built by its own `free_surface(config, grid)`
 hook, because `SplitExplicitFreeSurface` needs the grid, which only exists once `coupled_model` is
 called. `closure` may be an `AbstractClosureConfig` too, resolved by `model_closure`, and `sea_ice`
-an `AbstractSeaIceConfig`, resolved by `model_sea_ice`. The biogeochemistry is not a field: it is
+an `AbstractSeaIceConfig`, resolved by `model_sea_ice`, and `radiative_forcing` an
+`AbstractRadiativeForcingConfig` or `nothing`, resolved by `model_radiative_forcing`. The biogeochemistry is not a field: it is
 the setup's `biogeochemistry_config`, a component of its own, and reaches `coupled_model` as a
 keyword.
 
@@ -453,9 +516,9 @@ and a default would let the next setup silently inherit it, so a setup that forg
 `UndefKeywordError` naming it rather than a plausible-looking run. `extra_kwargs` is no exception: a
 setup that passes nothing extra still writes `extra_kwargs = (;)`.
 
-Nine type parameters. Eight are components, and the ninth collapses the rest: rather than one field
+Ten type parameters. Nine are components, and the tenth collapses the rest: rather than one field
 per remaining constructor keyword — `HydrostaticFreeSurfaceModel` alone has eight this does not name
-— `extra_kwargs` carries all of them in one `NamedTuple`. **Do not add a tenth**; anything new goes
+— `extra_kwargs` carries all of them in one `NamedTuple`. **Do not add an eleventh**; anything new goes
 inside `extra_kwargs`, which is exactly what it is for. The "config" testset guards the count.
 
 # `extra_kwargs`
@@ -480,7 +543,7 @@ validating at construction. That also puts this type in the same category as `Sn
 `ProgressCallback` rather than `RunConfig`'s: the `Base.@kwdef`-on-a-parametric-struct rule
 that makes `loops = 1.0` a `MethodError` there does not apply here.
 """
-struct CoupledHydrostaticModel{B,C,TA,MA,TR,CO,SI,FS,EK<:NamedTuple} <: AbstractModelConfig
+struct CoupledHydrostaticModel{B,C,TA,MA,TR,CO,SI,RF,FS,EK<:NamedTuple} <: AbstractModelConfig
     buoyancy::B
     closure::C
     tracer_advection::TA
@@ -488,6 +551,7 @@ struct CoupledHydrostaticModel{B,C,TA,MA,TR,CO,SI,FS,EK<:NamedTuple} <: Abstract
     tracers::TR
     coriolis::CO
     sea_ice::SI
+    radiative_forcing::RF
     free_surface::FS
     extra_kwargs::EK
 end
@@ -564,6 +628,7 @@ function CoupledHydrostaticModel(;
     tracers,
     coriolis,
     sea_ice,
+    radiative_forcing,
     free_surface,
     extra_kwargs,
 )
@@ -575,6 +640,7 @@ function CoupledHydrostaticModel(;
         tracers,
         coriolis,
         sea_ice,
+        radiative_forcing,
         free_surface,
         validate_extra_kwargs(extra_kwargs),
     )
@@ -2932,7 +2998,9 @@ edges *and* the river columns. The fallback of `model_closure` is the identity, 
 Oceananigans closure passes through untouched. `model.tracer_advection` goes through
 `model_tracer_advection` the same way, for `RiverMouthAdvection`, which needs the river columns.
 `model.sea_ice` goes through `model_sea_ice`, whose identity fallback passes a plain component
-through, because a sea-ice model needs the grid and the ocean simulation.
+through, because a sea-ice model needs the grid and the ocean simulation. `model.radiative_forcing`
+goes through `model_radiative_forcing` and is added to the temperature forcing, where
+NumericalEarth's `OceanSeaIceModel` looks for penetrating shortwave.
 
 `OceanSeaIceModel` takes the ocean as a `Simulation`, which is why this needs `stop_time` and
 `initial_time_step`; the outer `Simulation` stepping the coupled model is `build_simulation`'s.
@@ -2964,7 +3032,7 @@ function coupled_model(
         tracers = model.tracers,
         free_surface = free_surface(model.free_surface, grid),
         coriolis = model.coriolis,
-        forcing = forcing,
+        forcing = add_radiative_forcing(forcing, model_radiative_forcing(model.radiative_forcing, grid)),
         boundary_conditions = boundary_conditions,
         biogeochemistry = biogeochemistry,
         clock = model_clock(),

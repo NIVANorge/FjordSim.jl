@@ -41,6 +41,7 @@ export
     CoupledHydrostaticModel,
     SplitExplicitFreeSurfaceConfig,
     SlabSeaIce,
+    TwoColorRadiationConfig,
     BoundarySponge,
     RiverMouthMixing,
     RiverMouthAdvection,

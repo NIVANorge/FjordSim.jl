@@ -103,6 +103,7 @@ for accessor in (
     :biogeochemistry_config,
     :boundary_condition_configs,
     :run_config,
+    :observation_configs,
 )
     @eval FjordSim.Configs.$accessor(config::DelegatingFjord) = FjordSim.Configs.$accessor(config.base)
 end
@@ -305,6 +306,7 @@ function test_model_fields(; kwargs...)
         :tracers => (:T, :S),
         :coriolis => HydrostaticSphericalCoriolis(),
         :sea_ice => FreezingLimitedOceanTemperature(),
+        :radiative_forcing => nothing,
         :free_surface => SplitExplicitFreeSurfaceConfig(cfl = 0.7),
         # The pass-through slots, empty. Stated rather than defaulted, like every other field here —
         # the "no field has a default" sweep covers this one too.

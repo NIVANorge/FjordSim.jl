@@ -82,8 +82,8 @@
 # `default_observations` builds it automatically from the stations the `:tidegauge` writer records
 # `η` at. The NIVA CTD series, the Fagrådet Inner Oslofjord programme, the current moorings and the
 # temperature sites are held by their owners rather than published, so each wants a reader
-# subtyping `AbstractObservationConfig` (or a `CsvObservations` over an export) passed to
-# `validate_simulation` explicitly — see `docs/adding-a-source.md`. Their station names must be spelt
+# subtyping `AbstractObservationConfig` (or a `CsvObservations` over an export), named in
+# `observation_configs` below — see `docs/adding-a-source.md`. Their station names must be spelt
 # as below, since stations are matched between a source and the run by `name`.
 #
 # # Preparing and running it
@@ -295,6 +295,26 @@ const DRAMMENSFJORD_SECTION = [
     Station(name = "DS-75", longitude = 10.40513, latitude = 59.51600),  # 33.69 km, 156.0 m
     Station(name = "DS-76", longitude = 10.40513, latitude = 59.51422),  # 33.89 km, 153.4 m
 ]
+
+# IMR's monthly casts, from Vannmiljø (`observations/imr_ctd_2024-2026/stations.csv`): ØkoKyst
+# and the Tisler acidification stations. Exact. Named as IMR names them, which is how the casts are
+# matched. Torbjørnskjær and Breiangen vest are OF-1 and OF-5, Bastøy and Missingene OF-4 and OF-2.
+# Færder lies 12 rows from the southern edge, inside the boundary sponge; Missingene's cell is 110 m
+# deep against casts to 350 m, and Tisler-5's 31 m against 120 m, with 120 m water a cell away.
+const IMR_STATIONS = [
+    Station(name = "Bastøy",         longitude = 10.590569, latitude = 59.358670),  # cast to 280 m
+    Station(name = "Breiangen vest", longitude = 10.458333, latitude = 59.486668),  # cast to 190 m
+    Station(name = "Færder",         longitude = 10.550012, latitude = 58.966672),  # cast to 150 m
+    Station(name = "Missingene",     longitude = 10.653178, latitude = 59.191948),  # cast to 350 m
+    Station(name = "Tisler-1",       longitude = 10.975667, latitude = 58.992333),  # cast to 130 m
+    Station(name = "Tisler-5",       longitude = 10.958000, latitude = 58.997333),  # cast to 120 m
+    Station(name = "Torbjørnskjær",  longitude = 10.760812, latitude = 59.040700),  # cast to 440 m
+]
+
+# The NIVA stations the casts are scored at, and every station the hydrography writer profiles.
+const NIVA_CTD_STATIONS =
+    vcat(OSLOFJORD_CTD_STATIONS, OSLOFJORD_PROGRAMME_STATIONS, INNER_OSLOFJORD_STATIONS)
+const OSLOFJORD_HYDROGRAPHY_STATIONS = vcat(NIVA_CTD_STATIONS, IMR_STATIONS)
 
 # Fixed-point temperature sites, METreport 11/2017 §3.4 and Figs. 3-4. All APPROXIMATE: the Scanmar
 # mooring is placed only as "three kilometres south of Åsgårdstrand" and the three beaches only on a
@@ -1147,18 +1167,44 @@ FjordConfig(
         # growing up to 4 m a day (Larvik, the Glomma sound, Svelvik). Upwinding only cells with two
         # wet neighbours moved it to the next cell at Larvik, which has three.
         #
+        # On a face too close to land, the seabed or the surface for its stencil, WENO drops to a
+        # lower order, and by default at last to `Centered(order = 2)`: the face carries the mean
+        # of its two cells, so water leaving a cell colder or saltier than its neighbour takes
+        # heat or salt the cell does not have. That left single cells at -1.9 °C and above 36 g/kg
+        # and, under a slab ice, grew the ice at Svelvik. `minimum_buffer_upwind_order = 1` ends
+        # the fallback in first-order upwind instead, which cannot overshoot.
+        #
         # Oceananigans gives any tracer a NamedTuple omits the unbounded `Centered()` default,
         # so it names CATKE's `e`, and a setup adding tracers must name those too.
         tracer_advection   = (
-            T = RiverMouthAdvection(interior = WENO(FT), width_cells = 3, narrow_cells = true),
-            S = RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 3, narrow_cells = true),
-            e = WENO(FT),
+            T = RiverMouthAdvection(
+                interior = WENO(FT; minimum_buffer_upwind_order = 1),
+                width_cells = 3,
+                narrow_cells = true,
+            ),
+            S = RiverMouthAdvection(
+                interior = WENO(FT; bounds = (0, 40), minimum_buffer_upwind_order = 1),
+                width_cells = 3,
+                narrow_cells = true,
+            ),
+            e = WENO(FT; minimum_buffer_upwind_order = 1),
         ),
         momentum_advection = WENOVectorInvariant(FT),
         tracers            = (:T, :S),
         coriolis           = HydrostaticSphericalCoriolis(FT),
         # Every level clamped at freezing, the heat that takes discarded: see the top of the file.
         sea_ice            = FreezingLimitedOceanTemperature(FT),
+        # The shortwave heats the water below the top cell too. With all of it in the 1 m top cell,
+        # the run of stamp 20261107T210205 held the summer heat in the top metre: 29-33 °C cells in
+        # July 2025, 3.1-3.5 °C too cold at 2.5 m against the casts and 0.8-1.8 °C too cold at
+        # 5-20 m. The red band is NumericalEarth's (58 % over 0.35 m). The blue-green band's 3 m is
+        # an assumption from the fjord's 4-6 m Secchi depths, an attenuation of about 1.7/Secchi:
+        # NumericalEarth's 23 m default is open-ocean water.
+        radiative_forcing  = TwoColorRadiationConfig(
+            first_color_fraction = 0.58,
+            first_decay_scale    = 0.35,
+            second_decay_scale   = 3.0,
+        ),
         # Overloads free_surface(config, grid) — its own hook, called from inside
         # coupled_model once the grid exists.
         free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),
@@ -1269,8 +1315,7 @@ FjordConfig(
                 name               = :hydrography,
                 output_file        = "stations_hydrography.nc",
                 variables          = (:T, :S, :e),
-                stations           = vcat(OSLOFJORD_CTD_STATIONS, OSLOFJORD_PROGRAMME_STATIONS,
-                                          INNER_OSLOFJORD_STATIONS),
+                stations           = OSLOFJORD_HYDROGRAPHY_STATIONS,
                 interval           = 1hour,
                 overwrite_existing = true,
             ),
@@ -1320,5 +1365,24 @@ FjordConfig(
         # state over; each repetition writes its own `_loopNN` file.
         loops              = 1,
         pickup             = false,
+    ),
+    # The NIVA casts of both programmes, exported from NIVA's ODM2 database: October 2024 to
+    # September 2026, the whole run. The AquaMonitor export beside it holds the same
+    # casts to December 2025 and would score them twice. Then IMR's, monthly to March 2026.
+    observation_configs = (
+        CsvObservations(
+            data_root        = data_root,
+            output_directory = joinpath("observations", "niva_ctd_odm2_2024-2026"),
+            variables        = ["T", "S"],
+            stations         = NIVA_CTD_STATIONS,
+            source           = "NIVA",
+        ),
+        CsvObservations(
+            data_root        = data_root,
+            output_directory = joinpath("observations", "imr_ctd_2024-2026"),
+            variables        = ["T", "S"],
+            stations         = IMR_STATIONS,
+            source           = "IMR",
+        ),
     ),
 )

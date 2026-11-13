@@ -212,6 +212,8 @@ FjordConfig(
         tracers            = (:T, :S),
         coriolis           = HydrostaticSphericalCoriolis(FT),
         sea_ice            = FreezingLimitedOceanTemperature(FT),
+        # All of the shortwave heats the top cell.
+        radiative_forcing  = nothing,
         # Overloads free_surface(config, grid), called from inside coupled_model once the
         # grid exists.
         free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),

@@ -416,6 +416,25 @@ which the fallback `model_sea_ice` passes through unchanged.
 abstract type AbstractSeaIceConfig end
 
 """
+    AbstractRadiativeForcingConfig
+
+Supertype for how shortwave radiation is absorbed below the surface. A concrete subtype names the
+water's optics, and its `model_radiative_forcing(config, grid)` method builds the temperature forcing
+`coupled_model` adds to the model's, which NumericalEarth's `OceanSeaIceModel` finds there and hands
+the transmitted shortwave to instead of heating the top cell with it. A model config's
+`radiative_forcing` may also be `nothing`, which keeps the whole shortwave in the top cell.
+
+A config rather than the built object because the forcing holds a field on the grid, which does not
+exist until `coupled_model` is called.
+
+# Methods a subtype provides
+- `model_radiative_forcing(config, grid)`: build the forcing. Required.
+
+`FjordSim.Simulations.TwoColorRadiationConfig` is the built-in implementation.
+"""
+abstract type AbstractRadiativeForcingConfig end
+
+"""
     AbstractClosureConfig
 
 Supertype for *closure* configurations. A concrete subtype names a turbulence closure's knobs, and
@@ -578,6 +597,8 @@ of input, by overloading that one function on itself rather than copying a body.
   `river_config`, `boundary_data_config`, `atmosphere_config`, `model_config`,
   `biogeochemistry_config`, `boundary_condition_configs` and `run_config`, each returning that
   component or `nothing`. Required.
+- `observation_configs`: the observation sources `validate_simulation` scores the run against
+  besides the ones it builds itself, as a tuple, `()` for none. Required.
 - `FjordSim.Simulations.model_inputs(config, grid, run)`: the keywords
   `coupled_model` receives. Optional; overload it to feed the model an input of a new kind.
 - `FjordSim.CLI.pipeline_steps(config)`: the steps the command line offers, as `name => function`
@@ -627,6 +648,10 @@ biogeochemistry, its boundary conditions and the run. Each step dispatches on th
   `run_config` must name one, `()` for the model's defaults everywhere.
 - `run_config`: any `AbstractRunConfig`, or `nothing` for a setup that is only
   prepared and not run. Defaults to `nothing`, so a setup opts in by naming one.
+- `observation_configs`: a tuple of `FjordSim.Validation.AbstractObservationConfig`s that
+  `validate_simulation` scores the run against, besides the Kartverket gauges it finds itself.
+  Defaults to `()`. Held programmes, such as monitoring casts exported to a `CsvObservations`, go
+  here.
 
 # Example
 
@@ -654,6 +679,7 @@ Base.@kwdef mutable struct FjordConfig{
     BG,
     BC,
     S,
+    O<:Tuple,
 } <: AbstractFjordConfig
     grid_config::G
     bathymetry_config::B
@@ -666,6 +692,7 @@ Base.@kwdef mutable struct FjordConfig{
     biogeochemistry_config::BG = nothing
     boundary_condition_configs::BC = nothing
     run_config::S = nothing
+    observation_configs::O = ()
 end
 
 grid_config(config::FjordConfig) = config.grid_config
@@ -679,5 +706,6 @@ model_config(config::FjordConfig) = config.model_config
 biogeochemistry_config(config::FjordConfig) = config.biogeochemistry_config
 boundary_condition_configs(config::FjordConfig) = config.boundary_condition_configs
 run_config(config::FjordConfig) = config.run_config
+observation_configs(config::FjordConfig) = config.observation_configs
 
 end  # module Configs

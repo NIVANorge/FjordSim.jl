@@ -619,6 +619,7 @@ FjordConfig(
         tracers = (:T, :S, :N, :P, :Z, :D),
         coriolis = base_model.coriolis,
         sea_ice = base_model.sea_ice,
+        radiative_forcing = base_model.radiative_forcing,
         free_surface = base_model.free_surface,
         extra_kwargs = base_model.extra_kwargs,
     ),

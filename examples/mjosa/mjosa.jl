@@ -172,6 +172,8 @@ FjordConfig(
         coriolis           = HydrostaticSphericalCoriolis(FT),
         # Fresh ice, so freezing takes no salt from the lake; 2 W m⁻¹ K⁻¹ is ClimaSeaIce's value.
         sea_ice            = SlabSeaIce(ice_salinity = 0, conductivity = 2),
+        # All of the shortwave heats the top cell.
+        radiative_forcing  = nothing,
         free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),
         extra_kwargs       = (;),
     ),

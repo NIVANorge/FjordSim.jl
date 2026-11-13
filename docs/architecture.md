@@ -688,12 +688,21 @@ forcing terms, the open tracer boundaries and the initial conditions each build 
 
 `CoupledHydrostaticModel` stores eight grid-independent model components plus `extra_kwargs`:
 one `NamedTuple` per constructor `coupled_model` calls (`ocean_model`, `ocean_simulation`,
-`coupled_model`), splatted after the explicit keywords. Nine fields is the ceiling; anything further
+`coupled_model`), splatted after the explicit keywords. Ten fields is the ceiling; anything further
 goes in `extra_kwargs`. Because a duplicate key would silently win, `validate_extra_kwargs` rejects a
 key `coupled_model` already passes (`EXTRA_KWARG_SLOTS`), at construction, where the error still
 points at the setup file.
 
 `free_surface` is a config with its own hook because `SplitExplicitFreeSurface` needs the grid.
+
+### `radiative_forcing` and `TwoColorRadiationConfig`
+
+NumericalEarth heats the top cell with the whole transmitted shortwave unless it finds a
+`TwoColorRadiation` among the ocean's temperature forcing (`get_radiative_forcing`), and its own
+`ocean_simulation` adds one, which `coupled_model` does not call. `radiative_forcing` is therefore an
+`AbstractRadiativeForcingConfig` or `nothing`, resolved by `model_radiative_forcing(config, grid)`
+because the forcing holds a field on the grid, and added to the T forcing by `combine_forcing` after
+`model_inputs`, so the boundary conditions, built from the file forcing, never see it.
 
 ### `sea_ice` and `SlabSeaIce`
 

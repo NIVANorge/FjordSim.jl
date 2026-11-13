@@ -95,6 +95,7 @@ end
             :CoupledHydrostaticModel,
             :SplitExplicitFreeSurfaceConfig,
             :SlabSeaIce,
+            :TwoColorRadiationConfig,
             :BoundarySponge,
             :RiverMouthMixing,
             :RiverMouthAdvection,
@@ -4900,11 +4901,11 @@ end
         # new subtype of an existing supertype is never a new field. The model and its boundary
         # conditions are the setup's own components, not nested here.
         @test length(typeof(config).parameters) == 4
-        # Eight components plus `extra_kwargs`: rather than a field per remaining constructor
-        # keyword, one `NamedTuple` carries all of them. Nine is the ceiling — anything further goes
+        # Nine components plus `extra_kwargs`: rather than a field per remaining constructor
+        # keyword, one `NamedTuple` carries all of them. Ten is the ceiling — anything further goes
         # inside `extra_kwargs`. `free_surface` counts here too: it is itself a config, not a bare
         # `Float64`, dispatched by its own `free_surface(config, grid)` hook.
-        @test length(typeof(test_model_config()).parameters) == 9
+        @test length(typeof(test_model_config()).parameters) == 10
 
         # The tracer list reaches `build_simulation` through a hook rather than a field read, so a
         # model config that names its tracers differently still composes.
@@ -5188,6 +5189,46 @@ end
         rewind_clock!(ClockHolder(clock))
         @test clock.time == 0
         @test clock.iteration == 0
+    end
+
+    @testset "penetrating shortwave" begin
+        model_radiative_forcing = FjordSim.Simulations.model_radiative_forcing
+        add_radiative_forcing = FjordSim.Simulations.add_radiative_forcing
+
+        # `nothing` keeps the whole shortwave in the top cell: no forcing, nothing added.
+        @test isnothing(model_radiative_forcing(nothing, nothing))
+        forcing = (; S = 1)
+        @test add_radiative_forcing(forcing, nothing) === forcing
+
+        # The blue-green decay scale stands for a chlorophyll, which clear water bounds.
+        @test_throws ArgumentError TwoColorRadiationConfig(
+            first_color_fraction = 0.58, first_decay_scale = 0.35, second_decay_scale = 50,
+        )
+
+        # One column of 1 m cells, so each cell's share of the shortwave is the exponential's.
+        grid = RectilinearGrid(CPU(), Float32; size = (1, 1, 20), x = (0, 1), y = (0, 1), z = (-20, 0),
+                               topology = (Periodic, Periodic, Bounded))
+        config = TwoColorRadiationConfig(first_color_fraction = 0.58, first_decay_scale = 0.35,
+                                         second_decay_scale = 3)
+        radiation = model_radiative_forcing(config, grid)
+        @test radiation isa NumericalEarth.TwoColorRadiation
+        @test radiation.first_color_fraction === 0.58f0
+        @test 1 / radiation.second_absorption_coefficient ≈ 3 rtol = 1e-4
+
+        # Added to the temperature forcing, beside whatever is there, which is where
+        # `OceanSeaIceModel` looks for it.
+        @test add_radiative_forcing((; T = 1, S = 2), radiation) == (; T = (1, radiation), S = 2)
+        @test add_radiative_forcing((;), radiation).T === radiation
+        model = HydrostaticFreeSurfaceModel(grid; tracers = (:T, :S), buoyancy = nothing,
+                                            forcing = add_radiative_forcing((;), radiation))
+        @test NumericalEarth.Oceans.get_radiative_forcing(model) === radiation
+
+        # The column absorbs the whole surface flux, the part reaching the seabed in the bottom cell,
+        # and the top cell only the share both bands lose in its first metre.
+        radiation.surface_flux[1, 1, 1] = 1
+        heating = [radiation(1, 1, k, grid, nothing, nothing) for k in 1:20]
+        @test sum(heating) ≈ 1 rtol = 1e-5
+        @test heating[20] ≈ 0.58 * (1 - exp(-1 / 0.35)) + 0.42 * (1 - exp(-1 / 3)) rtol = 1e-4
     end
 
     @testset "slab sea ice" begin
@@ -6341,6 +6382,38 @@ end
         converted = observation_series(semicolon, stations[1], "T"; window)
         @test converted.times == [DateTime(2015, 6, 1, 12)]
         @test converted.values[1, 1] ≈ 15.0
+    end
+
+    @testset "a setup's own observation sources" begin
+        mktempdir() do tmp
+            station = Station(name = "Km1", longitude = 10.627372, latitude = 59.582064)
+            source = CsvObservations(data_root = tmp, variables = ["T"], stations = [station])
+            mkpath(dirname(FjordSim.Validation.csv_observation_path(source, station, "T")))
+            write(
+                FjordSim.Validation.csv_observation_path(source, station, "T"),
+                "time,depth,value\n2020-01-01T12:00:00,1.0,5.0\n",
+            )
+            writer = StationWriter(
+                name = :hydrography,
+                output_file = "stations_hydrography.nc",
+                variables = (:T,),
+                stations = [station],
+                interval = 3600.0,
+                overwrite_existing = true,
+            )
+            bare = (; grid_config = test_grid_config(), bathymetry_config = test_bathymetry_config(data_root = tmp))
+            @test FjordSim.Configs.observation_configs(FjordConfig(; bare...)) === ()
+
+            # `validate_simulation` reads the setup's own sources: the cast is found, and with no
+            # station output yet it is a blank row rather than an error.
+            config = FjordConfig(;
+                bare...,
+                run_config = test_run_config(results_root = tmp, writers = (writer,)),
+                observation_configs = (source,),
+            )
+            @test FjordSim.Configs.observation_configs(config) === (source,)
+            @test_logs (:info, "  no model output for Km1 T") match_mode = :any validate_simulation(config)
+        end
     end
 
     @testset "profile interpolation" begin

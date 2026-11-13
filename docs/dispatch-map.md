@@ -30,7 +30,7 @@ flowchart LR
     AbstractRunConfig -- initial_conditions --> AbstractInitialConditionsConfig
 ```
 
-Not reached through an accessor: `AbstractClosureConfig`, `AbstractFreeSurfaceConfig`, `AbstractObservationConfig`, `AbstractSeaIceConfig`.
+Not reached through an accessor: `AbstractClosureConfig`, `AbstractFreeSurfaceConfig`, `AbstractObservationConfig`, `AbstractRadiativeForcingConfig`, `AbstractSeaIceConfig`.
 
 ## Steps
 
@@ -186,6 +186,12 @@ No built-in implementation.
 | `observation_series` | required | ✓ | ✓ |
 | `download_observations` | optional | default | ✓ |
 | `observations_directory` | optional | default | default |
+
+### `AbstractRadiativeForcingConfig`
+
+| Hook | Status | `TwoColorRadiationConfig` |
+|---|---|---|
+| `model_radiative_forcing` | required | ✓ |
 
 ### `AbstractRiverConfig`
 

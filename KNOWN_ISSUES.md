@@ -9,11 +9,8 @@
   2026 and Sandvikselva's from 4 August 2026 to the end. Lierelva (Oppsal) reads 0 m³/s from 6 May
   2026 to the end and Mossevassdraget (Moss dam) from 7 May to early September 2026, both
   uncontrolled values.
-- `validate_simulation` scores only Kartverket water level, which it fetches itself. The NIVA casts
-  are exported to `observations/niva_ctd_2024-2025` (AquaMonitor, June 2024 – December 2025) and
-  `observations/niva_ctd_odm2_2024-2026` (NIVA's ODM2 database, October 2024 – September 2026), IMR's
-  ØkoKyst and Tisler casts to `observations/imr_ctd_2024-2026` (Vannmiljø, to March 2026), but it
-  reads them only from a `CsvObservations` passed to it.
+- IMR's Missingene is 110 m deep within a cell of the station against casts to 350 m, Tisler-5 31 m
+  against 120 m (120 m water is a cell away), and Færder lies inside the southern boundary sponge.
 - `CastCorrectedInitialState` is untested in a run. It leaves 121 surface cell pairs between cast
   and Norkyst columns, 6.3 g/kg apart (median), at the Drøbak and Svelvik sills and around inner-fjord
   pockets it does not reach; the cast profiles add 3200 small density inversions (≤ 0.43 kg/m³,

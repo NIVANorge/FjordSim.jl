@@ -36,6 +36,7 @@ using ..Configs:
     AbstractRunConfig,
     AbstractFjordConfig,
     bathymetry_config,
+    observation_configs,
     run_config,
     results_root,
     writers,
@@ -130,8 +131,8 @@ water level — so a setup gets this for free by naming its gauges and nothing e
 
 Held programmes — current-meter moorings, monitoring CTD casts, fixed thermistors — are **not** here
 and cannot be: they are held by their owners rather than published, so a source for them is a
-reader over files someone supplies, such as a `CsvObservations`. Pass those to `validate_simulation`
-explicitly once their exports exist.
+reader over files someone supplies, such as a `CsvObservations`. A setup names those in its
+`observation_configs`, which `validate_simulation` scores after these.
 
 Returns an empty tuple for a setup with no free-surface station writer, which is not an error —
 `validate_simulation` will simply find nothing to score and say so.
@@ -156,14 +157,14 @@ end
     validate_simulation(config; observations, window, depths)
 
 Score a finished run against observations and write the tables and figures. Returns the
-validation directory, or `nothing` for a setup naming no `run_config`. Only picks out the run and
-bathymetry configs and hands them to `score_run`.
+validation directory, or `nothing` for a setup naming no `run_config`. Only picks out the run,
+bathymetry and observation configs and hands them to `score_run`.
 """
 validate_simulation(config::AbstractFjordConfig; kwargs...) =
-    score_run(run_config(config), bathymetry_config(config); kwargs...)
+    score_run(run_config(config), bathymetry_config(config), observation_configs(config); kwargs...)
 
 """
-    score_run(run, bathymetry_config; observations, window, depths)
+    score_run(run, bathymetry_config, sources; observations, window, depths)
 
 `validate_simulation`'s work, and the one pipeline step that runs *after* `run_simulation` rather than
 before it. It fetches whatever each observation source can supply over the run's window, pairs it
@@ -183,19 +184,22 @@ station list *from* the writers; a source you supply has to agree by hand, and a
 as "no model output for ..." rather than as an error.
 
 # Arguments
-- `observations`: the sources to score against, as `AbstractObservationConfig`s.
+- `sources`: the setup's own observation sources, its `observation_configs`.
+- `observations`: the sources to score against, as `AbstractObservationConfig`s. Defaults to
+  `default_observations` followed by `sources`.
 - `window`: `(start, stop)`; defaults to the run's own `coverage_window`.
 - `depths`: which depths to score profiles at, in metres. Defaults to a spread through the upper
   ocean and the basin; a surface series ignores it.
 """
 # A setup that is never simulated has nothing to validate, which is an opt-out rather than an error —
 # the same `nothing` `run_simulation` returns for it, reported as a no-op by `CLI.main`.
-score_run(::Nothing, bathymetry; kwargs...) = nothing
+score_run(::Nothing, bathymetry, sources; kwargs...) = nothing
 
 function score_run(
     run::AbstractRunConfig,
-    bathymetry;
-    observations = default_observations(run, bathymetry),
+    bathymetry,
+    sources;
+    observations = (default_observations(run, bathymetry)..., sources...),
     window = coverage_window(run),
     depths = (0.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0),
 )

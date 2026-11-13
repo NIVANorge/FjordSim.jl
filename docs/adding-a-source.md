@@ -219,8 +219,8 @@ each:
 A writer needs an `output_file` field only when its `output_path_trait` is `NamesOutputFile`; on any
 other, `results_path` raises a stated `ArgumentError` rather than failing on a missing field.
 
-`CoupledHydrostaticModel`, the built-in `AbstractModelConfig`, nests three further supertypes of its
-own, so a different free surface, closure or sea ice is a new subtype and a new method, not an edit
+`CoupledHydrostaticModel`, the built-in `AbstractModelConfig`, nests four further supertypes of its
+own, so a different free surface, closure, sea ice or shortwave absorption is a new subtype and a new method, not an edit
 to `coupled_model`:
 
 | Supertype | Field | Required hook | Built-in |
@@ -228,6 +228,7 @@ to `coupled_model`:
 | `AbstractFreeSurfaceConfig` | `free_surface` | `free_surface(config, grid)` → the free-surface object `coupled_model` passes to `HydrostaticFreeSurfaceModel` | `SplitExplicitFreeSurfaceConfig` |
 | `AbstractClosureConfig` | `closure` | `model_closure(config, grid, boundary_data_config, river_columns)` → the closure, or tuple of closures, it passes | `BoundarySponge`, `RiverMouthMixing` |
 | `AbstractSeaIceConfig` | `sea_ice` | `model_sea_ice(config, grid, ocean)` → the sea-ice component it passes to `OceanSeaIceModel`, built next to the ocean simulation `ocean` | `SlabSeaIce` |
+| `AbstractRadiativeForcingConfig` | `radiative_forcing` | `model_radiative_forcing(config, grid)` → the temperature forcing that absorbs the transmitted shortwave below the surface | `TwoColorRadiationConfig` |
 
 They differ in one way that matters. `free_surface` is *always* a config — there is nothing else
 it could hold. `closure` holds a config **or** a pre-built Oceananigans closure, and usually the
@@ -319,6 +320,9 @@ in the scoring or plotting code changes.
 | `observations_directory(config)` | no | `joinpath(data_root, output_directory)` |
 
 Required fields: `data_root` and `output_directory`.
+
+A setup names its sources in `FjordConfig`'s `observation_configs`, a tuple; `validate_simulation`
+scores the run against them after the Kartverket gauges `default_observations` finds itself.
 
 Two conventions the hooks rely on, both because a validation sweep asks every source for every
 station and variable it might hold:

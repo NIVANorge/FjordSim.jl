@@ -114,7 +114,7 @@ using Dates: DateTime, Dates, Day, Month, Second
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using FjordSim: BoundaryData, Grids, InitialState, Plotting
 using FjordSim.Configs: AbstractBoundaryDataConfig, AbstractInitialStateConfig
-using FjordSim.Validation: CsvObservations, TIDAL_CONSTITUENTS, observation_series
+using FjordSim.Validation: CsvObservations, TIDAL_CONSTITUENTS, ValidationConfig, observation_series
 using LinearAlgebra: qr
 using NCDatasets: NCDataset
 using NumericalEarth: FreezingLimitedOceanTemperature
@@ -1384,5 +1384,25 @@ FjordConfig(
             stations         = IMR_STATIONS,
             source           = "IMR",
         ),
+    ),
+    # Every cast station is in the hydrography writer, so the snapshots add the domain extremes
+    # here and score only a station added to the casts later. The first month is the adjustment
+    # from the initial state. Drammensfjord and the Inner Oslofjord are the two sill basins; every
+    # other station is the open fjord. Below -1 °C is colder than the freezing clamp allows; above
+    # 36 g/kg saltier than any inflowing water.
+    validation_config = ValidationConfig(
+        spin_up          = Day(31),
+        depth_bands      = [(0, 5), (5, 20), (20, 50), (50, Inf)],
+        station_groups   = [
+            "Outer fjord" => [
+                s.name for s in vcat(OSLOFJORD_CTD_STATIONS, OSLOFJORD_PROGRAMME_STATIONS, IMR_STATIONS)
+                if !(s.name in ("D-2", "D-3"))
+            ],
+            "Drammensfjord" => ["D-2", "D-3"],
+            "Inner Oslofjord" => [s.name for s in INNER_OSLOFJORD_STATIONS],
+        ],
+        search_radius    = 3,
+        plausible_ranges = Dict("T" => (-1.0, 25.0), "S" => (0.0, 36.0)),
+        stratification   = ("S", 1.0, 25.0),
     ),
 )

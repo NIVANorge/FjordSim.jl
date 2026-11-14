@@ -54,7 +54,7 @@ and hands them to the work function, which dispatches on them.
 | `download_atmosphere` | `grid_config`, `atmosphere_config` | `fetch_atmosphere` |
 | `prepare_atmosphere` | `grid_config`, `atmosphere_config` | `regrid_atmosphere` |
 | `run_simulation` | `run_config` and the whole setup, through `build_simulation` | `run_loops` |
-| `validate_simulation` | `run_config`, `bathymetry_config`, `observation_configs` | `score_run` |
+| `validate_simulation` | `run_config`, `bathymetry_config`, `observation_configs`, `validation_config` | `score_run` |
 | `build_simulation` | `run_config` and the whole setup | `assemble_simulation` |
 
 ## Hooks
@@ -133,6 +133,7 @@ No built-in implementation.
 | `boundary_condition_configs` | required | ✓ |
 | `run_config` | required | ✓ |
 | `observation_configs` | required | ✓ |
+| `validation_config` | required | ✓ |
 | `FjordSim.Simulations.model_inputs` | optional | default |
 | `FjordSim.CLI.pipeline_steps` | optional | default |
 

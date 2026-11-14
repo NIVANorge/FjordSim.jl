@@ -396,8 +396,10 @@ function plot_target(path, entries::AbstractVector{<:Pair}; title = "Target diag
     vlines!(axis, [0.0]; color = :grey85)
 
     colours = Makie.to_colormap(:tab20)
+    drawn = false
     for (index, (label, metrics)) in enumerate(entries)
         isfinite(metrics.centred_rmse) && isfinite(metrics.bias) && metrics.observed_std > 0 || continue
+        drawn = true
         sign_of = metrics.modelled_std >= metrics.observed_std ? 1 : -1
         scatter!(
             axis,
@@ -409,7 +411,8 @@ function plot_target(path, entries::AbstractVector{<:Pair}; title = "Target diag
         )
     end
 
-    Legend(figure[1, 2], axis; framevisible = false)
+    # `Legend` raises on an axis with no labelled plot.
+    drawn && Legend(figure[1, 2], axis; framevisible = false)
     save(path, figure)
     return path
 end
@@ -545,4 +548,39 @@ function plot_section(
         save(path, figure)
         return path
     end
+end
+
+"""
+    plot_domain_extremes(path, statistics, ranges)
+
+The domain's minimum, volume mean and maximum of each variable through the run, one row each, with
+the plausible range `ranges` states dashed; and beside them how many wet cells lie outside it. A
+runaway cell shows as a spike in the extremes long before it moves the mean.
+"""
+function plot_domain_extremes(path, statistics, ranges)
+    variables = sort(unique(s.variable for s in statistics))
+    figure = Figure(size = (VALIDATION_FIGURE_SIZE[1], 320 * length(variables)))
+
+    for (row, variable) in enumerate(variables)
+        rows = [s for s in statistics if s.variable == variable]
+        days = [Dates.value(s.time - first(rows).time) / 86_400_000 for s in rows]
+        xlabel = "days since $(Date(first(rows).time))"
+
+        axis = Axis(figure[row, 1]; title = "$variable over the domain", xlabel)
+        lines!(axis, days, [s.minimum for s in rows]; color = :dodgerblue, label = "minimum")
+        lines!(axis, days, [s.mean for s in rows]; color = MODELLED_COLOUR, label = "volume mean")
+        lines!(axis, days, [s.maximum for s in rows]; color = OBSERVED_COLOUR, label = "maximum")
+        if haskey(ranges, variable)
+            hlines!(axis, collect(ranges[variable]); color = :grey, linestyle = :dash)
+        end
+        axislegend(axis; position = :rb, labelsize = 11)
+
+        counts = Axis(figure[row, 2]; title = "wet cells outside the range", xlabel)
+        lines!(counts, days, [s.below for s in rows]; color = :dodgerblue, label = "below")
+        lines!(counts, days, [s.above for s in rows]; color = OBSERVED_COLOUR, label = "above")
+        axislegend(counts; position = :rt, labelsize = 11)
+    end
+
+    save(path, figure)
+    return path
 end

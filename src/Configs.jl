@@ -604,6 +604,8 @@ of input, by overloading that one function on itself rather than copying a body.
   component or `nothing`. Required.
 - `observation_configs`: the observation sources `validate_simulation` scores the run against
   besides the ones it builds itself, as a tuple, `()` for none. Required.
+- `validation_config`: what `validate_simulation` does beyond scoring each station on its own, a
+  `FjordSim.Validation.ValidationConfig`, or `nothing` for that alone. Required.
 - `FjordSim.Simulations.model_inputs(config, grid, run)`: the keywords
   `coupled_model` receives. Optional; overload it to feed the model an input of a new kind.
 - `FjordSim.CLI.pipeline_steps(config)`: the steps the command line offers, as `name => function`
@@ -657,6 +659,8 @@ biogeochemistry, its boundary conditions and the run. Each step dispatches on th
   `validate_simulation` scores the run against, besides the Kartverket gauges it finds itself.
   Defaults to `()`. Held programmes, such as monitoring casts exported to a `CsvObservations`, go
   here.
+- `validation_config`: a `FjordSim.Validation.ValidationConfig`, or `nothing` for a validation that
+  scores each station from its station writer's output alone. Defaults to `nothing`.
 
 # Example
 
@@ -685,6 +689,7 @@ Base.@kwdef mutable struct FjordConfig{
     BC,
     S,
     O<:Tuple,
+    V,
 } <: AbstractFjordConfig
     grid_config::G
     bathymetry_config::B
@@ -698,6 +703,7 @@ Base.@kwdef mutable struct FjordConfig{
     boundary_condition_configs::BC = nothing
     run_config::S = nothing
     observation_configs::O = ()
+    validation_config::V = nothing
 end
 
 grid_config(config::FjordConfig) = config.grid_config
@@ -712,5 +718,6 @@ biogeochemistry_config(config::FjordConfig) = config.biogeochemistry_config
 boundary_condition_configs(config::FjordConfig) = config.boundary_condition_configs
 run_config(config::FjordConfig) = config.run_config
 observation_configs(config::FjordConfig) = config.observation_configs
+validation_config(config::FjordConfig) = config.validation_config
 
 end  # module Configs

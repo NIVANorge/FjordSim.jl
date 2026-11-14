@@ -839,6 +839,23 @@ station-variable combinations in a sweep are empty, and each is a blank row, not
 `default_observations` builds its station list from the writers, and a mismatch shows up as "no model
 output", not an error.
 
+A setup's `validation_config` (`ValidationConfig`, or `nothing`) adds three things, all from one
+pass over the `SnapshotWriter` files, since NetCDF stores them one record per chunk and a column read
+straight from the file reads every chunk once per station:
+
+- **An observation no station writer recorded is scored from the snapshots**, at the wet column
+  within `search_radius` cells that best reaches the station's deepest observation
+  (`snapshot_column`): in a fjord the nearest wet cell beside a deep cast is often a fraction of its
+  depth. The model record is the nearest within half the writer's interval plus an hour.
+- **Every record is summarised over the domain** (`domain_extremes.csv`): volume mean, extremes and
+  where they are, and the wet cells outside `plausible_ranges`.
+- **Every profile sample is paired with the model at its own depth** (`samples.csv`) and pooled into
+  bias and RMSE per depth band, for each station group, station and month, and per cast into a
+  stratification difference, all after `spin_up`.
+
+Where several files hold the same time (a resume writes under a new run tag, a loop restarts model
+time) the later file wins from its own first record on (`snapshot_records`).
+
 ## 17. CLI (`src/CLI.jl`)
 
 **No setup is part of the package.** A setup is a script ending in its `FjordConfig`, and

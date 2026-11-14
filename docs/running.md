@@ -24,7 +24,7 @@ configure is a no-op.
 | `download_atmosphere` | — | raw NORA3 months | slow: ~10000 OPeNDAP reads per simulated year |
 | `prepare_atmosphere` | download | `atmosphere.nc` | pure regrid, independent of the ocean grid |
 | `run_simulation` | every prepared file the setup names | results under `results_root` | needs a GPU in practice |
-| `validate_simulation` | a finished run | `<results_root>/validation/` | only Kartverket water level is fetched automatically |
+| `validate_simulation` | a finished run | `<results_root>/validation/` | only Kartverket water level is fetched automatically; with a `validation_config`, one pass over every `SnapshotWriter` file |
 
 ```bash
 julia --project -m FjordSim prepare_bathymetry --config examples/oslofjorden/oslofjorden.jl

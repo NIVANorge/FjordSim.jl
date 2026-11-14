@@ -32,9 +32,10 @@ using FjordSim.Simulations: attach_callback!, attach_time_stepping!, attach_writ
 using FjordSim.Validation: baroclinic_deviation, CsvObservations, depth_average,
     direction_statistics, harmonic_fit, KartverketSeaLevel, monthly_statistics, observation_series,
     observation_stations, observations_directory, ObservationSeries, quantiles, reconstruct,
-    running_mean, skill_metrics, station_files, TIDAL_CONSTITUENTS, tidal_ellipses, TidalConstituent
+    running_mean, skill_metrics, station_files, TIDAL_CONSTITUENTS, tidal_ellipses, TidalConstituent,
+    ValidationConfig
 using FjordSim: Rivers
-using Dates: Date, DateFormat, DateTime, Day, Hour, Millisecond, Minute, Month
+using Dates: Date, DateFormat, DateTime, Day, Hour, Millisecond, Minute, Month, Second
 using JLD2
 using Test
 using ArchGDAL
@@ -6426,6 +6427,156 @@ end
         # Unsorted input and missing samples are handled rather than assumed away.
         @test interpolate([10.0, 0.0], [6.0, 4.0], [5.0]) ≈ [5.0]
         @test all(isnan, interpolate([0.0, 10.0], [4.0, NaN], [5.0]))
+    end
+
+    @testset "snapshot files and records" begin
+        directory = mktempdir()
+        for file in (
+            "snap_20260101T000000_part2.nc", "snap_20260101T000000_part10.nc",
+            "snap_20260101T000000_part1.nc", "snap_20260102T000000_part1.nc",
+            "snap_20260101T000000_loop02_part1.nc", "snap_surface_20260101T000000_part1.nc",
+        )
+            touch(joinpath(directory, file))
+        end
+        # Written order: run tag, then loop, then part, numerically.
+        @test basename.(FjordSim.Validation.snapshot_files(directory, "snap")) == [
+            "snap_20260101T000000_part1.nc", "snap_20260101T000000_part2.nc",
+            "snap_20260101T000000_part10.nc", "snap_20260101T000000_loop02_part1.nc",
+            "snap_20260102T000000_part1.nc",
+        ]
+        @test isempty(FjordSim.Validation.snapshot_files(joinpath(directory, "missing"), "snap"))
+
+        # A resumed run's file holds the run's record of every time from its own first one on.
+        start = DateTime(2020, 1, 1)
+        paths = [joinpath(directory, "records_$n.nc") for n in 1:2]
+        for (path, seconds) in zip(paths, ([0.0, 86400.0, 172800.0], [86400.0, 172800.0]))
+            NCDataset(path, "c"; attrib = Dict("start_date" => string(start))) do ds
+                defVar(ds, "time", seconds, ("time",))
+            end
+        end
+        records = FjordSim.Validation.snapshot_records(paths)
+        @test [record[1:2] for record in records] == [(1, 1), (2, 1), (2, 2)]
+        @test last.(records) == [start, start + Day(1), start + Day(2)]
+    end
+
+    @testset "snapshot_column" begin
+        water_depth = fill(20.0, 5, 5)
+        water_depth[3, 3] = 10.0
+        wet = trues(5, 5, 2)
+        wet[3, 3, 1] = false
+        wet[1, 1, :] .= false
+        grid = (;
+            longitudes = collect(10.1:0.2:10.9), latitudes = collect(59.1:0.2:59.9),
+            longitude_bounds = (10.0, 11.0), latitude_bounds = (59.0, 60.0), water_depth, wet,
+        )
+        column = FjordSim.Validation.snapshot_column
+        station = Station(name = "basin", longitude = 10.5, latitude = 59.5)
+        # A cast deeper than the station's own column moves one cell to water that reaches it...
+        i, j, offset = column(grid, station, 18.0, 3)
+        @test offset ≈ 1
+        @test water_depth[i, j] == 20
+        # ...but not for a shortfall smaller than what a cell's distance costs,
+        @test column(grid, station, 12.0, 3)[1:2] == (3, 3)
+        # and a surface record takes the nearest wet column.
+        @test column(grid, station, 0.0, 3)[1:2] == (3, 3)
+        @test column(grid, Station(name = "corner", longitude = 10.1, latitude = 59.1), 0.0, 3)[3] ≈ 1
+        @test isnothing(column(grid, Station(name = "corner", longitude = 10.1, latitude = 59.1), 0.0, 0))
+        @test isnothing(column(grid, Station(name = "outside", longitude = 12.0, latitude = 59.5), 0.0, 3))
+    end
+
+    @testset "sample pairs" begin
+        profile_at = FjordSim.Validation.profile_at
+        # Linear between level centres, the top cell's value above its centre, nothing below the deepest.
+        @test isequal(profile_at([1.0, 3.0], [10.0, 30.0], [0.5, 2.0, 4.0]), [10.0, 20.0, NaN])
+
+        time = DateTime(2020, 1, 1, 12)
+        observed = ObservationSeries("A", "T", [time, time + Day(5)], [0.5, 2.0, 9.0],
+                                     [1.0 2.0 3.0; 4.0 5.0 6.0], "°C", "test")
+        modelled = FjordSim.Validation.ModelSeries("A", "T", [time + Minute(30)], [1.0, 3.0],
+                                                   [10.0 30.0], Dict{String,Any}())
+        samples = FjordSim.Validation.sample_pairs(observed, modelled)
+        # The second cast has no model record within the hour; 9 m is below the model's column.
+        @test [(s.depth, s.observed, s.modelled) for s in samples] == [(0.5, 1.0, 10.0), (2.0, 2.0, 20.0)]
+        @test length(FjordSim.Validation.sample_pairs(observed, modelled; tolerance = Day(6))) == 4
+        # A one-level series, the free surface, is not a profile to pool.
+        surface = FjordSim.Validation.ModelSeries("A", "eta", [time], [0.0], fill(0.1, 1, 1), Dict{String,Any}())
+        @test isempty(FjordSim.Validation.sample_pairs(observed, surface))
+
+        @test FjordSim.Validation.band_label(0.0, 5.0) == "0-5 m"
+        @test FjordSim.Validation.band_label(50.0, Inf) == ">50 m"
+    end
+
+    @testset "validate_simulation scores and summarises the snapshots" begin
+        directory = mktempdir()
+        bottom_height = fill(-20.0, 4, 4)
+        bottom_height[2, 2] = -10.0                        # the station's own column is too shallow
+        (; grid) = immersed_test_grid(
+            joinpath(directory, "bathymetry.nc"); size = (4, 4, 2), halo = (3, 3, 3), bottom_height,
+        )
+        writer = SnapshotWriter(
+            name = :ocean, output_file = "snapshots_ocean.nc", variables = (:T, :S),
+            interval = 1.0, split_times = Float64[], overwrite_existing = true,
+        )
+        run = test_run_config(results_root = directory, writers = (writer,))
+        model = HydrostaticFreeSurfaceModel(grid; tracers = (:T, :S), buoyancy = nothing)
+        set!(model, T = (λ, φ, z) -> λ + φ + z, S = 30.0)
+        ocean = Simulation(model; Δt = 1.0, stop_iteration = 2, verbose = false)
+        attach_writer!((; model = (; ocean)), writer, run, 1)
+        run!(ocean)
+        close(ocean.output_writers[:ocean])
+
+        # A cast to 15 m at a station whose own column is 10 m deep.
+        station = Station(name = "Basin", longitude = 10.375, latitude = 59.375)
+        source = CsvObservations(data_root = directory, variables = ["T"], stations = [station])
+        mkpath(observations_directory(source))
+        cast_time = run.start_date + Second(2)
+        write(
+            FjordSim.Validation.csv_observation_path(source, station, "T"),
+            "time,depth,value\n$(cast_time),5.0,60.0\n$(cast_time),15.0,50.0\n",
+        )
+        validation = ValidationConfig(
+            spin_up = Day(0), depth_bands = [(0, 10), (10, Inf)], station_groups = ["Basins" => ["Basin"]],
+            search_radius = 4, plausible_ranges = Dict("T" => (0.0, 60.0)), stratification = ("T", 5.0, 15.0),
+        )
+        config = FjordConfig(;
+            grid_config = test_grid_config(), bathymetry_config = test_bathymetry_config(data_root = directory),
+            run_config = run, observation_configs = (source,), validation_config = validation,
+        )
+        validate_simulation(config)
+        output = joinpath(directory, "validation")
+        table(name) = [split(line, ",") for line in readlines(joinpath(output, name))[2:end]]
+
+        # Placed one cell off its own column, where the water reaches the cast.
+        placed = only(table("snapshot_columns.csv"))
+        i, j = parse(Int, placed[5]), parse(Int, placed[6])
+        @test (i, j) != (2, 2)
+        @test parse(Float64, placed[9]) ≈ 20
+        @test parse(Float64, placed[10]) ≈ 1
+
+        # The model at the cast's own depths, from that column of the last record.
+        λ, φ = λnodes(grid, Center())[i], φnodes(grid, Center())[j]
+        samples = table("samples.csv")
+        @test [parse(Float64, s[4]) for s in samples] == [5.0, 15.0]
+        modelled = [parse(Float64, s[6]) for s in samples]
+        @test modelled ≈ [λ + φ - 5, λ + φ - 15] atol = 1e-3
+        bias = sum(modelled .- [60.0, 50.0]) / 2
+        bands = Dict(row[1:3] => row for row in table("skill_bands.csv"))
+        @test parse(Float64, bands[["all", "T", "all"]][7]) ≈ bias atol = 1e-3
+        @test parse(Float64, bands[["Basins", "T", "all"]][7]) ≈ bias atol = 1e-3
+        @test !haskey(bands, ["all", "T", "0-10 m"])    # one sample is no score
+        @test parse.(Float64, only(table("stratification.csv"))[3:4]) ≈ [-10.0, -10.0] atol = 1e-3
+
+        # One row per record and variable, over the wet cells only.
+        extremes = table("domain_extremes.csv")
+        @test length(extremes) == 2 * 3
+        temperature = last(filter(row -> row[2] == "T", extremes))
+        wet = trues(4, 4, 2)
+        wet[2, 2, 1] = false
+        T = interior(model.tracers.T)[wet]
+        @test parse(Float64, temperature[4]) ≈ minimum(T) atol = 1e-3
+        @test parse(Float64, temperature[8]) ≈ maximum(T) atol = 1e-3
+        @test parse(Int, temperature[12]) == 0
+        @test parse(Int, temperature[13]) == count(>(60), T)
     end
 end
 

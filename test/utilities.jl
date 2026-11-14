@@ -104,6 +104,7 @@ for accessor in (
     :boundary_condition_configs,
     :run_config,
     :observation_configs,
+    :validation_config,
 )
     @eval FjordSim.Configs.$accessor(config::DelegatingFjord) = FjordSim.Configs.$accessor(config.base)
 end

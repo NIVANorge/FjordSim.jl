@@ -135,6 +135,7 @@ run does without that component. So a setup names what it wants and skips the re
 | Biogeochemistry | `biogeochemistry_config` | `run_simulation` | no biogeochemical model |
 | Boundary conditions | `boundary_condition_configs` | `run_simulation` | data preparation only; required with a run config, `()` for the model's defaults |
 | Run | `run_config` | `run_simulation`, `validate_simulation` | data preparation only |
+| Validation | `validation_config` | `validate_simulation` | each station scored from its station writer alone: no snapshot columns, domain extremes or depth-band tables |
 
 The model, its biogeochemistry, its boundary conditions and the run are separate components, side
 by side with the data: `model_config` says what is built, `run_config` how it is run.

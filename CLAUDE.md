@@ -126,8 +126,9 @@ The modules, in `include` order from `src/FjordSim.jl`:
     `model_inputs`, `coupled_model`)/`run_simulation` (`run_loops`), writers, callbacks, looping,
     checkpointing, initial conditions, the run tag.
 16. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
-    observation sources, skill and tidal statistics, and the comparison figures. `StationWriter`
-    (in `Simulations`) is what a run writes for it.
+    observation sources, skill and tidal statistics, and the comparison figures; with a
+    `ValidationConfig`, columns and domain statistics from the 3D snapshots and depth-band tables.
+    `StationWriter` (in `Simulations`) is what a run writes for it.
 17. **CLI** (`src/CLI.jl`) — `fjord_config` (loads a config file), subcommand dispatch, logging.
 18. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
 

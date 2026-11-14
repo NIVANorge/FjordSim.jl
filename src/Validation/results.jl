@@ -240,27 +240,37 @@ function match_series(
     times = DateTime[]
     observed = Float64[]
     modelled = Float64[]
-    isempty(model.times) && return (times, observed, modelled)
 
-    limit = Dates.Millisecond(tolerance)
     for (index, time) in enumerate(observation.times)
-        nearest = searchsortedfirst(model.times, time)
-        best = nothing
-        for candidate in (nearest - 1, nearest)
-            checkbounds(Bool, model.times, candidate) || continue
-            gap = abs(Dates.Millisecond(model.times[candidate] - time))
-            if gap <= limit && (isnothing(best) || gap < best[2])
-                best = (candidate, gap)
-            end
-        end
-        isnothing(best) && continue
+        record = nearest_record(model.times, time, tolerance)
+        isnothing(record) && continue
 
         push!(times, time)
         push!(observed, observed_column[index])
-        push!(modelled, modelled_column[best[1]])
+        push!(modelled, modelled_column[record])
     end
 
     return (times, observed, modelled)
+end
+
+"""
+    nearest_record(times, time, tolerance)
+
+The index of the entry of the sorted `times` nearest `time`, or `nothing` when it is further away
+than `tolerance`.
+"""
+function nearest_record(times, time, tolerance)
+    limit = Dates.Millisecond(tolerance)
+    nearest = searchsortedfirst(times, time)
+    best = nothing
+    for candidate in (nearest - 1, nearest)
+        checkbounds(Bool, times, candidate) || continue
+        gap = abs(Dates.Millisecond(times[candidate] - time))
+        if gap <= limit && (isnothing(best) || gap < best[2])
+            best = (candidate, gap)
+        end
+    end
+    return isnothing(best) ? nothing : best[1]
 end
 
 """

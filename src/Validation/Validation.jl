@@ -11,11 +11,13 @@ describes for bathymetry, forcing, rivers, boundaries and atmosphere. Adding an 
 therefore the same two-step it is everywhere else: subtype `AbstractObservationConfig` and overload
 its hooks.
 
-Four files below it:
+Six files below it:
 
 - `observations.jl` — the sources, and one common record type they all return.
 - `metrics.jl` — the statistics, over bare vectors. Knows nothing about fjords or files.
 - `results.jl` — reading a run's station output back, as the inverse of `StationWriter`.
+- `snapshots.jl` — the columns and the domain statistics read from a run's 3D snapshots.
+- `pooled.jl` — every observed sample beside the model, pooled into tables by depth band and group.
 - `plots.jl` — the figures, one per report figure where there is a counterpart.
 """
 module Validation
@@ -23,7 +25,7 @@ module Validation
 export validate_simulation
 
 using CairoMakie
-using Dates: DateTime, Date
+using Dates: DateTime, Date, Day
 import Dates
 using Downloads
 using LinearAlgebra
@@ -37,6 +39,7 @@ using ..Configs:
     AbstractFjordConfig,
     bathymetry_config,
     observation_configs,
+    validation_config,
     run_config,
     results_root,
     writers,
@@ -44,6 +47,7 @@ using ..Configs:
 using ..Utils: coverage_window, months_in
 using ..Bathymetry: bathymetry_path
 using ..Simulations:
+    SnapshotWriter,
     Station,
     station_output,
     station_tag,
@@ -52,6 +56,49 @@ using ..Simulations:
 include("observations.jl")
 include("metrics.jl")
 include("results.jl")
+
+"""
+    ValidationConfig(; spin_up, depth_bands, station_groups, search_radius, plausible_ranges,
+                     stratification)
+
+What `validate_simulation` does beyond scoring each station from its station writer's output. Every
+field is a scientific choice the setup states; there are no defaults.
+
+- An observation at a station no station writer records is scored from the run's `SnapshotWriter`
+  file instead, at the column `snapshot_column` picks within `search_radius` cells.
+- Every record of that file is summarised over the whole domain in `domain_extremes.csv`: the
+  volume mean, the extremes and where they are, and how many wet cells lie outside
+  `plausible_ranges`. An overshoot or a runaway cell shows there first.
+- Every observed sample of a profile is paired with the model at its own time and depth
+  (`samples.csv`) and pooled into bias and RMSE by depth band — for each of `station_groups`, each
+  station and each month — and each cast into the difference `stratification` names. The pooled
+  tables leave out the first `spin_up` of the window, the model's adjustment from its initial
+  state.
+
+# Fields
+- `spin_up`: how long after the window opens the pooled tables start.
+- `depth_bands`: `(upper, lower)` depth ranges in metres, positive down; a sample at depth `d` is in
+  the band `upper <= d < lower`, so `(50, Inf)` is everything from 50 m down. Each table also has
+  the band `"all"`.
+- `station_groups`: `name => station names`, in table order. A station can be in several groups or
+  none; the group `"all"` holds every station.
+- `search_radius`: how far from a station, in grid cells, its snapshot column may be.
+- `plausible_ranges`: `(low, high)` per variable name (`"T"`, `"S"`); a wet cell below `low` or above
+  `high` is counted.
+- `stratification`: `(variable, upper, lower)`: the cast's `variable` at depth `lower` minus at
+  depth `upper`, in metres.
+"""
+Base.@kwdef struct ValidationConfig
+    spin_up::Day
+    depth_bands::Vector{Tuple{Float64,Float64}}
+    station_groups::Vector{Pair{String,Vector{String}}}
+    search_radius::Int
+    plausible_ranges::Dict{String,Tuple{Float64,Float64}}
+    stratification::Tuple{String,Float64,Float64}
+end
+
+include("snapshots.jl")
+include("pooled.jl")
 include("plots.jl")
 
 """
@@ -158,18 +205,25 @@ end
 
 Score a finished run against observations and write the tables and figures. Returns the
 validation directory, or `nothing` for a setup naming no `run_config`. Only picks out the run,
-bathymetry and observation configs and hands them to `score_run`.
+bathymetry, observation and validation configs and hands them to `score_run`.
 """
-validate_simulation(config::AbstractFjordConfig; kwargs...) =
-    score_run(run_config(config), bathymetry_config(config), observation_configs(config); kwargs...)
+validate_simulation(config::AbstractFjordConfig; kwargs...) = score_run(
+    run_config(config),
+    bathymetry_config(config),
+    observation_configs(config),
+    validation_config(config);
+    kwargs...,
+)
 
 """
-    score_run(run, bathymetry_config, sources; observations, window, depths)
+    score_run(run, bathymetry_config, sources, validation; observations, window, depths)
 
 `validate_simulation`'s work, and the one pipeline step that runs *after* `run_simulation` rather than
 before it. It fetches whatever each observation source can supply over the run's window, pairs it
 with the run's station output, and writes a skill table, a tidal constituent table, and one figure
-per station-variable pair into `validation_directory`.
+per station-variable pair into `validation_directory`. With a `ValidationConfig` as `validation`,
+it also scores what no station writer recorded from the 3D snapshots, summarises the domain, and
+pools every sample into the depth-band tables (`ValidationConfig`).
 
 Every stage is permissive about missing data on purpose. A validation sweep asks every source for
 every station and variable it might hold, and most combinations are empty: an ADCP that was in the
@@ -181,10 +235,12 @@ should be scorable on what exists rather than on everything existing.
 setup's station writers have to spell a station the same way — `"OF-1"`, not `"OF1"` — because
 nothing else identifies them to each other. `default_observations` sidesteps this by building its
 station list *from* the writers; a source you supply has to agree by hand, and a mismatch shows up
-as "no model output for ..." rather than as an error.
+as "no model output for ..." rather than as an error. Only an observation scored from the 3D
+snapshots (`ValidationConfig`) is placed by its station's position instead.
 
 # Arguments
 - `sources`: the setup's own observation sources, its `observation_configs`.
+- `validation`: the setup's `validation_config`, a `ValidationConfig` or `nothing`.
 - `observations`: the sources to score against, as `AbstractObservationConfig`s. Defaults to
   `default_observations` followed by `sources`.
 - `window`: `(start, stop)`; defaults to the run's own `coverage_window`.
@@ -193,21 +249,23 @@ as "no model output for ..." rather than as an error.
 """
 # A setup that is never simulated has nothing to validate, which is an opt-out rather than an error —
 # the same `nothing` `run_simulation` returns for it, reported as a no-op by `CLI.main`.
-score_run(::Nothing, bathymetry, sources; kwargs...) = nothing
+score_run(::Nothing, bathymetry, sources, validation; kwargs...) = nothing
 
 function score_run(
     run::AbstractRunConfig,
     bathymetry,
-    sources;
+    sources,
+    validation;
     observations = (default_observations(run, bathymetry)..., sources...),
     window = coverage_window(run),
     depths = (0.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0),
 )
     recorders = station_writers(run)
-    isempty(recorders) && throw(
+    isempty(recorders) && isnothing(validation) && throw(
         ArgumentError(
             "This setup's simulation writes no station output, so there is nothing to validate " *
-            "against. Add a `StationWriter` or `FieldStationWriter` to its `writers`.",
+            "against. Add a `StationWriter` or `FieldStationWriter` to its `writers`, or a " *
+            "`validation_config` to score its `SnapshotWriter` output.",
         ),
     )
 
@@ -221,6 +279,8 @@ function score_run(
 
     scores = Pair{String,SkillMetrics}[]
     tidal_fits = Pair{String,HarmonicFit}[]
+    samples = SamplePair[]
+    unrecorded = Tuple{Station,ObservationSeries}[]
 
     for source in observations, station in observation_stations(source)
         for variable in VALIDATION_VARIABLES
@@ -235,30 +295,46 @@ function score_run(
             end
 
             if isnothing(modelled)
-                @info "  no model output for $(station.name) $variable"
+                push!(unrecorded, (station, observed))
                 continue
             end
 
             score_pair!(scores, tidal_fits, directory, observed, modelled, depths)
+            append!(samples, sample_pairs(observed, modelled))
         end
     end
 
+    for (observed, modelled, tolerance) in snapshot_series(run, validation, unrecorded, directory)
+        score_pair!(scores, tidal_fits, directory, observed, modelled, depths; tolerance)
+        append!(samples, sample_pairs(observed, modelled; tolerance))
+    end
+
     write_validation_summary(directory, scores, tidal_fits)
+    write_pooled_tables(directory, samples, window, validation)
     @info "Validation written to $directory"
     return directory
 end
 
 """
-    score_pair!(scores, tidal_fits, directory, observed, modelled, depths)
+    score_pair!(scores, tidal_fits, directory, observed, modelled, depths; tolerance = Dates.Hour(1))
 
 Score one observation series against one model series at every depth the observations reach, append
 the results, and draw the figures that pair supports.
 
 A surface series is scored once; a profile is scored at each of `depths` that lies inside both the
 instrument's range and the model column, so a shallow station contributes the levels it has rather
-than a column of blanks.
+than a column of blanks. `tolerance` is how far from an observation the nearest model record may
+be, as for `match_series`.
 """
-function score_pair!(scores, tidal_fits, directory, observed, modelled, depths)
+function score_pair!(
+    scores,
+    tidal_fits,
+    directory,
+    observed,
+    modelled,
+    depths;
+    tolerance = Dates.Hour(1),
+)
     label = "$(observed.station) $(observed.variable)"
     surface = length(observed.depths) == 1 && length(modelled.depths) == 1
 
@@ -269,7 +345,7 @@ function score_pair!(scores, tidal_fits, directory, observed, modelled, depths)
     end
 
     for depth in targets
-        times, o, m = match_series(observed, modelled; depth)
+        times, o, m = match_series(observed, modelled; depth, tolerance)
         metrics = skill_metrics(o, m)
         metrics.count == 0 && continue
 

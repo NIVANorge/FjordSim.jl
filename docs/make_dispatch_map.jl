@@ -7,17 +7,13 @@
 using FjordSim
 using FjordSim: Configs, CLI, Simulations
 using FjordSim.Configs: AbstractFjordConfig
-using FjordSim.Validation: AbstractObservationConfig
 using InteractiveUtils: subtypes
 
 const DISPATCH_MAP_PATH = joinpath(@__DIR__, "dispatch-map.md")
 
 dispatch_supertypes() = sort!(
-    [
-        [getfield(Configs, name) for name in names(Configs; all=true)
-         if startswith(String(name), "Abstract") && getfield(Configs, name) isa Type]
-        AbstractObservationConfig
-    ];
+    [getfield(Configs, name) for name in names(Configs; all=true)
+     if startswith(String(name), "Abstract") && getfield(Configs, name) isa Type];
     by = nameof,
 )
 

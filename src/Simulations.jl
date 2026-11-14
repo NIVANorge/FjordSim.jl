@@ -11,7 +11,6 @@ export RunConfig,
     FieldSnapshotWriter,
     SurfaceSnapshotWriter,
     SeaIceSnapshotWriter,
-    Station,
     StationWriter,
     FieldStationWriter,
     SectionWriter,
@@ -78,6 +77,7 @@ using ..Configs:
     loops,
     pickup
 using ..Utils: progress, cell_advection_timescale_coupled_model
+using ..Observations: Station, station_tag, haversine_distance
 using ..Grids: simulation_grid, open_edges
 using ..Atmospheres: prescribed_atmosphere, prescribed_radiation, atmosphere_date_range
 using ..Regridding: interpolation_architecture, column_wet_levels
@@ -907,52 +907,6 @@ function SeaIceSnapshotWriter(; name, output_file, variables, interval, split_ti
         Float64.(split_times),
         Bool(overwrite_existing),
     )
-end
-
-"""
-    Station(; name, longitude, latitude)
-
-One observation site a run writes a time series at, named by the position the observation was
-actually taken at rather than by a grid index.
-
-Snapping to the grid is deliberately left to attach time, where the grid exists, so that the offset
-between the two can be logged: a comparison that does not record how far a station moved cannot be
-read honestly.
-
-# Fields
-- `name`: what the station is called in the source the observations come from, e.g. `"OF-1"` or
-  `"Km1"`. Used in the output filename and the `output_writers` key, via `station_tag`.
-- `longitude`, `latitude`: degrees east and north.
-"""
-struct Station
-    name::String
-    longitude::Float64
-    latitude::Float64
-end
-
-Station(; name, longitude, latitude) = Station(String(name), Float64(longitude), Float64(latitude))
-
-# Norwegian letters mapped to their conventional ASCII transliterations before anything else is
-# stripped, so `TØ-1` and `Ø-1` stay distinguishable (`TO_1`, `O_1`) where a blanket
-# non-alphanumeric substitution would collapse them towards each other.
-const STATION_TAG_SUBSTITUTIONS = ('Æ' => "AE", 'æ' => "ae", 'Ø' => "O", 'ø' => "o", 'Å' => "A", 'å' => "a")
-
-"""
-    station_tag(station)
-
-`station.name` reduced to a filename- and `Symbol`-safe ASCII token.
-"""
-function station_tag(station::Station)
-    name = station.name
-    for (character, replacement) in STATION_TAG_SUBSTITUTIONS
-        name = replace(name, character => replacement)
-    end
-
-    tag = replace(name, r"[^A-Za-z0-9]+" => "_")
-    tag = strip(tag, '_')
-    isempty(tag) && throw(ArgumentError("Station name $(repr(station.name)) reduces to an empty tag."))
-
-    return tag
 end
 
 """
@@ -2341,21 +2295,6 @@ function report_station_cells(writer, placed, grid)
     end
 
     return nothing
-end
-
-"""
-    haversine_distance(longitude1, latitude1, longitude2, latitude2)
-
-Great-circle distance in metres between two points in degrees. Only used to report how far a station
-moved when it was snapped to the grid.
-"""
-function haversine_distance(longitude1, latitude1, longitude2, latitude2)
-    radius = 6371008.8
-    φ1, φ2 = deg2rad(latitude1), deg2rad(latitude2)
-    Δφ = φ2 - φ1
-    Δλ = deg2rad(longitude2 - longitude1)
-    a = sin(Δφ / 2)^2 + cos(φ1) * cos(φ2) * sin(Δλ / 2)^2
-    return 2 * radius * asin(min(one(a), sqrt(a)))
 end
 
 """

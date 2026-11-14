@@ -308,21 +308,33 @@ asserts.
 
 ## Observations — `AbstractObservationConfig`
 
-The one supertype in `src/Validation/`, and the only one whose subtypes run *after* a simulation
-rather than before it. Same shape as every source above: subtype it, overload the hooks, and nothing
-in the scoring or plotting code changes.
+The supertype is in `src/Configs.jl`, the hooks and built-in sources in `src/Observations/`. Same shape as every source above: subtype it, overload the hooks, and
+nothing in the scoring or plotting code changes.
 
 | Hook | Required | Default |
 |---|---|---|
 | `observation_stations(config)` | yes | — |
 | `observation_series(config, station, variable; window)` | yes | — |
-| `download_observations(config, window)` | no | no-op |
+| `fetch_observations(target_grid, config)` | no | no-op |
 | `observations_directory(config)` | no | `joinpath(data_root, output_directory)` |
 
-Required fields: `data_root` and `output_directory`.
+Required fields: `data_root` and `output_directory`; a source that fetches also states its own
+`start_date` and `stop_date`.
 
-A setup names its sources in `FjordConfig`'s `observation_configs`, a tuple; `validate_simulation`
-scores the run against them after the Kartverket gauges `default_observations` finds itself.
+A setup names its sources in `FjordConfig`'s `observation_configs`, a tuple. `download_observations`
+calls each one's `fetch_observations` with the bare grid, whose box (`Grids.download_box`) is the
+region to fetch, over the source's own period; a source that fails is warned about and the next one
+fetched. `validate_simulation` reads what is on disk, after the Kartverket gauges
+`default_observations` finds and fetches itself. A setup's other components can use a source too —
+the Oslofjord's initial state takes casts from one, fetched in its own `download_initial_state`.
+
+**Write the common layout** (`src/Observations/stations.jl`): a `stations.csv` (`name,longitude,latitude`,
+other columns ignored) and one `<station tag>_<variable>.csv` (`time,depth,value`) per station and
+variable, with `write_stations` and `write_observation_file`, and read it back with
+`read_observation_series`. Then `observation_series` is a few lines, and a source can be read without
+its fetch: `CsvObservations` reads the same files downloaded some other way. `VannmiljoObservations`
+is the worked example: the fetch requests the registrations and writes them through a pure function
+(`write_vannmiljo_observations`) that the tests call on fixture records, since the suite is offline.
 
 Two conventions the hooks rely on, both because a validation sweep asks every source for every
 station and variable it might hold:
@@ -330,10 +342,10 @@ station and variable it might hold:
 - **`observation_series` returns `nothing`, not an error, for a pair it has nothing for.** Most
   combinations are empty — an instrument that was in the water for ten weeks of a two-year run, a
   station outside a programme's remit — and that is a blank row rather than a failure.
-- **`download_observations` defaults to a no-op.** A source read from files someone supplies has
-  nothing to fetch and should not have to say so. `KartverketSeaLevel` is the only built-in source
-  that fetches, because public tide-gauge data is the exception: most programmes are held by their
-  owners and want a reader, not a client.
+- **`fetch_observations` defaults to a no-op.** A source read from files downloaded some other way
+  has nothing to fetch and should not have to say so. `KartverketSeaLevel` and
+  `VannmiljoObservations` fetch; programmes held by their owners — current moorings, a private
+  database — want a `CsvObservations` over an export.
 
 Every source returns the same `ObservationSeries` — `(station, variable, times, depths, values,
 units, source)`, with `values` shaped `(time, depth)` — which is what lets `metrics.jl` stay ignorant

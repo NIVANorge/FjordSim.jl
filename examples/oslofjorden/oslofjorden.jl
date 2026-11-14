@@ -77,24 +77,25 @@
 #
 # # Scoring it
 #
-# `validate_simulation` fetches what it can, scores the run's station files against it and writes
-# tables and figures to `<results_root>/validation/`. Only **Kartverket water level** is public, and
-# `default_observations` builds it automatically from the stations the `:tidegauge` writer records
-# `η` at. The NIVA CTD series, the Fagrådet Inner Oslofjord programme, the current moorings and the
-# temperature sites are held by their owners rather than published, so each wants a reader
-# subtyping `AbstractObservationConfig` (or a `CsvObservations` over an export), named in
-# `observation_configs` below — see `docs/adding-a-source.md`. Their station names must be spelt
-# as below, since stations are matched between a source and the run by `name`.
+# `validate_simulation` scores the run's station files against the observations and writes tables
+# and figures to `<results_root>/validation/`. **Kartverket water level** it fetches itself, at the
+# stations the `:tidegauge` writer records `η` at. The NIVA and IMR casts come from Vannmiljø
+# (`observation_configs` below), fetched by `download_observations`; each station takes the
+# Vannmiljø location nearest it, under the name given below, which is how the run's station files
+# are matched to it. The current moorings and the temperature sites are held by their owners, so
+# each wants a `CsvObservations` over an export, or a source of its own — see
+# `docs/adding-a-source.md`.
 #
 # # Preparing and running it
 #
 #   julia --project -m FjordSim prepare_bathymetry     --config examples/oslofjorden/oslofjorden.jl
-#   julia --project -m FjordSim download_initial_state --config examples/oslofjorden/oslofjorden.jl
+#   julia --project -m FjordSim download_observations  --config examples/oslofjorden/oslofjorden.jl   # needs VANNMILJO_API_KEY
+#   julia --project -m FjordSim download_initial_state --config examples/oslofjorden/oslofjorden.jl   # needs VANNMILJO_API_KEY
 #   julia --project -m FjordSim prepare_initial_state  --config examples/oslofjorden/oslofjorden.jl
 #   julia --project -m FjordSim add_rivers             --config examples/oslofjorden/oslofjorden.jl
 #   julia --project -m FjordSim download_boundary_data --config examples/oslofjorden/oslofjorden.jl
-#   julia --project scripts/measure_boundary_tide.jl examples/oslofjorden/oslofjorden.jl \
-#       Viker 10.949769 59.036046   # paste its gains into `VIKER_TIDE_GAINS`
+#   julia --project scripts/measure_boundary_tide.jl examples/oslofjorden/oslofjorden.jl Viker
+#       # paste its gains into `VIKER_TIDE_GAINS`
 #   julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden/oslofjorden.jl
 #   julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden/oslofjorden.jl
 #   julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden/oslofjorden.jl
@@ -113,8 +114,11 @@ using Oceananigans.Units: day, days, hour, hours, minutes, second
 using Dates: DateTime, Dates, Day, Month, Second
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using FjordSim: BoundaryData, Grids, InitialState, Plotting
-using FjordSim.Configs: AbstractBoundaryDataConfig, AbstractInitialStateConfig
-using FjordSim.Validation: CsvObservations, TIDAL_CONSTITUENTS, ValidationConfig, observation_series
+using FjordSim.Configs: AbstractBoundaryDataConfig, AbstractInitialStateConfig,
+    AbstractObservationConfig
+using FjordSim.Observations: VannmiljoObservations, fetch_observations, observation_series,
+    observation_stations
+using FjordSim.Validation: TIDAL_CONSTITUENTS, ValidationConfig
 using LinearAlgebra: qr
 using NCDatasets: NCDataset
 using NumericalEarth: FreezingLimitedOceanTemperature
@@ -296,9 +300,8 @@ const DRAMMENSFJORD_SECTION = [
     Station(name = "DS-76", longitude = 10.40513, latitude = 59.51422),  # 33.89 km, 153.4 m
 ]
 
-# IMR's monthly casts, from Vannmiljø (`observations/imr_ctd_2024-2026/stations.csv`): ØkoKyst
-# and the Tisler acidification stations. Exact. Named as IMR names them, which is how the casts are
-# matched. Torbjørnskjær and Breiangen vest are OF-1 and OF-5, Bastøy and Missingene OF-4 and OF-2.
+# IMR's monthly casts, at Vannmiljø's positions: ØkoKyst and the Tisler acidification stations.
+# Exact. Named as IMR names them. Torbjørnskjær and Breiangen vest are OF-1 and OF-5, Bastøy and Missingene OF-4 and OF-2.
 # Færder lies 12 rows from the southern edge, inside the boundary sponge; Missingene's cell is 110 m
 # deep against casts to 350 m, and Tisler-5's 31 m against 120 m, with 120 m water a cell away.
 const IMR_STATIONS = [
@@ -433,7 +436,7 @@ function BoundaryData.regrid_boundary_data(target_grid, config::TideCorrectedBou
     isempty(config.gains) && error(
         "No boundary tide gains are stated. After `download_boundary_data`, run " *
         "`julia --project scripts/measure_boundary_tide.jl examples/oslofjorden/oslofjorden.jl " *
-        "Viker 10.949769 59.036046` and paste its output into `VIKER_TIDE_GAINS`.",
+        "Viker` and paste its output into `VIKER_TIDE_GAINS`.",
     )
     result = BoundaryData.regrid_boundary_data(target_grid, config.source)
     correct_boundary_tide!(result.output_file, Grids.open_edges(config), config.gains)
@@ -565,14 +568,16 @@ end
 `source`'s initial state with T and S in the columns over the sill basins replaced by observed casts.
 
 `prepare_initial_state` writes the file exactly as `source` would, then corrects it in place
-(`correct_basin_water!`). Every other hook is `source`'s: where the file is, its date, the download.
-`casts` names the stations and where their casts are; a station is used when it has a cast within
+(`correct_basin_water!`). `download_initial_state` fetches `source`'s download and the casts. Every
+other hook is `source`'s: where the file is, its date. `casts` is the observation source the casts
+come from, naming their stations; a station is used when it has a cast within
 `maximum_cast_offset` of the start. The stations named in `deep_only` replace only the water below
 their sill, not whole columns.
 """
-struct CastCorrectedInitialState{C <: AbstractInitialStateConfig} <: AbstractInitialStateConfig
+struct CastCorrectedInitialState{C <: AbstractInitialStateConfig, O <: AbstractObservationConfig} <:
+       AbstractInitialStateConfig
     source::C
-    casts::CsvObservations
+    casts::O
     maximum_cast_offset::Day
     deep_only::Vector{String}
 end
@@ -583,8 +588,10 @@ InitialState.initial_state_directory(config::CastCorrectedInitialState) =
     InitialState.initial_state_directory(config.source)
 InitialState.initial_state_date(config::CastCorrectedInitialState) =
     InitialState.initial_state_date(config.source)
-InitialState.fetch_initial_state(target_grid, config::CastCorrectedInitialState, date) =
-    InitialState.fetch_initial_state(target_grid, config.source, date)
+function InitialState.fetch_initial_state(target_grid, config::CastCorrectedInitialState, date)
+    fetch_observations(target_grid, config.casts)
+    return InitialState.fetch_initial_state(target_grid, config.source, date)
+end
 
 function InitialState.regrid_initial_state(
     target_grid,
@@ -697,7 +704,7 @@ function correct_basin_water!(path, edges, config::CastCorrectedInitialState, da
         labels = trapped_water(wet, edges)
 
         stations = []
-        for station in config.casts.stations
+        for station in observation_stations(config.casts)
             casts = [nearest_cast(config.casts, station, v, date, config.maximum_cast_offset)
                      for v in ("T", "S")]
             if any(isnothing, casts)
@@ -916,10 +923,9 @@ FjordConfig(
     # against 0.03 g/kg and 0.01 °C between neighbouring cells elsewhere.
     #
     # Over the Drøbak and Svelvik sill basins the water is the NIVA casts' instead
-    # (`CastCorrectedInitialState`, "The basin water" above), from the AquaMonitor export of
-    # projects 12914 and 6302 (`export_aquamonitor_ctd.py` in that folder), which has to be in place
-    # before `prepare_initial_state`. Casts are practical salinity and in-situ temperature, taken as
-    # S and T as Norkyst's are.
+    # (`CastCorrectedInitialState`, "The basin water" above), from Vannmiljø, fetched by
+    # `download_initial_state` over the weeks either side of `start_date`. Casts are practical
+    # salinity and in-situ temperature, taken as S and T as Norkyst's are.
     initial_state_config = CastCorrectedInitialState(
         NorKystV3InitialStateConfig(
             data_root        = data_root,
@@ -930,10 +936,12 @@ FjordConfig(
             parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
             start_date       = start_date,
         ),
-        CsvObservations(
+        VannmiljoObservations(
             data_root        = data_root,
-            output_directory = joinpath("observations", "niva_ctd_2024-2025"),
-            variables        = ["T", "S"],
+            output_directory = joinpath("observations", "vannmiljo_niva_initial"),
+            start_date       = start_date - Day(14),
+            stop_date        = start_date + Day(14),
+            contractors      = ["NIVA"],
             stations         = OSLOFJORD_BASIN_CAST_STATIONS,
         ),
         Day(14),
@@ -1366,21 +1374,30 @@ FjordConfig(
         loops              = 1,
         pickup             = false,
     ),
-    # The NIVA casts of both programmes, exported from NIVA's ODM2 database: October 2024 to
-    # September 2026, the whole run. The AquaMonitor export beside it holds the same
-    # casts to December 2025 and would score them twice. Then IMR's, monthly to March 2026.
+    # The CTD casts of both NIVA programmes and IMR's, from Vannmiljø, fetched by
+    # `download_observations`. Each contractor registers its own casts, so one source per
+    # contractor scores each cast once. When fetched on 2026-11-14, Vannmiljø held NIVA's casts to
+    # 2025-12-12 and IMR's to March 2026; NIVA's later casts were in its own ODM2 database only.
+    # NIVA's casts there are the AquaMonitor export's, value for value, except I-4's, which
+    # Vannmiljø lacks. It places Ø-1 555 m and Cj1 620 m from the positions above, and the next
+    # NIVA location is 4.5 km from either, hence 1 km.
     observation_configs = (
-        CsvObservations(
+        VannmiljoObservations(
             data_root        = data_root,
-            output_directory = joinpath("observations", "niva_ctd_odm2_2024-2026"),
-            variables        = ["T", "S"],
+            output_directory = joinpath("observations", "vannmiljo_niva"),
+            start_date       = start_date,
+            stop_date        = stop_date,
+            contractors      = ["NIVA"],
             stations         = NIVA_CTD_STATIONS,
+            match_distance   = 1000.0,
             source           = "NIVA",
         ),
-        CsvObservations(
+        VannmiljoObservations(
             data_root        = data_root,
-            output_directory = joinpath("observations", "imr_ctd_2024-2026"),
-            variables        = ["T", "S"],
+            output_directory = joinpath("observations", "vannmiljo_imr"),
+            start_date       = start_date,
+            stop_date        = stop_date,
+            contractors      = ["Havforskningsinstituttet"],
             stations         = IMR_STATIONS,
             source           = "IMR",
         ),

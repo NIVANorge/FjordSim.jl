@@ -8,6 +8,7 @@ export
     fjord_results_root,
     # pipeline steps
     prepare_bathymetry,
+    download_observations,
     download_forcing,
     prepare_forcing,
     download_initial_state,
@@ -86,6 +87,9 @@ include("Regridding.jl")
 include("Atmospheres/Atmospheres.jl")
 include("DataSources/NorKyst.jl")
 include("DataSources/Topaz.jl")
+# Observations comes before the pipelines that may read it — a setup's initial state can be corrected
+# by casts — and before Simulations, whose station writers write at its `Station`s.
+include("Observations/Observations.jl")
 include("Forcing/Forcing.jl")
 include("InitialState/InitialState.jl")
 include("Rivers/Rivers.jl")
@@ -104,6 +108,7 @@ using .Plotting
 using .Bathymetry
 using .Regridding
 using .Atmospheres
+using .Observations
 using .Forcing
 using .InitialState
 using .Rivers

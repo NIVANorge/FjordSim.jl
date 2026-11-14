@@ -16,6 +16,7 @@ configure is a no-op.
 | Step | Needs | Writes (under the fjord's data directory) | Notes |
 |---|---|---|---|
 | `prepare_bathymetry` | — | `bathymetry.nc` | downloads the Geonorge FileGDB (4.5 GB) on first use |
+| `download_observations` | — | one directory per source under `observations/` | network, over the grid's box and each source's period; Vannmiljø needs `VANNMILJO_API_KEY` |
 | `download_forcing` | — | raw NorKyst months | network |
 | `prepare_forcing` | bathymetry, download | `forcing.nc` | pure regrid |
 | `add_rivers` | bathymetry | `rivers_nve.nc` | needs `NVE_API_KEY` (free: https://hydapi.nve.no/Users) |
@@ -24,7 +25,7 @@ configure is a no-op.
 | `download_atmosphere` | — | raw NORA3 months | slow: ~10000 OPeNDAP reads per simulated year |
 | `prepare_atmosphere` | download | `atmosphere.nc` | pure regrid, independent of the ocean grid |
 | `run_simulation` | every prepared file the setup names | results under `results_root` | needs a GPU in practice |
-| `validate_simulation` | a finished run | `<results_root>/validation/` | only Kartverket water level is fetched automatically; with a `validation_config`, one pass over every `SnapshotWriter` file |
+| `validate_simulation` | a finished run, `download_observations` | `<results_root>/validation/` | fetches only the Kartverket water level its tide-gauge writers record; with a `validation_config`, one pass over every `SnapshotWriter` file |
 
 ```bash
 julia --project -m FjordSim prepare_bathymetry --config examples/oslofjorden/oslofjorden.jl

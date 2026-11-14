@@ -164,6 +164,18 @@ FjordSim.Grids.domain_grid(config::SingleColumnGrid, architecture) = LatitudeLon
 # One forcing hook overloaded on the new forcing config, without touching Forcing.jl.
 FjordSim.Forcing.forcing_variable_names(config::ConstantForcing) = Dict("temperature" => "T")
 
+# Observation sources for the `download_observations` testset: one records the box it is handed, one
+# fails, so the step can be checked to hand each the grid and to go on past a failure.
+struct RecordingObservations <: FjordSim.Configs.AbstractObservationConfig
+    boxes::Vector{Any}
+end
+
+struct FailingObservations <: FjordSim.Configs.AbstractObservationConfig end
+
+FjordSim.Observations.fetch_observations(target_grid, config::RecordingObservations) =
+    push!(config.boxes, FjordSim.Grids.download_box(target_grid, 0.0))
+FjordSim.Observations.fetch_observations(target_grid, ::FailingObservations) = error("service down")
+
 # A deeply parameterized type, so a frame mentioning it is long enough for `show_compact_error` to
 # have something to abbreviate.
 struct Nested{A,B} end

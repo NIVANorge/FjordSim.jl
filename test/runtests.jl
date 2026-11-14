@@ -29,11 +29,11 @@ using FjordSim.BoundaryData: boundary_data_directory, boundary_data_path, bounda
 using FjordSim.Simulations: attach_callback!, attach_time_stepping!, attach_writer!,
     coupled_model, free_surface, initial_time_step, model_biogeochemistry, model_closure,
     model_tracers, results_path, run_tag, run_architecture
-using FjordSim.Validation: baroclinic_deviation, CsvObservations, depth_average,
-    direction_statistics, harmonic_fit, KartverketSeaLevel, monthly_statistics, observation_series,
-    observation_stations, observations_directory, ObservationSeries, quantiles, reconstruct,
-    running_mean, skill_metrics, station_files, TIDAL_CONSTITUENTS, tidal_ellipses, TidalConstituent,
-    ValidationConfig
+using FjordSim.Observations: CsvObservations, KartverketSeaLevel, observation_series,
+    observation_stations, observations_directory, ObservationSeries, VannmiljoObservations
+using FjordSim.Validation: baroclinic_deviation, depth_average, direction_statistics, harmonic_fit,
+    monthly_statistics, quantiles, reconstruct, running_mean, skill_metrics, station_files,
+    TIDAL_CONSTITUENTS, tidal_ellipses, TidalConstituent, ValidationConfig
 using FjordSim: Rivers
 using Dates: Date, DateFormat, DateTime, Day, Hour, Millisecond, Minute, Month, Second
 using JLD2
@@ -65,6 +65,7 @@ end
             :fjord_data_root,
             :fjord_results_root,
             :prepare_bathymetry,
+            :download_observations,
             :download_forcing,
             :prepare_forcing,
             :download_initial_state,
@@ -1302,6 +1303,7 @@ end
         subcommands = FjordSim.CLI.subcommand_names()
         @test subcommands == [
             "prepare_bathymetry",
+            "download_observations",
             "download_forcing",
             "prepare_forcing",
             "download_initial_state",
@@ -6240,7 +6242,12 @@ end
 
     @testset "Kartverket sea level adapter" begin
         station = Station(name = "Oscarsborg", longitude = 10.604861, latitude = 59.678073)
-        config = KartverketSeaLevel(data_root = mktempdir(), stations = [station])
+        config = KartverketSeaLevel(
+            data_root = mktempdir(),
+            stations = [station],
+            start_date = DateTime(2015, 1, 1),
+            stop_date = DateTime(2015, 2, 1),
+        )
 
         @test observation_stations(config) == [station]
         @test startswith(observations_directory(config), config.data_root)
@@ -6252,17 +6259,17 @@ end
         <waterlevel value="-3.2" time="2015-01-01T00:10:00+00:00" flag="obs"/>
         </data></locationdata></tide>
         """
-        parsed = FjordSim.Validation.parse_kartverket(xml)
+        parsed = FjordSim.Observations.parse_kartverket(xml)
         @test length(parsed) == 2
         @test parsed[1] == (DateTime(2015, 1, 1), 95.6)
         @test parsed[2] == (DateTime(2015, 1, 1, 0, 10), -3.2)
         # An error page, or anything else without waterlevel elements, is an empty month rather
         # than an exception.
-        @test isempty(FjordSim.Validation.parse_kartverket("<html>503</html>"))
+        @test isempty(FjordSim.Observations.parse_kartverket("<html>503</html>"))
 
         # Reading a cached month: centimetres become metres, and only `eta` is served.
         mkpath(observations_directory(config))
-        write(FjordSim.Validation.kartverket_cache_path(config, station, 2015, 1), xml)
+        write(FjordSim.Observations.kartverket_cache_path(config, station, 2015, 1), xml)
         window = (DateTime(2015, 1, 1), DateTime(2015, 2, 1))
 
         series = observation_series(config, station, "eta"; window)
@@ -6280,7 +6287,7 @@ end
                                window = (DateTime(2016, 1, 1), DateTime(2016, 2, 1))),
         )
 
-        @test FjordSim.Validation.months_in(DateTime(2014, 11, 5), DateTime(2015, 2, 3)) ==
+        @test FjordSim.Observations.months_in(DateTime(2014, 11, 5), DateTime(2015, 2, 3)) ==
               [(2014, 11), (2014, 12), (2015, 1), (2015, 2)]
     end
 
@@ -6299,7 +6306,7 @@ end
         )
 
         @test observation_stations(config) == stations
-        path = FjordSim.Validation.csv_observation_path(config, stations[2], "T")
+        path = FjordSim.Observations.csv_observation_path(config, stations[2], "T")
         # The station tag, not the raw name, so a filename stays ASCII and unambiguous.
         @test basename(path) == "TO_1_T.csv"
 
@@ -6313,7 +6320,7 @@ end
         # A profile: two casts, three depths each.
         mkpath(observations_directory(config))
         write(
-            FjordSim.Validation.csv_observation_path(config, stations[1], "T"),
+            FjordSim.Observations.csv_observation_path(config, stations[1], "T"),
             """
             time,depth,value
             2015-06-01T12:00:00,0,15.0
@@ -6348,7 +6355,7 @@ end
 
         # A point series: no depth column at all.
         write(
-            FjordSim.Validation.csv_observation_path(config, stations[2], "T"),
+            FjordSim.Observations.csv_observation_path(config, stations[2], "T"),
             "time,value\n2015-06-01T12:00:00,15.0\n2015-06-01T13:00:00,15.5\n",
         )
         point = observation_series(config, stations[2], "T"; window)
@@ -6359,7 +6366,7 @@ end
         # A value that will not parse is a gap, not a dropped row: the sample was taken and the
         # instrument had nothing to say, and dropping it would shorten the record silently.
         write(
-            FjordSim.Validation.csv_observation_path(config, stations[2], "S"),
+            FjordSim.Observations.csv_observation_path(config, stations[2], "S"),
             "time,value\n2015-06-01T12:00:00,33.0\n2015-06-01T13:00:00,\n2015-06-01T14:00:00,33.4\n",
         )
         gappy = observation_series(config, stations[2], "S"; window)
@@ -6369,7 +6376,7 @@ end
         # A header without the required columns is a stated error, not a silent empty read.
         bad = joinpath(observations_directory(config), "bad.csv")
         write(bad, "when,what\n2015-01-01,1.0\n")
-        @test_throws ArgumentError FjordSim.Validation.read_observation_csv(bad, ',', nothing)
+        @test_throws ArgumentError FjordSim.Observations.read_observation_csv(bad, ',', nothing)
 
         # Alternative delimiters and time formats, which is what a Norwegian Excel export gives.
         semicolon = CsvObservations(
@@ -6377,7 +6384,7 @@ end
             delimiter = ';', time_format = DateFormat("dd.mm.yyyy HH:MM"),
         )
         write(
-            FjordSim.Validation.csv_observation_path(semicolon, stations[1], "T"),
+            FjordSim.Observations.csv_observation_path(semicolon, stations[1], "T"),
             "time;value\n01.06.2015 12:00;15.0\n",
         )
         converted = observation_series(semicolon, stations[1], "T"; window)
@@ -6389,9 +6396,9 @@ end
         mktempdir() do tmp
             station = Station(name = "Km1", longitude = 10.627372, latitude = 59.582064)
             source = CsvObservations(data_root = tmp, variables = ["T"], stations = [station])
-            mkpath(dirname(FjordSim.Validation.csv_observation_path(source, station, "T")))
+            mkpath(dirname(FjordSim.Observations.csv_observation_path(source, station, "T")))
             write(
-                FjordSim.Validation.csv_observation_path(source, station, "T"),
+                FjordSim.Observations.csv_observation_path(source, station, "T"),
                 "time,depth,value\n2020-01-01T12:00:00,1.0,5.0\n",
             )
             writer = StationWriter(
@@ -6417,8 +6424,135 @@ end
         end
     end
 
+    @testset "download_observations" begin
+        recording = RecordingObservations(Any[])
+        config = FjordConfig(;
+            grid_config = test_grid_config(longitude = (10.0, 12.0), latitude = (59.0, 62.0)),
+            bathymetry_config = test_bathymetry_config(),
+            observation_configs = (FailingObservations(), recording),
+        )
+        # A source that fails is warned about, and the next one is still fetched, over the grid's box.
+        @test_logs (:warn, r"Could not fetch FailingObservations") match_mode = :any download_observations(config)
+        @test only(recording.boxes) == ((10.0, 12.0), (59.0, 62.0))
+        # A source read from files downloaded some other way has nothing to fetch.
+        files = CsvObservations(data_root = mktempdir(), variables = ["T"])
+        @test isnothing(FjordSim.Observations.fetch_observations(nothing, files))
+    end
+
+    @testset "stations.csv" begin
+        directory = mktempdir()
+        path = joinpath(directory, "stations.csv")
+        stations = [
+            Station(name = "Ep1", longitude = 10.723783, latitude = 59.786301),
+            Station(name = "Tisler-1", longitude = 10.975667, latitude = 58.992333),
+        ]
+        FjordSim.Observations.write_stations(path, stations, ["01.01-81452 Indre Oslofjord, Bunnefjorden", "a \"b\""])
+        @test FjordSim.Observations.read_stations(path) == stations
+        # An export's own layout is read by its header: a code column, a quoted name, extra columns.
+        write(path, "station_code,station_name,longitude,latitude,project\nOF-4,\"Bastøy, VT2\",10.590569,59.35867,1\n")
+        @test FjordSim.Observations.read_stations(path) ==
+              [Station(name = "OF-4", longitude = 10.590569, latitude = 59.35867)]
+        @test isempty(FjordSim.Observations.read_stations(joinpath(directory, "absent.csv")))
+        # Without a station list, a CSV source reads its directory's.
+        source = CsvObservations(data_root = directory, output_directory = "", variables = ["T"])
+        @test observation_stations(source) == FjordSim.Observations.read_stations(path)
+    end
+
+    @testset "Vannmiljø" begin
+        location(id, name, code, longitude, latitude) = Dict{String,Any}(
+            "WaterLocationID" => id, "WaterLocationCode" => "01.01-$id", "Name" => name,
+            "Betegnelse" => code, "CoordX_dg" => longitude, "CoordY_dg" => latitude,
+        )
+        registration(id, parameter, time, upper, lower, value; contractor = "NIVA",
+                     method = "Marint vann: Målesonde in situ", operator = "=") = Dict{String,Any}(
+            "WaterLocationID" => id, "ParameterID" => parameter, "SamplingTime" => time,
+            "UpperDepth" => upper, "LowerDepth" => lower, "RegValue" => value,
+            "Contractor" => contractor, "SamplingMethodName" => method, "ValueOperator" => operator,
+        )
+        locations = [
+            location(1, "Indre Oslofjord, Bunnefjorden", "Ep 1", 10.72, 59.78),
+            location(2, "Tisler", "1", 10.97, 58.99),
+            location(3, "Krokstadfjorden", nothing, 10.73, 59.29),
+            location(4, "Outside", "X-1", 5.0, 59.5),
+            # A FerryBox point with the same code, nearer a station than the casts' location.
+            location(5, "Oslo-Kiel 1", "Ep 1", 10.721, 59.781),
+        ]
+        registrations = [
+            registration(1, "SALIN", "2025-02-11T14:00:00", 70.0, 71.0, 34.7),
+            registration(1, "SALIN", "2025-02-11T14:00:00", 70.0, 71.0, 34.7),
+            registration(1, "SALIN", "2025-02-11T14:00:00", 0.0, 1.0, 20.0),
+            registration(1, "SALIN", "2025-02-11T15:00:00", 80.0, 81.0, 34.9),
+            registration(1, "TEMP", "2025-02-11T14:00:00", 0.0, 1.0, 3.5),
+            registration(1, "SALIN", "2025-02-11T14:00:00", 2.0, 3.0, 0.5; operator = "<"),
+            registration(1, "SALIN", "2030-01-01T00:00:00", 0.0, 1.0, 30.0),
+            registration(2, "TEMP", "2025-03-04T00:00:00", 5.0, 5.0, 2.7; contractor = "Havforskningsinstituttet"),
+            registration(2, "TEMP", "2025-03-04T00:00:00", 10.0, 10.0, 2.8; contractor = "Havforskningsinstituttet"),
+            registration(3, "TEMP", "2025-03-04T00:00:00", 1.0, 2.0, 4.0; contractor = nothing),
+            registration(4, "TEMP", "2025-03-04T00:00:00", 1.0, 2.0, 4.0),
+            registration(5, "SALIN", "2025-02-11T07:00:00", 4.0, 4.0, 25.0;
+                         method = "FerryBox sensormålinger (Petersen et al. 2003)"),
+        ]
+        box = ((10.0, 12.0), (58.5, 60.0))
+        window = (DateTime(2025, 1, 1), DateTime(2026, 1, 1))
+        source(; kwargs...) = VannmiljoObservations(;
+            data_root = mktempdir(), start_date = window[1], stop_date = window[2], kwargs...,
+        )
+        write_observations = FjordSim.Observations.write_vannmiljo_observations
+
+        # Every location found, named by its code, else its name, and both for a bare number.
+        found = source()
+        write_observations(found, registrations, locations, box...)
+        @test [s.name for s in observation_stations(found)] == ["Ep 1", "Krokstadfjorden", "Tisler-1"]
+        # Each sampled interval's middle, each value once, no value below a detection limit, nothing
+        # outside the period, and a cast registered across an hour one cast.
+        salinity = observation_series(found, observation_stations(found)[1], "S"; window)
+        @test salinity.times == [DateTime(2025, 2, 11, 14)]
+        @test salinity.depths == [0.5, 70.5, 80.5]
+        @test salinity.values[1, :] ≈ [20.0, 34.7, 34.9]
+        @test salinity.units == "psu"
+        @test observation_series(found, observation_stations(found)[3], "T"; window).depths == [5.0, 10.0]
+
+        # A code two locations share is made unique.
+        every = source(sampling_methods = String[])
+        write_observations(every, registrations, locations, box...)
+        @test [s.name for s in observation_stations(every)] ==
+              ["Ep 1-1", "Ep 1-5", "Krokstadfjorden", "Tisler-1"]
+
+        # With a station list, each station takes the nearest location holding data the source
+        # keeps, within `match_distance`, under the station's own name and position: the casts'
+        # location 110 m away rather than the FerryBox point 12 m away, and nothing for a station
+        # whose only location nearby is another contractor's.
+        stations = [
+            Station(name = "Ep1", longitude = 10.7209, latitude = 59.7809),
+            Station(name = "Tisler-1", longitude = 10.97, latitude = 58.99),
+        ]
+        niva = source(contractors = ["NIVA"], stations = stations)
+        write_observations(niva, registrations, locations, box...)
+        @test observation_series(niva, stations[1], "S"; window).values[1, :] ≈ [20.0, 34.7, 34.9]
+        @test isnothing(observation_series(niva, stations[2], "T"; window))
+        @test FjordSim.Observations.read_stations(joinpath(observations_directory(niva), "stations.csv")) ==
+              stations[1:1]
+        far = source(contractors = ["NIVA"], stations = stations, match_distance = 50.0)
+        write_observations(far, registrations, locations, box...)
+        @test isnothing(observation_series(far, stations[1], "S"; window))
+
+        @test FjordSim.Observations.calendar_years(DateTime(2024, 10, 1), DateTime(2026, 3, 5)) == [
+            (Date(2024, 10, 1), Date(2024, 12, 31)),
+            (Date(2025, 1, 1), Date(2025, 12, 31)),
+            (Date(2026, 1, 1), Date(2026, 3, 5)),
+        ]
+        @test_throws ArgumentError FjordSim.Observations.vannmiljo_parameter("u")
+        withenv("VANNMILJO_API_KEY" => nothing) do
+            @test_throws ErrorException FjordSim.Observations.vannmiljo_api_key()
+        end
+        # Vannmiljø places Ep1, at 10.723783°E 59.786301°N, at 260056 m E 6635355 m N in UTM 33.
+        utm = FjordSim.Observations.utm33_box((10.72, 10.73), (59.78, 59.79))
+        @test utm["xmin"] <= 260056 <= utm["xmax"] && utm["ymin"] <= 6635355 <= utm["ymax"]
+        @test utm["xmax"] - utm["xmin"] < 1000 && utm["ymax"] - utm["ymin"] < 1500
+    end
+
     @testset "profile interpolation" begin
-        interpolate = FjordSim.Validation.interpolate_to_depths
+        interpolate = FjordSim.Observations.interpolate_to_depths
         # Linear between samples...
         @test interpolate([0.0, 10.0], [4.0, 6.0], [0.0, 5.0, 10.0]) ≈ [4.0, 5.0, 6.0]
         # ...and never beyond them: a shallow cast cannot invent deep water.
@@ -6531,7 +6665,7 @@ end
         mkpath(observations_directory(source))
         cast_time = run.start_date + Second(2)
         write(
-            FjordSim.Validation.csv_observation_path(source, station, "T"),
+            FjordSim.Observations.csv_observation_path(source, station, "T"),
             "time,depth,value\n$(cast_time),5.0,60.0\n$(cast_time),15.0,50.0\n",
         )
         validation = ValidationConfig(
@@ -6585,7 +6719,7 @@ end
     # written and read back in a temporary directory.
 
     @testset "station_tag" begin
-        tag(name) = FjordSim.Simulations.station_tag(
+        tag(name) = FjordSim.Observations.station_tag(
             Station(name = name, longitude = 10.0, latitude = 59.0),
         )
 
@@ -6694,7 +6828,7 @@ end
         @test endswith(path, ".nc")
         @test startswith(path, directory)
         # The station tag goes after the run tag, which is what `station_files` reads back.
-        @test occursin(FjordSim.Simulations.station_tag(first(writer.stations)), basename(path))
+        @test occursin(FjordSim.Observations.station_tag(first(writer.stations)), basename(path))
 
         stem = first(splitext(writer.output_file))
         for tag in ("Km1", "TO_1")
@@ -6901,7 +7035,7 @@ end
     end
 
     @testset "haversine_distance" begin
-        distance = FjordSim.Simulations.haversine_distance
+        distance = FjordSim.Observations.haversine_distance
         @test distance(10.0, 59.0, 10.0, 59.0) == 0
         # One degree of latitude is about 111 km anywhere.
         @test distance(10.0, 59.0, 10.0, 60.0) ≈ 111_195 rtol = 0.01

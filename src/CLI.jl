@@ -5,6 +5,7 @@ export fjord_config
 using ..Configs: AbstractRunConfig, AbstractFjordConfig, run_config, results_root
 using ..Bathymetry: prepare_bathymetry
 using ..Atmospheres: prepare_atmosphere, download_atmosphere
+using ..Observations: download_observations
 using ..Forcing: prepare_forcing, download_forcing
 using ..InitialState: download_initial_state, prepare_initial_state
 using ..Rivers: add_rivers
@@ -50,6 +51,7 @@ Ordered by the sequence a setup is prepared and run in, which is the order `USAG
 """
 const SUBCOMMANDS = [
     "prepare_bathymetry" => prepare_bathymetry,
+    "download_observations" => download_observations,
     "download_forcing" => download_forcing,
     "prepare_forcing" => prepare_forcing,
     "download_initial_state" => download_initial_state,
@@ -102,6 +104,11 @@ Usage:
 Subcommands, in the order a setup is prepared and run:
   prepare_bathymetry    Regrid the bathymetry source onto the setup's grid. Downloads the Geonorge
                         Sjøkart FileGDB on first use (~2.3 GB).
+  download_observations Download every observation source the setup names in its
+                        observation_configs, over the setup's region and each source's own
+                        start_date to stop_date. A source that fails is warned about and the next
+                        one tried. Vannmiljø needs VANNMILJO_API_KEY. A setup naming no
+                        observation source does nothing.
   download_forcing      Download and subset the forcing dataset over the setup's region and the
                         forcing config's start_date to stop_date.
                         A setup with no forcing config does nothing.
@@ -145,7 +152,9 @@ Subcommands, in the order a setup is prepared and run:
                         run config does nothing.
   validate_simulation   Score a finished run against observations, writing skill tables and
                         comparison figures under the setup's results directory. Needs
-                        run_simulation, and reads the station files it wrote. A setup with no
+                        run_simulation, and reads the station files it wrote, and
+                        download_observations for the sources the setup names; it fetches only
+                        the Kartverket gauges its tide-gauge writers record. A setup with no
                         run config does nothing; one whose simulation writes no station
                         output is an error.
 

@@ -27,7 +27,8 @@ julia --project -m FjordSim --help                                 # subcommands
 julia --project -m FjordSim <step> --config <setup.jl>             # one pipeline step
 ```
 
-The steps, in order: `prepare_bathymetry`, `download_forcing`, `prepare_forcing`,
+The steps, in order: `prepare_bathymetry`, `download_observations` (Vannmiljø needs
+`VANNMILJO_API_KEY`), `download_forcing`, `prepare_forcing`,
 `download_initial_state`, `prepare_initial_state`, `add_rivers` (needs `NVE_API_KEY`),
 `download_boundary_data`, `prepare_boundary_data`, `download_atmosphere`, `prepare_atmosphere`,
 `run_simulation` (needs a GPU), `validate_simulation`. `--config` is the only
@@ -106,31 +107,36 @@ The modules, in `include` order from `src/FjordSim.jl`:
 8. **Data sources** (`src/DataSources/`) — the datasets the adapters share: NorKyst-800m
    (`NorKyst.jl`: endpoints, variable names, source grid, subset download) and TOPAZ5-ECOSMO
    (`Topaz.jl`, biogeochemistry for the initial-state and boundary adapters).
-9. **Forcing** (`src/Forcing/`) — the interior forcing pipeline (`prepare_forcing`,
-   `download_forcing`) and its NorKyst adapters.
-10. **Initial state** (`src/InitialState/`) — `download_initial_state`, `prepare_initial_state`:
+9. **Observations** (`src/Observations/`) — `Station`, the observation sources
+   (`KartverketSeaLevel`, `VannmiljoObservations`, `CsvObservations`), the one file layout they all
+   write and read, and `download_observations`, which fetches the setup's `observation_configs` over
+   its grid's box.
+10. **Forcing** (`src/Forcing/`) — the interior forcing pipeline (`prepare_forcing`,
+    `download_forcing`) and its NorKyst adapters.
+11. **Initial state** (`src/InitialState/`) — `download_initial_state`, `prepare_initial_state`:
     one source record at its config's `start_date` for `FromInitialState`, and its NorKyst adapter.
-11. **Rivers** (`src/Rivers/`) — the river pipeline (`add_rivers`) and its NVE adapter.
-12. **Boundary conditions** (`src/Boundaries/BoundaryConditions/`) — the `boundary_condition_sides`
+12. **Rivers** (`src/Rivers/`) — the river pipeline (`add_rivers`) and its NVE adapter.
+13. **Boundary conditions** (`src/Boundaries/BoundaryConditions/`) — the `boundary_condition_sides`
     hook, `model_boundary_conditions` (the default merge on any model config), `AirSeaFluxes`,
     `QuadraticBottomDrag`, and `OpenLateralBoundaryFromData`, the condition that reads the prepared
     open-boundary data.
-13. **Boundary data** (`src/Boundaries/BoundaryData/`) — the open-boundary data pipeline
+14. **Boundary data** (`src/Boundaries/BoundaryData/`) — the open-boundary data pipeline
     (`download_boundary_data`, `prepare_boundary_data`, `boundary_series`) and its NorKyst adapters.
     Independent of `BoundaryConditions`; `build_simulation` hands one's output to the other.
-14. **Advection schemes** (`src/AdvectionSchemes.jl`) — `RiverMouthAdvection` (first-order upwind
+15. **Advection schemes** (`src/AdvectionSchemes.jl`) — `RiverMouthAdvection` (first-order upwind
     horizontally around the river mouths and, optionally, in coastal columns) and
     `model_tracer_advection`, the hook `coupled_model` builds the tracer advection through.
-15. **Simulations** (`src/Simulations.jl`) — `CoupledHydrostaticModel` and `coupled_model`,
+16. **Simulations** (`src/Simulations.jl`) — `CoupledHydrostaticModel` and `coupled_model`,
     `RunConfig`, `build_simulation` (staged in `assemble_simulation`: `validate_model_inputs`,
     `model_inputs`, `coupled_model`)/`run_simulation` (`run_loops`), writers, callbacks, looping,
     checkpointing, initial conditions, the run tag.
-16. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation:
-    observation sources, skill and tidal statistics, and the comparison figures; with a
+17. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation: skill
+    and tidal statistics, and the comparison figures; with a
     `ValidationConfig`, columns and domain statistics from the 3D snapshots and depth-band tables.
-    `StationWriter` (in `Simulations`) is what a run writes for it.
-17. **CLI** (`src/CLI.jl`) — `fjord_config` (loads a config file), subcommand dispatch, logging.
-18. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
+    It reads the observations `download_observations` fetched; `StationWriter` (in `Simulations`) is
+    what a run writes for it.
+18. **CLI** (`src/CLI.jl`) — `fjord_config` (loads a config file), subcommand dispatch, logging.
+19. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
 
 ## Setups
 

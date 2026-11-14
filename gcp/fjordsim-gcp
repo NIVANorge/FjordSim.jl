@@ -464,6 +464,9 @@ cmd_run() {
         [[ -n "${NVE_API_KEY:-}" ]] || die "add_rivers needs NVE_API_KEY in your environment. Free key: https://hydapi.nve.no/Users"
         nve_key="$NVE_API_KEY"
     fi
+    # Vannmiljø's key goes along whenever it is set: `download_observations` needs it, and so may a
+    # setup's `download_initial_state`.
+    local vannmiljo_key="${VANNMILJO_API_KEY:-}"
 
     local remote_script="fjordsim-run-$run_id.sh"
     local remote_log="fjordsim-$run_id.log"
@@ -479,6 +482,7 @@ cmd_run() {
     if [[ "$dry" == "true" ]]; then
         printf 'would upload %s/*.jl -> %s/\n' "$(dirname "$config_ref")" "$(dirname "$config_object")"
         [[ -n "$nve_key" ]] && printf 'would write NVE_API_KEY to ~/.fjordsim-nve-key on %s\n' "$VM_NAME"
+        [[ -n "$vannmiljo_key" ]] && printf 'would write VANNMILJO_API_KEY to ~/.fjordsim-vannmiljo-key on %s\n' "$VM_NAME"
         printf 'would scp the script below to %s:~/%s, then:\n  %s\n\n--- rendered %s ---\n%s\n' \
             "$VM_NAME" "$remote_script" \
             "setsid nohup bash ~/$remote_script > ~/$remote_log 2>&1 < /dev/null &" \
@@ -497,6 +501,9 @@ cmd_run() {
     # Through stdin, not an argument: a command line is world-readable in `ps` on the VM.
     if [[ -n "$nve_key" ]]; then
         printf '%s' "$nve_key" | vm_ssh --command 'umask 077; cat > ~/.fjordsim-nve-key'
+    fi
+    if [[ -n "$vannmiljo_key" ]]; then
+        printf '%s' "$vannmiljo_key" | vm_ssh --command 'umask 077; cat > ~/.fjordsim-vannmiljo-key'
     fi
 
     printf '%s\n' "$script" > "$tmp/$remote_script"

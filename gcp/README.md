@@ -242,6 +242,9 @@ archived from.
 writes it to a mode-600 file on the VM rather than passing it as an argument, which would be
 world-readable in `ps`. Free key: https://hydapi.nve.no/Users
 
+`download_observations` with a Vannmiljø source — and a `download_initial_state` whose setup takes
+casts from one — needs `VANNMILJO_API_KEY` the same way; `run` passes it whenever it is set.
+
 A setup that reads another fjord's downloads by absolute path (`docs/setups.md`, Paths) needs that
 fjord staged too:
 

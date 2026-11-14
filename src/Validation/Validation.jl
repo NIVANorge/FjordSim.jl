@@ -1,19 +1,15 @@
 """
     Validation
 
-Model-observation comparison: fetch observations, score the run's station output against them, and
-draw the figures.
+Model-observation comparison: score the run's station output against the observations the
+`Observations` module reads, and draw the figures.
 
 The pipeline modules before this one all run *before* a simulation; this is the only one that runs
-after. It is deliberately the same shape all the same — an abstract config supertype per source, one
-subtype per dataset, and hook methods dispatching on it, exactly as `docs/adding-a-source.md`
-describes for bathymetry, forcing, rivers, boundaries and atmosphere. Adding an observation source is
-therefore the same two-step it is everywhere else: subtype `AbstractObservationConfig` and overload
-its hooks.
+after. The observations come from the setup's `observation_configs`, which `download_observations`
+fetched; adding a source is subtyping `Configs.AbstractObservationConfig`, not an edit here.
 
-Six files below it:
+Five files below it:
 
-- `observations.jl` — the sources, and one common record type they all return.
 - `metrics.jl` — the statistics, over bare vectors. Knows nothing about fjords or files.
 - `results.jl` — reading a run's station output back, as the inverse of `StationWriter`.
 - `snapshots.jl` — the columns and the domain statistics read from a run's 3D snapshots.
@@ -27,7 +23,6 @@ export validate_simulation
 using CairoMakie
 using Dates: DateTime, Date, Day
 import Dates
-using Downloads
 using LinearAlgebra
 using Printf: @sprintf
 using JLD2
@@ -44,16 +39,19 @@ using ..Configs:
     results_root,
     writers,
     start_date
-using ..Utils: coverage_window, months_in
+using ..Utils: coverage_window
 using ..Bathymetry: bathymetry_path
-using ..Simulations:
-    SnapshotWriter,
+using ..Observations:
+    KartverketSeaLevel,
+    ObservationSeries,
     Station,
-    station_output,
-    station_tag,
-    RESULTS_START_DATE_ATTRIBUTE
+    fetch_observations,
+    interpolate_to_depths,
+    observation_series,
+    observation_stations,
+    station_tag
+using ..Simulations: SnapshotWriter, station_output, RESULTS_START_DATE_ATTRIBUTE
 
-include("observations.jl")
 include("metrics.jl")
 include("results.jl")
 
@@ -169,17 +167,17 @@ const VALIDATION_VARIABLES = ("eta", "T", "S", "u", "v")
 """
     default_observations(run_config, bathymetry_config)
 
-The observation sources a setup can be validated against without anyone supplying a file.
+The observation sources a setup is validated against without naming them.
 
-Exactly one today: Kartverket water level, at every station any `FieldStationWriter` in the setup
-writes the free surface at. The rule is by variable rather than by writer name — a writer that
-records `η` at a point is recording water level, and Kartverket is the public source of observed
-water level — so a setup gets this for free by naming its gauges and nothing else.
+Exactly one today: Kartverket water level over the run's `coverage_window`, at every station any
+`FieldStationWriter` in the setup writes the free surface at. The rule is by variable rather than
+by writer name — a writer that records `η` at a point is recording water level, and Kartverket is
+the public source of observed water level — so a setup gets this for free by naming its gauges and
+nothing else. `validate_simulation` fetches these itself, since no setup names them.
 
-Held programmes — current-meter moorings, monitoring CTD casts, fixed thermistors — are **not** here
-and cannot be: they are held by their owners rather than published, so a source for them is a
-reader over files someone supplies, such as a `CsvObservations`. A setup names those in its
-`observation_configs`, which `validate_simulation` scores after these.
+Every other source — CTD casts, current-meter moorings, fixed thermistors — a setup names in its
+`observation_configs`, which `download_observations` fetches and `validate_simulation` scores after
+these.
 
 Returns an empty tuple for a setup with no free-surface station writer, which is not an error —
 `validate_simulation` will simply find nothing to score and say so.
@@ -197,7 +195,8 @@ function default_observations(run::AbstractRunConfig, bathymetry)
     # Beside the processed bathymetry, the one file every setup has, so the cache lands with its
     # other data.
     data_root = dirname(bathymetry_path(bathymetry))
-    return (KartverketSeaLevel(; data_root, stations = unique(g -> g.name, gauges)),)
+    start_date, stop_date = coverage_window(run)
+    return (KartverketSeaLevel(; data_root, stations = unique(g -> g.name, gauges), start_date, stop_date),)
 end
 
 """
@@ -216,11 +215,12 @@ validate_simulation(config::AbstractFjordConfig; kwargs...) = score_run(
 )
 
 """
-    score_run(run, bathymetry_config, sources, validation; observations, window, depths)
+    score_run(run, bathymetry_config, sources, validation; gauges, observations, window, depths)
 
 `validate_simulation`'s work, and the one pipeline step that runs *after* `run_simulation` rather than
-before it. It fetches whatever each observation source can supply over the run's window, pairs it
-with the run's station output, and writes a skill table, a tidal constituent table, and one figure
+before it. It reads what each observation source has on disk over the run's window — fetching only
+the `default_observations` tide gauges, which no setup names — pairs it with the run's station
+output, and writes a skill table, a tidal constituent table, and one figure
 per station-variable pair into `validation_directory`. With a `ValidationConfig` as `validation`,
 it also scores what no station writer recorded from the 3D snapshots, summarises the domain, and
 pools every sample into the depth-band tables (`ValidationConfig`).
@@ -241,8 +241,9 @@ snapshots (`ValidationConfig`) is placed by its station's position instead.
 # Arguments
 - `sources`: the setup's own observation sources, its `observation_configs`.
 - `validation`: the setup's `validation_config`, a `ValidationConfig` or `nothing`.
+- `gauges`: the sources `score_run` fetches itself; defaults to `default_observations`.
 - `observations`: the sources to score against, as `AbstractObservationConfig`s. Defaults to
-  `default_observations` followed by `sources`.
+  `gauges` followed by `sources`.
 - `window`: `(start, stop)`; defaults to the run's own `coverage_window`.
 - `depths`: which depths to score profiles at, in metres. Defaults to a spread through the upper
   ocean and the basin; a surface series ignores it.
@@ -256,7 +257,8 @@ function score_run(
     bathymetry,
     sources,
     validation;
-    observations = (default_observations(run, bathymetry)..., sources...),
+    gauges = default_observations(run, bathymetry),
+    observations = (gauges..., sources...),
     window = coverage_window(run),
     depths = (0.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0),
 )
@@ -273,8 +275,9 @@ function score_run(
     mkpath(directory)
     @info "Validating $(basename(results_root(run))) over $(window[1]) .. $(window[2])"
 
-    for source in observations
-        download_observations(source, window)
+    # The gauges are named, so they need no grid.
+    for gauge in gauges
+        fetch_observations(nothing, gauge)
     end
 
     scores = Pair{String,SkillMetrics}[]

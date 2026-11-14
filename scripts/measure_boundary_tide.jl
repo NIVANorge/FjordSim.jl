@@ -1,14 +1,15 @@
 # Measure the per-constituent gains that correct a setup's open-boundary tide to a Kartverket tide
 # gauge, from the downloaded boundary data alone, before any run:
 #
-#     julia --project scripts/measure_boundary_tide.jl CONFIG GAUGE LONGITUDE LATITUDE
+#     julia --project scripts/measure_boundary_tide.jl CONFIG GAUGE
 #
 # e.g. for the Oslofjord setup and Viker,
 #
-#     julia --project scripts/measure_boundary_tide.jl examples/oslofjorden/oslofjorden.jl \
-#         Viker 10.949769 59.036046
+#     julia --project scripts/measure_boundary_tide.jl examples/oslofjorden/oslofjorden.jl Viker
 #
-# Run it after `download_boundary_data`. It averages the downloaded `zeta` over every wet source point
+# GAUGE is a Kartverket gauge of the setup's: one its tide-gauge writer records `η` at, which
+# `validate_simulation` scores, or one of its `observation_configs`. Run it after
+# `download_boundary_data`. It averages the downloaded `zeta` over every wet source point
 # of the boundary band, fetches the gauge's 10-minute record over the same window (cached under the
 # setup's data root), fits both with `harmonic_fit` on one reference time, and prints one
 # `TidalGain(constituent, observed / boundary amplitude, observed - boundary phase)` per constituent,
@@ -20,7 +21,8 @@
 # correction does, is measured on that source.
 using FjordSim
 using FjordSim: BoundaryData, Configs
-using FjordSim.Validation: KartverketSeaLevel, download_observations, harmonic_fit, observation_series
+using FjordSim.Observations: KartverketSeaLevel, fetch_observations, observation_series, observation_stations
+using FjordSim.Validation: default_observations, harmonic_fit
 using NCDatasets
 using Dates: DateTime
 
@@ -46,19 +48,35 @@ function boundary_sea_level(source)
     return times[keep], values[keep]
 end
 
+gauges(source::KartverketSeaLevel) = observation_stations(source)
+gauges(source) = Station[]
+
 function main(arguments)
-    length(arguments) == 4 || error("usage: measure_boundary_tide.jl CONFIG GAUGE LONGITUDE LATITUDE")
-    config_path, name, longitude, latitude = arguments
-    boundary = Configs.boundary_data_config(fjord_config(config_path))
+    length(arguments) == 2 || error("usage: measure_boundary_tide.jl CONFIG GAUGE")
+    config_path, name = arguments
+    config = fjord_config(config_path)
+    boundary = Configs.boundary_data_config(config)
     source = hasproperty(boundary, :source) ? boundary.source : boundary
+
+    sources = (
+        default_observations(Configs.run_config(config), Configs.bathymetry_config(config))...,
+        Configs.observation_configs(config)...,
+    )
+    found = [station for candidate in sources for station in gauges(candidate) if station.name == name]
+    isempty(found) && error("$name is none of the setup's Kartverket gauges.")
+    station = first(found)
 
     times, model = boundary_sea_level(source)
     window = (first(times), last(times))
     @info "Boundary sea level: $(length(times)) records, $(window[1]) to $(window[2])"
 
-    station = Station(name = name, longitude = parse(Float64, longitude), latitude = parse(Float64, latitude))
-    gauge = KartverketSeaLevel(data_root = source.data_root, stations = [station])
-    download_observations(gauge, window)
+    gauge = KartverketSeaLevel(
+        data_root = source.data_root,
+        stations = [station],
+        start_date = window[1],
+        stop_date = window[2],
+    )
+    fetch_observations(nothing, gauge)
     observed = observation_series(gauge, station, "eta"; window)
     @info "$name: $(length(observed.times)) samples"
 

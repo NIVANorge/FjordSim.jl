@@ -52,6 +52,30 @@ Dybdedata; `src/Bathymetry/geonorge.jl` is the template to copy for a new source
 abstract type AbstractBathymetryConfig end
 
 """
+    AbstractObservationConfig
+
+Supertype of the observation sources a setup names in `observation_configs`.
+
+# Fields a subtype provides
+- `data_root`: directory the downloads live under.
+- `output_directory`: name of this source's directory inside it.
+
+# Methods a subtype provides
+- `observation_stations(config)`: the `Station`s this source can supply. Required.
+- `observation_series(config, station, variable; window)`: one station's record of one variable.
+  Required.
+- `fetch_observations(target_grid, config)`: download the source's data over `target_grid`'s
+  longitude/latitude box and the source's own period. Optional; defaults to a no-op, for a source
+  read from files downloaded some other way.
+- `observations_directory(config)`: where the files are. Optional; defaults to
+  `joinpath(data_root, output_directory)`.
+
+The hooks live in `FjordSim.Observations`, as do the built-in implementations:
+`KartverketSeaLevel`, `VannmiljoObservations` and `CsvObservations`.
+"""
+abstract type AbstractObservationConfig end
+
+"""
     AbstractForcingConfig
 
 Supertype for forcing configurations. A concrete subtype describes one forcing dataset and
@@ -602,8 +626,9 @@ of input, by overloading that one function on itself rather than copying a body.
   `river_config`, `boundary_data_config`, `atmosphere_config`, `model_config`,
   `biogeochemistry_config`, `boundary_condition_configs` and `run_config`, each returning that
   component or `nothing`. Required.
-- `observation_configs`: the observation sources `validate_simulation` scores the run against
-  besides the ones it builds itself, as a tuple, `()` for none. Required.
+- `observation_configs`: the observation sources `download_observations` fetches and
+  `validate_simulation` scores the run against besides the ones it builds itself, as a tuple, `()`
+  for none. Required.
 - `validation_config`: what `validate_simulation` does beyond scoring each station on its own, a
   `FjordSim.Validation.ValidationConfig`, or `nothing` for that alone. Required.
 - `FjordSim.Simulations.model_inputs(config, grid, run)`: the keywords
@@ -655,10 +680,10 @@ biogeochemistry, its boundary conditions and the run. Each step dispatches on th
   `run_config` must name one, `()` for the model's defaults everywhere.
 - `run_config`: any `AbstractRunConfig`, or `nothing` for a setup that is only
   prepared and not run. Defaults to `nothing`, so a setup opts in by naming one.
-- `observation_configs`: a tuple of `FjordSim.Validation.AbstractObservationConfig`s that
-  `validate_simulation` scores the run against, besides the Kartverket gauges it finds itself.
-  Defaults to `()`. Held programmes, such as monitoring casts exported to a `CsvObservations`, go
-  here.
+- `observation_configs`: a tuple of `AbstractObservationConfig`s that `download_observations`
+  fetches over the grid's box and `validate_simulation` scores the run against, besides the
+  Kartverket gauges it finds itself. Defaults to `()`. A `VannmiljoObservations`,
+  or a `CsvObservations` over files downloaded some other way, goes here.
 - `validation_config`: a `FjordSim.Validation.ValidationConfig`, or `nothing` for a validation that
   scores each station from its station writer's output alone. Defaults to `nothing`.
 

@@ -27,6 +27,7 @@ readonly RESULTS="$STAGE/results"
 readonly RUN_PREFIX="$BUCKET/runs/$RUN_ID"
 readonly RUN_LOG="$HOME/fjordsim-$RUN_ID.log"
 readonly NVE_KEY_FILE="$HOME/.fjordsim-nve-key"
+readonly VANNMILJO_KEY_FILE="$HOME/.fjordsim-vannmiljo-key"
 readonly STAGED_STAMP="$HOME/.fjordsim-staged-$RUN_ID"
 
 # Docker auth is against the host in IMAGE_URI, which need not be in the VM's own region — access
@@ -239,6 +240,7 @@ if [[ "$STEPS" == *add_rivers* ]]; then
     [[ -f "$NVE_KEY_FILE" ]] || { echo "$NVE_KEY_FILE is missing" >&2; exit 1; }
     docker_args+=(-e "NVE_API_KEY=$(cat "$NVE_KEY_FILE")")
 fi
+[[ -f "$VANNMILJO_KEY_FILE" ]] && docker_args+=(-e "VANNMILJO_API_KEY=$(cat "$VANNMILJO_KEY_FILE")")
 
 # The preflight runs in FjordSim's own environment, the only one sure to have CUDA as a direct
 # dependency: an image built with `--environment` works in the setup's.

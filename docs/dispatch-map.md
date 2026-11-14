@@ -44,6 +44,7 @@ and hands them to the work function, which dispatches on them.
 | Step | Reads | Work function |
 |---|---|---|
 | `prepare_bathymetry` | `grid_config`, `bathymetry_config`, `boundary_data_config` | `process_bathymetry` |
+| `download_observations` | `grid_config`, `observation_configs` | `fetch_observation_sources` |
 | `download_forcing` | `grid_config`, `forcing_config` | `fetch_forcing` |
 | `prepare_forcing` | `grid_config`, `bathymetry_config`, `forcing_config`, `boundary_data_config` | `regrid_forcing` |
 | `download_initial_state` | `grid_config`, `initial_state_config` | `fetch_initial_state` |
@@ -186,12 +187,12 @@ No built-in implementation.
 
 ### `AbstractObservationConfig`
 
-| Hook | Status | `CsvObservations` | `KartverketSeaLevel` |
-|---|---|---|---|
-| `observation_stations` | required | ✓ | ✓ |
-| `observation_series` | required | ✓ | ✓ |
-| `download_observations` | optional | default | ✓ |
-| `observations_directory` | optional | default | default |
+| Hook | Status | `CsvObservations` | `KartverketSeaLevel` | `VannmiljoObservations` |
+|---|---|---|---|---|
+| `observation_stations` | required | ✓ | ✓ | ✓ |
+| `observation_series` | required | ✓ | ✓ | ✓ |
+| `fetch_observations` | optional | default | ✓ | ✓ |
+| `observations_directory` | optional | default | default | default |
 
 ### `AbstractRadiativeForcingConfig`
 

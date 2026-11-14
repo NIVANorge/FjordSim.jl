@@ -55,6 +55,7 @@ a function of another name, dispatched on those alone, which is where the logic 
 | Step | Work function | Source hook |
 |---|---|---|
 | `prepare_bathymetry` | `process_bathymetry` | `bathymetry_dataset` |
+| `download_observations` | `fetch_observation_sources` | `fetch_observations` |
 | `download_forcing` | — | `fetch_forcing` |
 | `prepare_forcing` | `regrid_forcing` | `forcing_time_steps`, … |
 | `download_initial_state` | — | `fetch_initial_state` |
@@ -379,7 +380,34 @@ type and its hooks belong to the adapter in the directory of the pipeline that c
 `src/DataSources/` holds only datasets more than one pipeline reads. NORA3 (atmosphere), NVE
 (rivers) and Geonorge (bathymetry) each feed one pipeline and stay in its directory.
 
-## 9. Forcing (`src/Forcing/`)
+## 9. Observations (`src/Observations/`)
+
+Observed data, read by the validation and by any component that wants it — the Oslofjord's initial
+state takes its basin water from casts. Every source writes and reads one layout: a `stations.csv`
+and one `<station tag>_<variable>.csv` of `time,depth,value` rows per station and variable, so one
+reader (`read_observation_series`) serves the sources that fetch and `CsvObservations` over files
+downloaded some other way alike. `download_observations` hands each source in `observation_configs`
+the bare grid, whose box is the region to fetch, and each fetches over its own period; a failing
+source is warned about and skipped. `Station` lives here, not in Simulations, because both the
+station writers and the sources place one.
+
+`VannmiljoObservations` asks the Vannmiljø API (key in `VANNMILJO_API_KEY`) for every
+registration in the box, one request per calendar year; over the Oslofjord box two years of T and S
+were 106 471 values in 39 s. Its quirks, each handled in `write_vannmiljo_observations`:
+
+- **Every contractor registers its own casts**, and the same cast can arrive through more than one
+  programme, so a source keeps the `contractors` it names. NIVA's casts there were the AquaMonitor
+  export's, value for value, over 2024-10 to 2025-12.
+- **A station is matched by position**, to the nearest location holding data the source keeps, within
+  `match_distance`: codes are spelt differently from the programmes' own (`"Ep 1"`, `"DK1"`), some
+  locations have none, one code can name a CTD station and a FerryBox point, and another
+  contractor's location nearby must not take a station.
+- **Each value is registered at its own hour**, so a cast crossing an hour has two times; values at
+  one location within two hours of a cast's first are that cast (`cast_starts`).
+- **A depth is an interval**: a 1 m CTD bin registered as 70-71 m is 70.5 m, the bin's centre, as
+  AquaMonitor gives it.
+
+## 10. Forcing (`src/Forcing/`)
 
 **There is no interior relaxation.** `prepare_forcing` writes `λ = 0` everywhere: the open boundary
 nudges towards hourly exterior data *at* the boundary, and a band relaxing the same variables a few
@@ -396,7 +424,7 @@ every variable, which with `λ = 0` costs a read of two series per variable each
 Norkyst-v3 hindcast (from 2012), keeping hour 12 of its 24 hourly records to match the operational
 12:00 stamp. Both share everything through `AbstractNorKystConfig`.
 
-## 10. Initial state (`src/InitialState/`)
+## 11. Initial state (`src/InitialState/`)
 
 **Why it is not the forcing.** The forcing file has to span the whole run window, because the run
 reads it as forcing terms at every step and `build_simulation` checks its coverage, and the NorKyst
@@ -416,7 +444,7 @@ config, two steps and a one-record file, and a setup starting from it needs no f
 - The NorKyst adapter downloads with the `NorKyst` module's subsetting, as the forcing's does. Only
   the operational collection (from 2017-02-20) has an adapter.
 
-## 11. Rivers (`src/Rivers/`)
+## 12. Rivers (`src/Rivers/`)
 
 ### Rivers as a volume source
 
@@ -492,7 +520,7 @@ western arm missing.
   river on its catchment normal.
 - The caches record the domain they were fetched for, so a grid change re-downloads.
 
-## 12. Boundary conditions (`src/Boundaries/BoundaryConditions/`)
+## 13. Boundary conditions (`src/Boundaries/BoundaryConditions/`)
 
 A separate module from the open-boundary data pipeline beside it in `src/Boundaries/`, and
 independent of it: this one says what a condition *is*, `BoundaryData` prepares and reads the
@@ -556,7 +584,7 @@ opens the boundary. NorKyst's own attributes name the same set (`Che`, `Shc`, `R
   finite.
 - `inflow_timescale` and `outflow_timescale` are separate fields with no defaults.
 
-## 13. Boundary data (`src/Boundaries/BoundaryData/`)
+## 14. Boundary data (`src/Boundaries/BoundaryData/`)
 
 **A separate file because it is hourly.** A Flather boundary compares the model's `η` with an
 exterior one, and the daily-mean collection has no tide. Only the boundary rows need that cadence:
@@ -598,7 +626,7 @@ a few hundred MB where an hourly interior file would be hundreds of GB.
   `norkyst_hindcast_boundary_data.jl` needs no such method; it reads the barotropic pair from the
   `sdepth` files and everything else from `zdepth`.
 
-## 14. Advection schemes (`src/AdvectionSchemes.jl`)
+## 15. Advection schemes (`src/AdvectionSchemes.jl`)
 
 ### `RiverMouthAdvection`
 
@@ -644,7 +672,7 @@ upwinding only those (2.8 %) fixed the bend cell (−17 → +397 K/day) but move
 next cell along the coast, which has three; it froze on 2 January and reached 47 m by 12 February.
 On that 2 January snapshot at freezing, WENO gave it −10 to −29 K/day and upwind +91 to +96 K/day.
 
-## 15. Simulations (`src/Simulations.jl`)
+## 16. Simulations (`src/Simulations.jl`)
 
 `coupled_model` lives here, not in `src/FjordSim.jl`, because a function defined after the
 `include` block cannot be imported by a module inside it.
@@ -830,10 +858,11 @@ MB per checkpoint on the Oslofjord grid, hence `cleanup = true`.
 - Snapshots *are* per launch, so a resumed run's file starts at the resume point.
 - `pickup` supersedes `initial_conditions`.
 
-## 16. Validation (`src/Validation/`)
+## 17. Validation (`src/Validation/`)
 
-The only module that runs after a simulation, built the same way as the others: an
-`AbstractObservationConfig` per source. Every stage is permissive about missing data — most
+The only module that runs after a simulation. It reads what the setup's `observation_configs` have
+on disk (`Observations`), and fetches only the Kartverket gauges `default_observations` builds from
+the tide-gauge writers, which no setup names. Every stage is permissive about missing data — most
 station-variable combinations in a sweep are empty, and each is a blank row, not a failure.
 **Stations are matched by name** between a source and the run's station writers;
 `default_observations` builds its station list from the writers, and a mismatch shows up as "no model
@@ -856,7 +885,7 @@ straight from the file reads every chunk once per station:
 Where several files hold the same time (a resume writes under a new run tag, a loop restarts model
 time) the later file wins from its own first record on (`snapshot_records`).
 
-## 17. CLI (`src/CLI.jl`)
+## 18. CLI (`src/CLI.jl`)
 
 **No setup is part of the package.** A setup is a script ending in its `FjordConfig`, and
 `fjord_config(path)` `Base.include`s it into `Main` on every call. So each step gets a fresh config —
@@ -881,7 +910,7 @@ reproducible by re-running, and it is the only step guaranteed a `results_root`.
   to `{…}`. `STACKTRACE_WIDTH` below 120 changes nothing (`Base.type_depth_limit` floors it).
 - During a run `stdout` is a `Pipe`, so `displaysize` is 24x80 and wide `show` output may wrap.
 
-## 18. Top-level (`src/FjordSim.jl`)
+## 19. Top-level (`src/FjordSim.jl`)
 
 **It overrides one NumericalEarth method**, `update_net_ocean_fluxes!` on `NoSeaIceInterfaceModel`,
 with a copy of upstream's body. Without sea ice, NumericalEarth's zero fluxes are an untyped

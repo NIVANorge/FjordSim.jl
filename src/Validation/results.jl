@@ -96,6 +96,14 @@ function read_station_netcdf(path, variable::AbstractString)
         data = Array(raw[ntuple(_ -> :, length(dimensions))...])
         values = station_value_matrix(data, time_index, vertical_index)
 
+        # The immersed cells below the seabed hold 0, not a fill value; the grid's mask for the
+        # variable's location marks them, so a cast deeper than the column is not paired with them.
+        mask_name = inactive_mask_name(dimensions, time_index)
+        if !isnothing(vertical_index) && haskey(ds, mask_name)
+            inactive = vec(Array(ds[mask_name][:, :, :])) .!= 0
+            values[:, inactive] .= NaN
+        end
+
         depths = if isnothing(vertical_index)
             [0.0]
         else
@@ -115,6 +123,18 @@ function read_station_netcdf(path, variable::AbstractString)
         )
     end
 end
+
+"""
+    inactive_mask_name(dimensions, time_index)
+
+The name Oceananigans gives the immersed mask at a variable's location: `inactive_nodes_ccc` for a
+variable on `("λ_caa", "φ_aca", "z_aac", "time")`, the location letter of each spatial dimension in
+turn.
+"""
+inactive_mask_name(dimensions, time_index) = "inactive_nodes_" * join(
+    only(filter(!=('a'), last(split(name, '_')))) for (index, name) in enumerate(dimensions)
+    if index != time_index
+)
 
 """
     station_value_matrix(data, time_index, vertical_index)

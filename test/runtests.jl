@@ -6877,6 +6877,30 @@ end
         @test isnothing(FjordSim.Validation.model_series(simulation, writer, gauge, "T"))
     end
 
+    @testset "read_station_netcdf masks the immersed cells" begin
+        # Oceananigans' layout for one column: the immersed cells below the seabed hold 0 and are
+        # marked in the grid's mask for the variable's location.
+        path = joinpath(mktempdir(), "stations_hydrography_20260915T120000_A.nc")
+        NCDataset(path, "c") do ds
+            ds.attrib["start_date"] = "2026-09-15T12:00:00"
+            defDim(ds, "λ_caa", 1)
+            defDim(ds, "φ_aca", 1)
+            defDim(ds, "z_aac", 3)
+            defDim(ds, "time", 2)
+            defVar(ds, "time", [0.0, 3600.0], ("time",))
+            defVar(ds, "z_aac", [-25.0, -15.0, -5.0], ("z_aac",))
+            defVar(ds, "inactive_nodes_ccc", reshape(Float32[1, 0, 0], 1, 1, 3), ("λ_caa", "φ_aca", "z_aac"))
+            S = zeros(Float32, 1, 1, 3, 2)
+            S[1, 1, 2:3, :] .= 30
+            defVar(ds, "S", S, ("λ_caa", "φ_aca", "z_aac", "time"))
+        end
+
+        series = FjordSim.Validation.read_station_netcdf(path, "S")
+        @test series.depths == [5.0, 15.0, 25.0]
+        @test all(series.values[:, 1:2] .== 30)
+        @test all(isnan, series.values[:, 3])
+    end
+
     @testset "station_cells" begin
         bottom_height = fill(-20.0, 4, 4)
         bottom_height[1, 1] = 1.0                          # one land column in the corner

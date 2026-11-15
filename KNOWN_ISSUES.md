@@ -20,7 +20,9 @@ RMSE 1.58 °C (1.45): the overshoots below are gone, but the water mixes more.
   29.8 at 100 m (casts 31.6). Before, it lost 1.1–1.5 g/kg at those depths. The Svelvik sill, a
   one-cell channel 12–14 m deep, is the same in both runs. First suspect: the first-order upwind
   fallback (`minimum_buffer_upwind_order = 1`), the one change that adds mixing; the run also
-  changed the initial state and the shortwave, so it is unconfirmed.
+  changed the initial state and the shortwave, so it is unconfirmed. The setup now keeps the
+  fallback for T and e only, untested in a run; S's centred fallback is expected to bring back its
+  single cells above 36 g/kg (157 days of October 2024 – September 2025 before, up to 37.9).
 - `CastCorrectedInitialState` leaves 121 surface cell pairs between cast and Norkyst columns, 6.3
   g/kg apart (median), at the Drøbak and Svelvik sills and around inner-fjord pockets it does not
   reach; the cast profiles add 3200 small density inversions (≤ 0.43 kg/m³, against 1.31 without
@@ -104,7 +106,7 @@ RMSE 1.58 °C (1.45): the overshoots below are gone, but the water mixes more.
     two-cell mean, and every top cell at freezing in i 146–148, j 452–461 was cooled by 7–121 K/day
     while horizontal advection mostly warmed it. With `WENO(FT; minimum_buffer_upwind_order = 1)`,
     which falls back to first-order upwind instead, 14 of those 16 are no longer cooled. The setup
-    runs it, under the clamp, so whether it stops the slab ice's growth is untested. The ice also
+    runs it for T, under the clamp, so whether it stops the slab ice's growth is untested. The ice also
     outlived the warm water because NumericalEarth's default `ThreeEquationHeatFlux` uses a fixed
     friction velocity of 0.002 m/s.
 - (213, 418, 9), a 182 m pit in Breiangen with no wet neighbour at its level, gains salt steadily:

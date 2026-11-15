@@ -1182,6 +1182,11 @@ FjordConfig(
         # and, under a slab ice, grew the ice at Svelvik. `minimum_buffer_upwind_order = 1` ends
         # the fallback in first-order upwind instead, which cannot overshoot.
         #
+        # T and e only. On S the upwind faces under the top cell and above the seabed mixed the
+        # halocline: with them, the top 5 m were 3.4 g/kg too salty against 2.5 without, and the
+        # Drammensfjord at 30 m lost 3.7 g/kg in 16 months (run of stamp 20261112T205524). S keeps
+        # the centred fallback and its single-cell overshoots.
+        #
         # Oceananigans gives any tracer a NamedTuple omits the unbounded `Centered()` default,
         # so it names CATKE's `e`, and a setup adding tracers must name those too.
         tracer_advection   = (
@@ -1191,7 +1196,7 @@ FjordConfig(
                 narrow_cells = true,
             ),
             S = RiverMouthAdvection(
-                interior = WENO(FT; bounds = (0, 40), minimum_buffer_upwind_order = 1),
+                interior = WENO(FT; bounds = (0, 40)),
                 width_cells = 3,
                 narrow_cells = true,
             ),

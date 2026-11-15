@@ -2,8 +2,12 @@
 
 ## `examples/oslofjorden/oslofjorden.jl` (160 m, 2024-10 to 2026-10)
 
-- `max_island_cells = 0` (every island kept) is untested in a run: it adds 751 coastal cells to the
-  7140 that `max_island_cells = 6` left, and no one-cell-wide channel.
+Numbers are from the run of stamp 20261112T205524, scored to the end of April 2026, unless another
+run is named. "Before" is the run of stamp 20261107T210205, which started from Norkyst's basin
+water, flooded islands up to six cells, and ran WENO's default boundary fallback with no shortwave
+penetration. Against the NIVA casts after the first month, S RMSE is 1.90 g/kg (1.81 before) and T
+RMSE 1.58 °C (1.45): the overshoots below are gone, but the water mixes more.
+
 - Gauge gaps, filled from the nearest date: Drammenselva's discharge (Mjøndalen bru) on 27 July –
   13 August and 20 August – 12 September 2025, Glomma's temperature (Sarpfossen) from 18 August
   2026 and Sandvikselva's from 4 August 2026 to the end. Lierelva (Oppsal) reads 0 m³/s from 6 May
@@ -11,64 +15,67 @@
   uncontrolled values.
 - IMR's Missingene is 110 m deep within a cell of the station against casts to 350 m, Tisler-5 31 m
   against 120 m (120 m water is a cell away), and Færder lies inside the southern boundary sponge.
-- `CastCorrectedInitialState` is untested in a run. It leaves 121 surface cell pairs between cast
-  and Norkyst columns, 6.3 g/kg apart (median), at the Drøbak and Svelvik sills and around inner-fjord
-  pockets it does not reach; the cast profiles add 3200 small density inversions (≤ 0.43 kg/m³,
-  against 1.31 without them).
-- The run of stamp 20261107T210205 started before `CastCorrectedInitialState`: its sill-basin water
-  starts 1–3 g/kg too salty and about 2 °C too cold, and is renewed only slowly (Ep1 at 120 m:
-  34.1 to 33.9 g/kg from October to January, the casts 32.9). Over June 2025 – May 2026 the Inner
-  Oslofjord below 50 m is −0.28 g/kg, but Ep1 at 120 m is still 1.4–2.4 °C too cold and D-2 at 100 m
-  0.9 g/kg too salty in March 2026 (3.2 at the start). Ep1 at 120 m is never renewed in the run: by
-  August 2026 its start-state salt has drained to 32.5 g/kg (casts 32.9) at 6.5 °C (casts 8.9), and
-  D-2 at 100 m is still 0.5 g/kg too salty in September 2026.
-- In November 2024 – January 2025 the top 5 m are 3.9 g/kg too salty against the NIVA casts, and
-  the 25 m − 1 m salinity difference 2.9 g/kg too weak. Norkyst has the same error (+3.8 g/kg); the
-  cause, river input, mixing or the boundary, is unknown. IMR's NorFjords 160 m hindcast (ROMS, GLS
-  mixing) is saltier still: on the casts all three reach, the November top 5 m are +4.5 g/kg in
-  FjordSim, +5.2 in Norkyst and +6.7 in NorFjords, so FjordSim's mixing is the least likely cause.
-  In the Inner Oslofjord the top 5 m are also 1.2 °C too warm, where Norkyst is within 0.1 °C.
-- From February to April 2025 the water at 20–50 m is 1.0–1.5 °C too cold. Norkyst and NorFjords
-  are 0.7–1.3 °C too cold there too, NorFjords under AROME and GLS mixing, so it does not point at
-  NORA3 or CATKE.
-- The deep-water renewal of February 2026 is missed, and from March to May 2026 the water below
-  50 m is 2.0–2.5 °C too cold. The casts show warm, salty water entering the inner basins (Fl1 at
-  100 m 32.8 to 33.5 g/kg, Ep1 at 120 m to 9.1 °C); FjordSim's basins keep freshening and cool to
-  5.6–6.7 °C. Outside the Drøbak sill (Im2, 100 m) the casts read 35.0 g/kg, FjordSim 34.1–34.3,
-  Norkyst 34.2–34.4 and NorFjords 34.8–35.0. At the fjord mouth in March (IMR's Torbjørnskjær and
-  Færder, 30–75 m) the casts read 7.9–8.3 °C and 34.5–34.9 g/kg, FjordSim 4.7–5.0 °C and
-  32.6–33.6 g/kg, Norkyst 4.4–5.3 °C; in February the casts there held a cold brackish layer at 30 m
-  the models lack. Norkyst and NorFjords are 1.8–2.2 and 1.5–1.9 °C too cold below 50 m too. Norkyst
-  is the open boundary's source, so its Skagerrak water at 30–100 m is the first suspect. The model
-  renews Vestfjorden and Steilene instead in early August 2026 (Fl1 at 100 m 5.7 to 7.9 °C), after
-  an inflow in July 2026 that raises the volume-mean salinity 1.1 g/kg in three weeks; the casts
-  show no inflow then.
+- The Drammensfjord loses salt at 30–100 m. From November 2024 to March 2026 D-2 falls from 28.4 to
+  24.7 g/kg at 30 m (casts 29.6–30.6), from 30.8 to 26.7 at 50 m (casts 31.0–31.4) and from 31.6 to
+  29.8 at 100 m (casts 31.6). Before, it lost 1.1–1.5 g/kg at those depths. The Svelvik sill, a
+  one-cell channel 12–14 m deep, is the same in both runs. First suspect: the first-order upwind
+  fallback (`minimum_buffer_upwind_order = 1`), the one change that adds mixing; the run also
+  changed the initial state and the shortwave, so it is unconfirmed.
+- `CastCorrectedInitialState` leaves 121 surface cell pairs between cast and Norkyst columns, 6.3
+  g/kg apart (median), at the Drøbak and Svelvik sills and around inner-fjord pockets it does not
+  reach; the cast profiles add 3200 small density inversions (≤ 0.43 kg/m³, against 1.31 without
+  them).
+- The surface is too salty and the halocline too weak. In November 2024 – January 2025 the top 5 m
+  are 4.0 g/kg too salty against the NIVA casts (3.9 before), and the 25 m − 1 m salinity difference
+  2.8 g/kg too weak (1.4 before); over November 2024 – April 2026 the top 5 m are +3.4 g/kg (+2.5)
+  and the difference 5.7 g/kg against 9.3 observed (7.6). The inner fjord's surface misses the
+  fresh events the run before caught. Norkyst has the same November–January error (+3.8 g/kg), and
+  IMR's NorFjords 160 m hindcast (ROMS, GLS mixing) is saltier still: on the casts all three reach,
+  the November top 5 m were +4.5 g/kg in FjordSim before, +5.2 in Norkyst and +6.7 in NorFjords. In
+  the Inner Oslofjord the top 5 m are also 1.5 °C too warm (1.1 before), where Norkyst is within
+  0.1 °C.
+- From February to April 2025 the water at 20–50 m is 1.8–1.9 °C too cold (1.2–1.5 before). Norkyst
+  and NorFjords are 0.7–1.3 °C too cold there too, NorFjords under AROME and GLS mixing, so it does
+  not point at NORA3 or CATKE.
+- The deep-water renewal of February 2026 is missed, and in March–April 2026 the water below 50 m is
+  2.5 °C too cold (2.1–2.2 before). The casts show warm, salty water entering the inner basins: Fl1
+  at 100 m reads 33.3–33.5 g/kg against FjordSim's 32.2–32.6, Ep1 at 120 m 33.0 g/kg and 9.1 °C
+  against 31.9 g/kg and 5.9 °C. Outside the Drøbak sill (Im2, 100 m) the casts read 34.9 g/kg,
+  FjordSim 33.8–34.5, Norkyst 34.2–34.4 and NorFjords 34.8–35.0. At the fjord mouth in March (IMR's
+  Torbjørnskjær and Færder, 30–75 m) the casts read 6.7–8.3 °C and 34.0–34.9 g/kg, FjordSim
+  4.8–5.2 °C and 32.5–33.6 g/kg, Norkyst 4.4–5.3 °C; in February the casts there held a cold
+  brackish layer at 30 m the models lack. Norkyst and NorFjords are 1.8–2.2 and 1.5–1.9 °C too cold
+  below 50 m too. Norkyst is the open boundary's source, so its Skagerrak water at 30–100 m is the
+  first suspect. Before, the model renewed Vestfjorden and Steilene instead in early August 2026
+  (Fl1 at 100 m 5.7 to 7.9 °C), after an inflow in July 2026 that raised the volume-mean salinity
+  1.1 g/kg in three weeks; the casts show no inflow then.
 - Glomma's fresh water stays too close to its mouths. In the top 1.5 m over November 2024 –
-  September 2025, I-4 off Fredrikstad is 3.4 g/kg too fresh (casts 3.4 g/kg), while I-1, 8 km
-  farther south in the Hvaler skerries, is 7.9 g/kg too salty (casts 12.2) and S-9 4.8 (casts 19.6).
-  Norkyst is 3.1 and 2.8 g/kg too salty at I-1 and S-9, NorFjords 5.1 and 3.1. At 5 m all three are
-  about 7 g/kg too salty at I-1 outside February–April, so there the error is shared. Unchecked: the
-  2/3–1/3 split between Østerelva and Vesterelva, and how open the skerries' channels are on the
-  160 m grid.
+  September 2025, I-4 off Fredrikstad is 3.2 g/kg too fresh (casts 3.2 g/kg), while I-1, 8 km
+  farther south in the Hvaler skerries, is 6.3 g/kg too salty (5.4 before; casts 11.4) and S-9 5.5
+  (4.4; casts 19.5). Norkyst is 3.1 and 2.8 g/kg too salty at I-1 and S-9, NorFjords 5.1 and 3.1.
+  At 5 m all three are about 7 g/kg too salty at I-1 outside February–April, so there the error is
+  shared. Unchecked: the 2/3–1/3 split between Østerelva and Vesterelva, and how open the skerries'
+  channels are on the 160 m grid.
 - The non-tidal water level is too weak at all three gauges: as daily means over November 2024 –
-  September 2025 it has 66–67 % of the observed standard deviation, Norkyst 61–62 % and NorFjords,
-  with another open boundary, 87–88 %. The missing surge is in Norkyst's sea level, which the open
-  boundary carries in; the set-down of 9 December 2024 reached −0.25 m against −0.6 m observed. M4
-  is half the observed (0.6–1.6 cm against 1.2–2.5) and 31–46° early; the other constituents are
-  within 0.5 cm. Over June 2025 – May 2026 the daily means carry 79 % (Norkyst 71–73 %, NorFjords
-  92 %), over the whole run 74 % (Norkyst 67–69 %).
-- The summer heat stays in the top metre. In the heat wave of 15–29 July 2025 up to 48 088 top
-  cells exceed 25 °C (21 July), the warmest 29–33.3 °C in columns two to six cells (to 9 m) deep,
-  several of them river water (1–6 g/kg). The casts of 21–22 July read 24 °C uniform to 2.5 m;
-  FjordSim is 0.9–1.3 °C warmer at 0.5 m and 3.1–3.5 °C colder at 2.5 m (Gk1, Bl4), and its 5–20 m
-  layer is 0.8–1.8 °C too cold in June–September, more than Norkyst's except in July. In July
-  Norkyst and NorFjords are as cold or colder there (−1.9 and −3.7 °C against −1.8) without the hot
-  top metre, so that layer's cold is not only heat held at the surface. Before July
-  at most seven cells are above 25 °C on a day; the 29.6 °C cell of 23 November 2024 is unexamined.
-  July 2026 repeats it in FjordSim alone: the inner-fjord casts hold 17–19 °C down to 4.5 m where
-  FjordSim has 10–15 °C, and the top 5 m are 3.0 °C too cold (Norkyst −0.8); the warmest cell is
-  35.3 °C on 17 July 2026.
-- Holmenfjorden (Cj1) is about 25 m deep within a cell of the station against casts to 56 m.
+  September 2025 it had 66–67 % of the observed standard deviation before, Norkyst 61–62 % and
+  NorFjords, with another open boundary, 87–88 %. The missing surge is in Norkyst's sea level, which
+  the open boundary carries in; the set-down of 9 December 2024 reached −0.25 m against −0.6 m
+  observed. M4 is half the observed (0.7–1.8 cm against 1.2–2.3) and 31–47° early; the other
+  constituents are within 0.5 cm, and all are within 0.1 cm of the run before. Over June 2025 – May
+  2026 the daily means carried 79 % before (Norkyst 71–73 %, NorFjords 92 %), over the whole run
+  74 % (Norkyst 67–69 %).
+- The summer heat sits too high in the column, though less than before. In July 2025 the warmest
+  cell is 28.4 °C (21 July) and up to 6023 cells exceed 25 °C, against 33.3 °C and 48 088 before. The casts of
+  21–22 July read 24 °C uniform to 2.5 m; FjordSim has 22.9–24.2 °C at 0.5 m and 22.3–23.4 °C at
+  2.5 m (Gk1, Bl4; 20.5–21.0 at 2.5 m before). The 5–20 m layer is 0.4–1.3 °C too cold in
+  June–September (0.8–1.8 before). In July Norkyst and NorFjords are as cold or colder there (−1.9
+  and −3.7 °C against −1.3), so that layer's cold is not only heat held at the surface. Below it,
+  20–50 m is now too warm from July to November 2025, by 0.5–1.8 °C (−0.4 to +0.7 before). Before,
+  July 2026 repeated the top-metre heat in
+  FjordSim alone: the inner-fjord casts held 17–19 °C down to 4.5 m where FjordSim had 10–15 °C, and
+  the top 5 m were 3.0 °C too cold (Norkyst −0.8); the warmest cell was 35.3 °C on 17 July 2026.
+- Holmenfjorden (Cj1): the station writer places it in a column 7.9 m deep, 221 m from the station,
+  against casts to 62 m; 54 m water lies 437 m away.
 - Im2's cast replaces the Drøbak Sound's pocket below 104 m alone, under Norkyst's water, which at
   99 m is denser than the cast's top cell in 863 of its 903 columns, by at most 0.13 kg/m³.
   `TargetFill` doubles the cells denser than the one below them, 4746 to 11 278, the largest 0.72 to
@@ -76,12 +83,12 @@
 - `oslofjorden_npzd.jl` runs 2024–2026 with nutrient profiles measured in 2020.
 - No sea ice. `SlabSeaIce` (no drift) grew runaway ice on this setup, so it runs
   `FreezingLimitedOceanTemperature`, which clamps every level at freezing and discards the heat: no
-  ice insulates the surface and no melt freshens it. In January 2025 the surface is 0.3–2.6 g/kg
-  saltier than the slab-ice run where that run sat at freezing, and 1729 surface cells sit at
-  freezing on 6 Jan against its 473. In January–February 2026 the top 5 m are 2.3 and 1.5 °C too
-  warm against the casts, where Norkyst is within 0.8 °C, while up to 46 905 cells are below −1 °C
-  (15 February); whether the clamp causes it is unchecked. The slab-ice runs are archived as `oslofjorden_2026-11-06`,
-  `oslofjorden_2026-11-07` and `oslofjorden_2026-11-07-2`:
+  ice insulates the surface and no melt freshens it. In January 2025 the surface was 0.3–2.6 g/kg
+  saltier than the slab-ice run where that run sat at freezing, and 1729 surface cells sat at
+  freezing on 6 Jan against its 473. In January–February 2026 the top 5 m are 2.4 and 1.4 °C too
+  warm against the casts, where Norkyst is within 0.8 °C, while up to 46 546 cells are below −1 °C
+  in February; whether the clamp causes it is unchecked. The slab-ice runs are archived as
+  `oslofjorden_2026-11-06`, `oslofjorden_2026-11-07` and `oslofjorden_2026-11-07-2`:
   - The cause is WENO's fallback at a boundary. Oceananigans' default `WENO()` drops to order 3
     and then to `Centered(order=2)` on faces too close to land, the seabed or the surface to fit
     its stencil. A centred face exports the mean of the two cells, so flow out of a cell colder than
@@ -96,28 +103,12 @@
     daily snapshots of 11–13 January, every downwelling face under a top cell carried exactly the
     two-cell mean, and every top cell at freezing in i 146–148, j 452–461 was cooled by 7–121 K/day
     while horizontal advection mostly warmed it. With `WENO(FT; minimum_buffer_upwind_order = 1)`,
-    which falls back to first-order upwind instead, 14 of those 16 are no longer cooled. That is
-    untested in a run. Under the clamp the same sink is discarded instead of growing ice. The ice
-    also outlived the warm water because NumericalEarth's default `ThreeEquationHeatFlux` uses a
-    fixed friction velocity of 0.002 m/s.
-- The same fallback takes two bottom cells to −1.90 °C in October: (346, 39, 24) at 64 m, a corner,
-  and (344, 35, 27) at 49 m, a dead end draining through its top face. The coastal rule misses
-  them: their surface columns have four wet neighbours, and it upwinds only horizontal faces.
-  (346, 39, 24) is at −1.9 °C again on nine days of July–September 2025. In May–September 2026
-  single cells reach −1.9 °C on 28 days, most often (208, 632, 32), (251, 649, 32) and (346, 39, 24).
-- Salinity overshoots: the saltiest cell is above 36 g/kg on 157 days of October 2024 – September
-  2025 (37.9 on 11 January, 37.3 in August) and on every day of October 2025 – September 2026 (38.0
-  on 2 January 2026), against 35.1 in the initial state. In the Glomma spring flood of 22–24 May
-  2025, up to 1821 cells in the Hvaler skerries (i 277–365, j 113–181), in columns one to three
-  cells (1.6–3 m) deep under a 13–25 g/kg top cell, reach up to 37.6 g/kg. From 16 to 22 May one to
-  five bottom cells there sit at freezing, e.g. (347, 166, 37) on 20 May: 35.2 g/kg and −1.2 °C
-  under 30.1 g/kg and 10.9 °C, then 25.3 g/kg and 16.7 °C. A cell saltier and colder than all
-  around it is what the centred fallback at its top face leaves when water leaves through that
-  face; unconfirmed, as the snapshots hold no vertical velocity. Where the January and August
-  maxima and those of 2026 sit is unexamined.
-- (213, 418, 9), a 182 m pit in Breiangen with no wet neighbour at its level, climbs from 35.9 g/kg
-  on 1 May 2025 to 36.05 at the end of July under 34.4–34.7 in the cell above; from June it is the
-  saltiest cell on most days.
+    which falls back to first-order upwind instead, 14 of those 16 are no longer cooled. The setup
+    runs it, under the clamp, so whether it stops the slab ice's growth is untested. The ice also
+    outlived the warm water because NumericalEarth's default `ThreeEquationHeatFlux` uses a fixed
+    friction velocity of 0.002 m/s.
+- (213, 418, 9), a 182 m pit in Breiangen with no wet neighbour at its level, gains salt steadily:
+  from 35.2 g/kg in June 2025 to 36.06 at the end of April 2026. From June 2025 it is the saltiest cell, and from 10 April 2026 the only one above 36 g/kg.
 
 ## `examples/mjosa/mjosa.jl`
 

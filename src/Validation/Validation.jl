@@ -27,12 +27,15 @@ using LinearAlgebra
 using Printf: @sprintf
 using JLD2
 using NCDatasets
-using Statistics: cor, mean, std, var
+using Statistics: cor, mean, median, std, var
 
 using ..Configs:
     AbstractRunConfig,
     AbstractFjordConfig,
+    AbstractRiverConfig,
     bathymetry_config,
+    boundary_data_config,
+    river_config,
     observation_configs,
     validation_config,
     run_config,
@@ -41,7 +44,10 @@ using ..Configs:
     start_date
 using ..Utils: coverage_window
 using ..Bathymetry: bathymetry_path
+using ..Grids: open_edges
+using ..Rivers: river_forcing_path
 using ..Observations:
+    CsvObservations,
     KartverketSeaLevel,
     ObservationSeries,
     Station,
@@ -49,7 +55,8 @@ using ..Observations:
     interpolate_to_depths,
     observation_series,
     observation_stations,
-    station_tag
+    station_tag,
+    VannmiljoObservations
 using ..Simulations: SnapshotWriter, station_output, RESULTS_START_DATE_ATTRIBUTE
 
 include("metrics.jl")
@@ -103,10 +110,14 @@ include("plots.jl")
     validation_directory(config)
 
 Where a run's validation output goes: `validation/` under the run's `results_root`, beside
-the station files it scores.
+the station files it scores. The tables go in its `data/` (`data_file`), the figures in its `plots/`
+(`plot_file`).
 """
 validation_directory(config::AbstractRunConfig) =
     joinpath(results_root(config), "validation")
+
+data_file(directory, name) = joinpath(directory, "data", name)
+plot_file(directory, name) = joinpath(directory, "plots", name)
 
 """
     station_writers(config)
@@ -204,24 +215,27 @@ end
 
 Score a finished run against observations and write the tables and figures. Returns the
 validation directory, or `nothing` for a setup naming no `run_config`. Only picks out the run,
-bathymetry, observation and validation configs and hands them to `score_run`.
+bathymetry, river, open-boundary, observation and validation configs and hands them to `score_run`.
 """
 validate_simulation(config::AbstractFjordConfig; kwargs...) = score_run(
     run_config(config),
     bathymetry_config(config),
+    river_config(config),
+    boundary_data_config(config),
     observation_configs(config),
     validation_config(config);
     kwargs...,
 )
 
 """
-    score_run(run, bathymetry_config, sources, validation; gauges, observations, window, depths)
+    score_run(run, bathymetry_config, rivers, boundaries, sources, validation; gauges, observations, window, depths)
 
 `validate_simulation`'s work, and the one pipeline step that runs *after* `run_simulation` rather than
 before it. It reads what each observation source has on disk over the run's window — fetching only
 the `default_observations` tide gauges, which no setup names — pairs it with the run's station
-output, and writes a skill table, a tidal constituent table, and one figure
-per station-variable pair into `validation_directory`. With a `ValidationConfig` as `validation`,
+output, and writes a skill table, a tidal constituent table, the tide-gauge figures and the station
+figures (`write_station_figures`) and a map of the stations, river outlets and open edges
+(`write_station_map`) into `validation_directory`. With a `ValidationConfig` as `validation`,
 it also scores what no station writer recorded from the 3D snapshots, summarises the domain, and
 pools every sample into the depth-band tables (`ValidationConfig`).
 
@@ -239,6 +253,8 @@ as "no model output for ..." rather than as an error. Only an observation scored
 snapshots (`ValidationConfig`) is placed by its station's position instead.
 
 # Arguments
+- `rivers`: the setup's `river_config`, whose outlets the map shows, or `nothing`.
+- `boundaries`: the setup's `boundary_data_config`, whose `open_edges` the map shows, or `nothing`.
 - `sources`: the setup's own observation sources, its `observation_configs`.
 - `validation`: the setup's `validation_config`, a `ValidationConfig` or `nothing`.
 - `gauges`: the sources `score_run` fetches itself; defaults to `default_observations`.
@@ -250,11 +266,13 @@ snapshots (`ValidationConfig`) is placed by its station's position instead.
 """
 # A setup that is never simulated has nothing to validate, which is an opt-out rather than an error —
 # the same `nothing` `run_simulation` returns for it, reported as a no-op by `CLI.main`.
-score_run(::Nothing, bathymetry, sources, validation; kwargs...) = nothing
+score_run(::Nothing, bathymetry, rivers, boundaries, sources, validation; kwargs...) = nothing
 
 function score_run(
     run::AbstractRunConfig,
     bathymetry,
+    rivers,
+    boundaries,
     sources,
     validation;
     gauges = default_observations(run, bathymetry),
@@ -272,7 +290,8 @@ function score_run(
     )
 
     directory = validation_directory(run)
-    mkpath(directory)
+    mkpath(dirname(data_file(directory, "")))
+    mkpath(dirname(plot_file(directory, "")))
     @info "Validating $(basename(results_root(run))) over $(window[1]) .. $(window[2])"
 
     # The gauges are named, so they need no grid.
@@ -284,6 +303,7 @@ function score_run(
     tidal_fits = Pair{String,HarmonicFit}[]
     samples = SamplePair[]
     unrecorded = Tuple{Station,ObservationSeries}[]
+    paired = Tuple{ObservationSeries,ModelSeries,Dates.Millisecond}[]
 
     for source in observations, station in observation_stations(source)
         for variable in VALIDATION_VARIABLES
@@ -304,16 +324,20 @@ function score_run(
 
             score_pair!(scores, tidal_fits, directory, observed, modelled, depths)
             append!(samples, sample_pairs(observed, modelled))
+            push!(paired, (observed, modelled, Dates.Millisecond(Dates.Hour(1))))
         end
     end
 
     for (observed, modelled, tolerance) in snapshot_series(run, validation, unrecorded, directory)
         score_pair!(scores, tidal_fits, directory, observed, modelled, depths; tolerance)
         append!(samples, sample_pairs(observed, modelled; tolerance))
+        push!(paired, (observed, modelled, tolerance))
     end
 
     write_validation_summary(directory, scores, tidal_fits)
     write_pooled_tables(directory, samples, window, validation)
+    write_station_figures(directory, paired, window, spin_up_end(window, validation))
+    write_station_map(directory, bathymetry, rivers, open_edges(boundaries), observations, Set(pair[1].station for pair in paired))
     @info "Validation written to $directory"
     return directory
 end
@@ -322,7 +346,7 @@ end
     score_pair!(scores, tidal_fits, directory, observed, modelled, depths; tolerance = Dates.Hour(1))
 
 Score one observation series against one model series at every depth the observations reach, append
-the results, and draw the figures that pair supports.
+the results, and, for a tide gauge, draw its figures.
 
 A surface series is scored once; a profile is scored at each of `depths` that lies inside both the
 instrument's range and the model column, so a shallow station contributes the levels it has rather
@@ -372,24 +396,139 @@ function score_pair!(
             )
 
             plot_timeseries_comparison(
-                joinpath(directory, "timeseries_$(observed.station).png"),
+                plot_file(directory, "timeseries_$(observed.station).png"),
                 observed,
                 modelled;
                 title = observed.station,
             )
         end
-
-        plot_qq_scatter(
-            joinpath(directory, "qq_$(replace(name, r"[^A-Za-z0-9]+" => "_")).png"),
-            o,
-            m;
-            title = name,
-            unit = observed.units,
-        )
     end
 
     return scores
 end
+
+"""
+    spin_up_end(window, validation)
+
+When the pooled tables start, `nothing` without a `ValidationConfig`.
+"""
+spin_up_end(window, ::Nothing) = nothing
+spin_up_end(window, validation::ValidationConfig) = window[1] + validation.spin_up
+
+# The depth of the surface drift figure, in metres: the shallowest every cast samples.
+const SURFACE_DRIFT_DEPTH = 1.0
+# Stations per drift figure.
+const DRIFT_STATIONS_PER_FIGURE = 8
+
+"""
+    write_station_figures(directory, paired, window, spin_up_end)
+
+The figures that follow each station through the run, from every `(observed, modelled, tolerance)` of
+a temperature or salinity profile in `paired`:
+
+- `profiles_<station>.png`: every cast beside the model (`plot_cast_profiles`).
+- `surface_drift.png`: every station at 1 m through `window` (`plot_drift`).
+- `basin_drift.png`: every station at its own deep level, `drift_depth`; a station shallower than
+  5 m is left out.
+
+A drift figure holds eight stations; more continue in `surface_drift_2.png`, and so on.
+"""
+function write_station_figures(directory, paired, window, spin_up_end)
+    profiles = [pair for pair in paired if pair[1].variable in ("S", "T") && length(pair[2].depths) > 1]
+    stations = [
+        station => sort([pair for pair in profiles if pair[1].station == station]; by = pair -> pair[1].variable)
+        for station in unique(pair[1].station for pair in profiles)
+    ]
+    isempty(stations) && return nothing
+
+    for (station, pairs) in stations
+        title = @sprintf("%s: deepest cast %.0f m, model column %.0f m", station,
+            maximum(deepest_depth(pair[1]) for pair in pairs), maximum(deepest_depth(pair[2]) for pair in pairs))
+        plot_cast_profiles(plot_file(directory, "profiles_$(file_stem(station)).png"), pairs; title, spin_up_end)
+    end
+
+    surface = [(station, SURFACE_DRIFT_DEPTH, pairs) for (station, pairs) in stations]
+    basin = [(station, drift_depth(pairs), pairs) for (station, pairs) in stations]
+    write_drift_figures(directory, "surface_drift", surface, window)
+    write_drift_figures(directory, "basin_drift", [entry for entry in basin if entry[2] >= 5], window)
+    return directory
+end
+
+"""
+    drift_depth(pairs)
+
+A station's deep level for `basin_drift.png`: the median depth its casts reach, no deeper than its
+model column, rounded down to 5 m.
+"""
+function drift_depth(pairs)
+    depth = Inf
+    for (observed, modelled, _) in pairs
+        reached = [
+            maximum((observed.depths[k] for k in axes(observed.values, 2) if isfinite(observed.values[n, k])); init = 0.0)
+            for n in axes(observed.values, 1)
+        ]
+        depth = min(depth, median(reached), deepest_depth(modelled))
+    end
+    return 5 * fld(depth, 5)
+end
+
+function write_drift_figures(directory, name, entries, window)
+    pages = collect(Iterators.partition(entries, DRIFT_STATIONS_PER_FIGURE))
+    for (page, chunk) in enumerate(pages)
+        file = page == 1 ? "$name.png" : "$(name)_$page.png"
+        plot_drift(plot_file(directory, file), collect(chunk), window...)
+    end
+    return directory
+end
+
+file_stem(name) = replace(name, r"[^A-Za-z0-9]+" => "_")
+
+"""
+    write_station_map(directory, bathymetry, rivers, edges, sources, scored)
+
+`map.png`: every station of `sources` on the model depth of the processed bathymetry, filled where
+its name is in `scored`, with the outlets of `rivers` (`river_outlets`) and the open `edges`. Skipped, with a warning,
+when the bathymetry file is missing.
+"""
+function write_station_map(directory, bathymetry, rivers, edges, sources, scored)
+    path = bathymetry_path(bathymetry)
+    isfile(path) || (@warn "No bathymetry file at $path, so no station map."; return nothing)
+    longitude, latitude, depth = NCDataset(path) do ds
+        bottom = Float64.(coalesce.(ds["h"][:, :], NaN))
+        Float64.(ds["lon"][:]), Float64.(ds["lat"][:]), map(h -> h < 0 ? -h : NaN, bottom)
+    end
+    stations = [(map_label(source), observation_stations(source), scored) for source in sources]
+    plot_station_map(plot_file(directory, "map.png"), longitude, latitude, depth, stations,
+        river_outlets(rivers, longitude, latitude), edges)
+    return directory
+end
+
+"""
+    river_outlets(rivers, longitude, latitude)
+
+`(name, longitude, latitude, mean discharge)` per outlet in the file `add_rivers` wrote, at the
+centre of its column; empty without a river config or its file.
+"""
+river_outlets(::Nothing, longitude, latitude) = Tuple{String,Float64,Float64,Float64}[]
+
+function river_outlets(rivers::AbstractRiverConfig, longitude, latitude)
+    path = river_forcing_path(rivers)
+    isfile(path) || return river_outlets(nothing, longitude, latitude)
+    return NCDataset(path) do ds
+        discharge = Float64.(coalesce.(ds["discharge"][:, :], NaN))
+        [
+            (String(name), longitude[i], latitude[j], finite_mean(view(discharge, n, :)))
+            for (n, (name, i, j)) in enumerate(zip(ds["river_name"][:], ds["river_i"][:], ds["river_j"][:]))
+        ]
+    end
+end
+
+finite_mean(values) = (finite = filter(isfinite, values); isempty(finite) ? 0.0 : mean(finite))
+
+# The legend label of an observation source on the map.
+map_label(source) = string(nameof(typeof(source)))
+map_label(::KartverketSeaLevel) = "Kartverket tide gauge"
+map_label(source::Union{VannmiljoObservations,CsvObservations}) = source.source
 
 """
     write_validation_summary(directory, scores, tidal_fits)
@@ -405,22 +544,22 @@ function write_validation_summary(directory, scores, tidal_fits)
         return directory
     end
 
-    open(joinpath(directory, "skill.txt"), "w") do io
+    open(data_file(directory, "skill.txt"), "w") do io
         write(io, skill_table(scores))
     end
 
-    plot_taylor(joinpath(directory, "taylor.png"), scores)
-    plot_target(joinpath(directory, "target.png"), scores)
+    plot_taylor(plot_file(directory, "taylor.png"), scores)
+    plot_target(plot_file(directory, "target.png"), scores)
 
     if !isempty(tidal_fits)
-        open(joinpath(directory, "tides.txt"), "w") do io
+        open(data_file(directory, "tides.txt"), "w") do io
             write(io, tidal_constituent_table(tidal_fits))
         end
         # Two fits per station, observed then modelled; plot each station's pair together.
         for index = 1:2:(length(tidal_fits) - 1)
             station = first(split(tidal_fits[index].first, " observed"))
             plot_tidal_constituents(
-                joinpath(directory, "constituents_$(station).png"),
+                plot_file(directory, "constituents_$(station).png"),
                 tidal_fits[index:(index + 1)];
                 title = station,
             )

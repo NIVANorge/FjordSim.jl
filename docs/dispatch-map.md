@@ -55,7 +55,7 @@ and hands them to the work function, which dispatches on them.
 | `download_atmosphere` | `grid_config`, `atmosphere_config` | `fetch_atmosphere` |
 | `prepare_atmosphere` | `grid_config`, `atmosphere_config` | `regrid_atmosphere` |
 | `run_simulation` | `run_config` and the whole setup, through `build_simulation` | `run_loops` |
-| `validate_simulation` | `run_config`, `bathymetry_config`, `observation_configs`, `validation_config` | `score_run` |
+| `validate_simulation` | `run_config`, `bathymetry_config`, `river_config`, `boundary_data_config`, `observation_configs`, `validation_config` | `score_run` |
 | `build_simulation` | `run_config` and the whole setup | `assemble_simulation` |
 
 ## Hooks

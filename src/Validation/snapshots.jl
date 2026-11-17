@@ -290,12 +290,12 @@ function snapshot_series(run, validation::ValidationConfig, unrecorded, director
         deepest[station] = max(get(deepest, station, 0.0), isempty(reached) ? 0.0 : maximum(reached))
     end
     placed = Dict(station => snapshot_column(grid, station, depth, validation.search_radius) for (station, depth) in deepest)
-    write_snapshot_columns(joinpath(directory, "snapshot_columns.csv"), placed, deepest, grid)
+    write_snapshot_columns(data_file(directory, "snapshot_columns.csv"), placed, deepest, grid)
 
     columns = unique(cell[1:2] for cell in values(placed) if !isnothing(cell))
     series, statistics = read_snapshots(files, records, grid, columns, variables, validation.plausible_ranges)
-    write_domain_statistics(joinpath(directory, "domain_extremes.csv"), statistics)
-    plot_domain_extremes(joinpath(directory, "domain_extremes.png"), statistics, validation.plausible_ranges)
+    write_domain_statistics(data_file(directory, "domain_extremes.csv"), statistics)
+    plot_domain_extremes(plot_file(directory, "domain_extremes.png"), statistics, validation.plausible_ranges)
 
     times = last.(records)
     depths = reverse(grid.depths)

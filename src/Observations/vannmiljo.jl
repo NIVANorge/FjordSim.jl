@@ -20,8 +20,8 @@ const VANNMILJO_CAST_SPAN = Dates.Hour(2)
                           margin = 0.0, source = "Vannmiljø")
 
 Temperature and salinity from Vannmiljø (`vannmiljo.miljodirektoratet.no`), the database every
-Norwegian monitoring programme registers its water measurements in. Its API needs a key, free from
-the Norwegian Environment Agency, read from the `$VANNMILJO_API_KEY_VARIABLE` environment variable.
+Norwegian monitoring programme registers its water measurements in. Its API needs a key, issued by
+Miljødirektoratet on request, read from the `$VANNMILJO_API_KEY_VARIABLE` environment variable.
 
 `fetch_observations` asks for every registration inside the grid's box over the period, one
 calendar year per request, keeps the ones `contractors` and `sampling_methods` name, and writes
@@ -130,7 +130,7 @@ function vannmiljo_api_key()
     key = get(ENV, VANNMILJO_API_KEY_VARIABLE, "")
     isempty(key) && error(
         "No Vannmiljø API key. Set the $VANNMILJO_API_KEY_VARIABLE environment variable; keys are " *
-        "free from the Norwegian Environment Agency (vannmiljoapi.miljodirektoratet.no).",
+        "issued by Miljødirektoratet on request (vannmiljoapi.miljodirektoratet.no).",
     )
     return key
 end

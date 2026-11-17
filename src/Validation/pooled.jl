@@ -64,7 +64,7 @@ summary `stratification_skill.csv`. Everything but `samples.csv` leaves out the 
 write_pooled_tables(directory, samples, window, ::Nothing) = nothing
 
 function write_pooled_tables(directory, samples, window, validation::ValidationConfig)
-    write_samples(joinpath(directory, "samples.csv"), samples)
+    write_samples(data_file(directory, "samples.csv"), samples)
 
     start = window[1] + validation.spin_up
     scored = [s for s in samples if s.time >= start]
@@ -78,14 +78,14 @@ function write_pooled_tables(directory, samples, window, validation::ValidationC
 
     stations = sort(unique(s.station for s in scored))
     groups = ["all" => stations; validation.station_groups]
-    write_pooled_table(joinpath(directory, "skill_bands.csv"), "group", scored, bands, groups) do sample, members
+    write_pooled_table(data_file(directory, "skill_bands.csv"), "group", scored, bands, groups) do sample, members
         sample.station in members
     end
-    write_pooled_table(joinpath(directory, "skill_stations.csv"), "station", scored, bands, [s => s for s in stations]) do sample, station
+    write_pooled_table(data_file(directory, "skill_stations.csv"), "station", scored, bands, [s => s for s in stations]) do sample, station
         sample.station == station
     end
     months = [Dates.format(m, "yyyy-mm") => m for m in sort(unique(Dates.firstdayofmonth(Date(s.time)) for s in scored))]
-    write_pooled_table(joinpath(directory, "skill_months.csv"), "month", scored, bands, months) do sample, month
+    write_pooled_table(data_file(directory, "skill_months.csv"), "month", scored, bands, months) do sample, month
         Dates.firstdayofmonth(Date(sample.time)) == month
     end
 
@@ -170,14 +170,14 @@ function write_stratification(directory, samples, start, groups, stratification)
     end
     sort!(differences; by = d -> (d.station, d.time))
 
-    open(joinpath(directory, "stratification.csv"), "w") do io
+    open(data_file(directory, "stratification.csv"), "w") do io
         println(io, "station,time,observed,modelled")
         for d in differences
             println(io, d.station, ",", Dates.format(d.time, "yyyy-mm-ddTHH:MM:SS"), @sprintf(",%.3f,%.3f", d.observed, d.modelled))
         end
     end
 
-    open(joinpath(directory, "stratification_skill.csv"), "w") do io
+    open(data_file(directory, "stratification_skill.csv"), "w") do io
         println(io, "group,count,observed_mean,modelled_mean,bias,rmse")
         for (group, members) in groups
             inside = [d for d in differences if d.time >= start && d.station in members]

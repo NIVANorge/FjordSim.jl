@@ -907,6 +907,12 @@ straight from the file reads every chunk once per station:
 Where several files hold the same time (a resume writes under a new run tag, a loop restarts model
 time) the later file wins from its own first record on (`snapshot_records`).
 
+The figures are per station, not per scored pair: every cast beside the model's profile
+(`profiles_<station>.png`), each station at 1 m and at its own deep level through the run
+(`surface_drift.png`, `basin_drift.png`, `drift_depth`), and a map of every source's stations, filled
+where scored, with the river outlets and the open edges (`map.png`). Tables go in `validation/data/`, figures in
+`validation/plots/`.
+
 ## 18. CLI (`src/CLI.jl`)
 
 **No setup is part of the package.** A setup is a script ending in its `FjordConfig`, and

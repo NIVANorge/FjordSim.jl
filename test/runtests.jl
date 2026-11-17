@@ -6761,7 +6761,7 @@ end
             run_config = run, observation_configs = (source,), validation_config = validation,
         )
         validate_simulation(config)
-        output = joinpath(directory, "validation")
+        output = joinpath(directory, "validation", "data")
         table(name) = [split(line, ",") for line in readlines(joinpath(output, name))[2:end]]
 
         # Placed one cell off its own column, where the water reaches the cast.

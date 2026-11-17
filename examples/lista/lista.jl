@@ -6,6 +6,7 @@
 # # Preparing and running it locally
 #
 #   julia --project -m FjordSim prepare_bathymetry     --config examples/lista/lista.jl
+#   julia --project -m FjordSim download_observations  --config examples/lista/lista.jl
 #   julia --project -m FjordSim download_initial_state --config examples/lista/lista.jl
 #   julia --project -m FjordSim prepare_initial_state  --config examples/lista/lista.jl
 #   julia --project -m FjordSim add_rivers             --config examples/lista/lista.jl
@@ -14,8 +15,10 @@
 #   julia --project -m FjordSim download_atmosphere    --config examples/lista/lista.jl
 #   julia --project -m FjordSim prepare_atmosphere     --config examples/lista/lista.jl
 #   julia --project -m FjordSim run_simulation         --config examples/lista/lista.jl   # needs a GPU
+#   julia --project -m FjordSim validate_simulation    --config examples/lista/lista.jl
 #
-# `add_rivers` needs `NVE_API_KEY` (free at https://hydapi.nve.no/Users). `prepare_bathymetry`
+# `add_rivers` needs `NVE_API_KEY` (free at https://hydapi.nve.no/Users), and
+# `download_observations` needs `VANNMILJO_API_KEY`. `prepare_bathymetry`
 # downloads the national Geonorge FileGDB (4.5 GB) if it is missing. Data goes to
 # `~/FjordSim_data/lista/`, and results to `~/FjordSim_results/lista/`.
 #
@@ -47,7 +50,9 @@ using Oceananigans
 using Oceananigans.Units
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using NumericalEarth: FreezingLimitedOceanTemperature
-using Dates: DateTime, Month, Second
+using FjordSim.Observations: VannmiljoObservations
+using FjordSim.Validation: ValidationConfig
+using Dates: DateTime, Day, Month, Second
 
 data_root = fjord_data_root("lista")
 FT = Float32
@@ -329,5 +334,26 @@ FjordConfig(
         stop_date          = stop_date,
         loops              = 1,
         pickup             = false,
+    ),
+    # Every CTD cast Vannmiljø holds in the box, each location under its own code. No station
+    # writer records them, so `validate_simulation` scores them from the daily snapshots.
+    observation_configs = (
+        VannmiljoObservations(
+            data_root        = data_root,
+            output_directory = joinpath("observations", "vannmiljo"),
+            start_date       = start_date,
+            stop_date        = stop_date,
+        ),
+    ),
+    # The domain statistics come from the snapshots alone, so they are written with or without casts.
+    # The first month is the adjustment from the initial state. Below -1 °C is colder than the
+    # freezing clamp allows; above 36 g/kg saltier than any inflowing water.
+    validation_config = ValidationConfig(
+        spin_up          = Day(31),
+        depth_bands      = [(0, 5), (5, 20), (20, 50), (50, 150), (150, Inf)],
+        station_groups   = Pair{String,Vector{String}}[],
+        search_radius    = 3,
+        plausible_ranges = Dict("T" => (-1.0, 25.0), "S" => (0.0, 36.0)),
+        stratification   = ("S", 1.0, 25.0),
     ),
 )

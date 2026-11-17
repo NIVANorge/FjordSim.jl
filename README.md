@@ -138,6 +138,12 @@ run does without that component. So a setup names what it wants and skips the re
 | Observations | `observation_configs` | `download_observations`, `validate_simulation` | scored against Kartverket's tide gauges alone, at the stations the tide-gauge writers record |
 | Validation | `validation_config` | `validate_simulation` | each station scored from its station writer alone: no snapshot columns, domain extremes or depth-band tables |
 
+Scoring against CTD casts from Vannmiljø needs a `VANNMILJO_API_KEY`, issued by
+Miljødirektoratet on request, for `download_observations`. Without the key, or with no casts in the domain,
+`validate_simulation` still runs: with a `validation_config` it writes the domain statistics from
+the snapshots (`domain_extremes.csv` and `.png`) and the station map, and warns that nothing was
+scored. Tables go to `<results_root>/validation/data/` and figures to `validation/plots/`.
+
 The model, its biogeochemistry, its boundary conditions and the run are separate components, side
 by side with the data: `model_config` says what is built, `run_config` how it is run.
 

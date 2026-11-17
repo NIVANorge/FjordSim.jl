@@ -235,49 +235,224 @@ function plot_profiles(path, pairs; title = "", xlabel = "")
 end
 
 """
-    plot_qq_scatter(path, observed, modelled; title, unit)
+    plot_cast_profiles(path, pairs; title, spin_up_end = nothing, columns = 7)
 
-A quantile-quantile plot beside a scatter plot of the same pairs.
+Every cast at one station beside the model's profile nearest it in time, one panel per cast and
+variable: a row per variable of `pairs` for each block of `columns` casts. Every panel spans the
+same depths, the deepest the casts or the model column reach. A cast before `spin_up_end` is on a
+grey background.
 
-METreport 11/2017 Figs. 21 and 30, and the pair is deliberate. The QQ plot asks whether the model
-has the right *distribution* and the scatter plot whether it has it at the right *time*; the report's
-own conclusion at Slagen was that the first was nearly right and the second was not, which is a very
-different verdict from either panel alone.
+`pairs` is the station's `(observed, modelled, tolerance)` per variable. A cast with no model record
+within `tolerance` is drawn alone.
 """
-function plot_qq_scatter(path, observed, modelled; title = "", unit = "")
-    probabilities = 0.005:0.005:0.995
-    observed_quantiles = quantiles(observed, probabilities)
-    modelled_quantiles = quantiles(modelled, probabilities)
-    limits = finite_range(observed, modelled)
+function plot_cast_profiles(path, pairs; title = "", spin_up_end = nothing, columns = 7)
+    casts = sort(unique(time for (observed, _, _) in pairs for time in observed.times))
+    isempty(casts) && return nothing
 
-    figure = Figure(size = VALIDATION_FIGURE_SIZE)
-    label = isempty(unit) ? "" : " ($unit)"
+    deepest = maximum(max(deepest_depth(observed), deepest_depth(modelled)) for (observed, modelled, _) in pairs)
+    per_row = min(length(casts), columns)
+    blocks = collect(Iterators.partition(casts, per_row))
+    rows = length(pairs)
+    figure = Figure(size = (max(230 * per_row + 120, 900), 380 * rows * length(blocks) + 60))
 
-    qq = Axis(
-        figure[1, 1];
-        title = "$title — quantile-quantile",
-        xlabel = "observed$label",
-        ylabel = "modelled$label",
-        aspect = 1,
-    )
-    lines!(qq, [limits...], [limits...]; color = :grey, linestyle = :dash)
-    scatter!(qq, observed_quantiles, modelled_quantiles; color = MODELLED_COLOUR, markersize = 5)
-    limits!(qq, limits..., limits...)
+    for (block_index, block) in enumerate(blocks), (column, time) in enumerate(block)
+        for (row, (observed, modelled, tolerance)) in enumerate(pairs)
+            axis = Axis(
+                figure[rows * (block_index - 1) + row, column];
+                title = row == 1 ? Dates.format(time, "yyyy-mm-dd") : "",
+                xlabel = "$(observed.variable) ($(observed.units))",
+                ylabel = column == 1 ? "depth (m)" : "",
+                yreversed = true,
+                xticks = LinearTicks(4),
+            )
+            record = nearest_record(modelled.times, time, tolerance)
+            isnothing(record) || lines!(
+                axis, modelled.values[record, :], modelled.depths;
+                color = MODELLED_COLOUR, linewidth = 2.5, label = "modelled",
+            )
+            cast = findfirst(==(time), observed.times)
+            isnothing(cast) || lines!(
+                axis, observed.values[cast, :], observed.depths;
+                color = OBSERVED_COLOUR, linewidth = 2, label = "observed",
+            )
+            ylims!(axis, 0, deepest)
+            shade_spin_up!(axis, time, spin_up_end)
+            block_index == 1 && row == 1 && column == 1 && axislegend(axis; position = :lb, labelsize = 10)
+        end
+    end
 
-    scatter_axis = Axis(
-        figure[1, 2];
-        title = "pairs in time",
-        xlabel = "observed$label",
-        ylabel = "modelled$label",
-        aspect = 1,
-    )
-    lines!(scatter_axis, [limits...], [limits...]; color = :grey, linestyle = :dash)
-    scatter!(scatter_axis, observed, modelled; color = (:steelblue, 0.25), markersize = 4)
-    limits!(scatter_axis, limits..., limits...)
+    Label(figure[0, :], title; fontsize = 18, font = :bold)
+    save(path, figure)
+    return path
+end
+
+"""
+    deepest_depth(series)
+
+The deepest level of an observed or modelled series holding a finite value, `0.0` for none.
+"""
+deepest_depth(series) =
+    maximum((series.depths[k] for k in axes(series.values, 2) if any(isfinite, view(series.values, :, k))); init = 0.0)
+
+shade_spin_up!(axis, time, ::Nothing) = nothing
+shade_spin_up!(axis, time, spin_up_end::DateTime) = time < spin_up_end && (axis.backgroundcolor = :gray95)
+
+# Marker shapes for the observation sources on the station map, in the order the setup names them.
+const MAP_MARKERS = (:circle, :diamond, :rect, :pentagon, :hexagon, :star5)
+# How many of the largest river outlets the station map names.
+const MAP_RIVER_LABELS = 10
+# Station names per line of a label on the station map.
+const MAP_NAMES_PER_LINE = 4
+
+"""
+    plot_station_map(path, longitude, latitude, depth, sources, rivers, edges)
+
+The stations of every observation source on the model depth, the river outlets, and the open
+lateral `edges` as red lines along the domain's border.
+
+`sources` is `(label, stations, scored)` per source, one marker shape each: a station whose name is
+in `scored` is filled, one the run was not scored against is open. A source's stations in one model
+cell are one marker, labelled with all their names (`group_stations`). `rivers` is
+`(name, longitude, latitude, discharge)` per outlet; the outlets in one cell are one triangle, sized
+by their summed mean discharge (`group_rivers`), the `MAP_RIVER_LABELS` largest named. `depth` is
+positive down, `NaN` on land.
+"""
+function plot_station_map(path, longitude, latitude, depth, sources, rivers, edges)
+    ratio = (last(longitude) - first(longitude)) * cosd(mean(latitude)) / (last(latitude) - first(latitude))
+    figure = Figure(size = (1300, clamp(round(Int, 1100 / ratio) + 160, 600, 2400)), fontsize = 18)
+    axis = Axis(figure[1, 1]; xlabel = "longitude (°E)", ylabel = "latitude (°N)",
+        title = "Stations and river outlets on the model depth", aspect = AxisAspect(ratio))
+    depth_map = heatmap!(axis, longitude, latitude, depth; colormap = :deep,
+        colorrange = finite_range(depth; pad = 0.0), nan_color = RGBf(0.88, 0.87, 0.84))
+    Colorbar(figure[1, 2], depth_map; label = "model depth (m)", height = Relative(0.5))
+
+    # The domain's border, half a cell beyond the outermost cell centres.
+    half_width, half_height = (longitude[2] - longitude[1]) / 2, (latitude[2] - latitude[1]) / 2
+    border = (first(longitude) - half_width, last(longitude) + half_width,
+        first(latitude) - half_height, last(latitude) + half_height)
+    for (index, edge) in enumerate(edges)
+        lines!(axis, edge_line(Val(edge), border)...; color = :red, linewidth = 7,
+            label = index == 1 ? "open boundary" : nothing)
+    end
+
+    outlets = group_rivers(rivers)
+    if !isempty(outlets)
+        size_of(discharge) = 10 + 25 * sqrt(max(discharge, 0) / maximum(outlet[4] for outlet in outlets))
+        scatter!(axis, [outlet[2] for outlet in outlets], [outlet[3] for outlet in outlets];
+            marker = :utriangle, color = :dodgerblue, strokecolor = :black, strokewidth = 1,
+            markersize = [size_of(outlet[4]) for outlet in outlets], label = "river outlet")
+        for (name, x, y, discharge) in first(sort(outlets; by = outlet -> -outlet[4]), MAP_RIVER_LABELS)
+            text!(axis, x, y; text = @sprintf(" %s (%.0f m³/s)", name, discharge), fontsize = 13,
+                color = :navy, align = (:left, :bottom))
+        end
+    end
+
+    for (index, (label, stations, scored)) in enumerate(sources)
+        marker = MAP_MARKERS[mod1(index, length(MAP_MARKERS))]
+        colour = Makie.wong_colors()[mod1(index, 7)]
+        for (filled, suffix) in ((true, ""), (false, ", not scored"))
+            groups = group_stations([station for station in stations if (station.name in scored) == filled], longitude, latitude)
+            isempty(groups) && continue
+            scatter!(axis, [group[2] for group in groups], [group[3] for group in groups];
+                marker, markersize = 16, color = filled ? colour : :white, strokecolor = filled ? :black : colour,
+                strokewidth = 2, label = label * suffix)
+            for (names, x, y) in groups
+                text!(axis, x, y; text = names, fontsize = 12, align = (:left, :center), font = :bold,
+                    offset = (8, 0))
+            end
+        end
+    end
+
+    limits!(axis, border...)
+    (isempty(rivers) && isempty(edges) && all(source -> isempty(source[2]), sources)) || axislegend(axis; position = :lt, framevisible = true, labelsize = 14)
+    save(path, figure)
+    return path
+end
+
+"""
+    group_rivers(rivers)
+
+The outlets of `rivers` merged by position, as `(names, longitude, latitude, discharge)`: the names
+joined by `+` from the largest down and the discharges summed. `add_rivers` moves each outlet to the
+head of the river bed the grid resolves, so the rivers of one fjord head share one position, though
+each keeps inflow columns of its own.
+"""
+function group_rivers(rivers)
+    positions = unique((river[2], river[3]) for river in rivers)
+    return map(positions) do (x, y)
+        members = sort([river for river in rivers if (river[2], river[3]) == (x, y)]; by = river -> -river[4])
+        (join(first.(members), " + "), x, y, sum(river[4] for river in members))
+    end
+end
+
+"""
+    group_stations(stations, longitude, latitude)
+
+`stations` merged by the model cell nearest each, as `(names, longitude, latitude)`: the names in
+the order given, `MAP_NAMES_PER_LINE` to a line, at the stations' mean position.
+"""
+function group_stations(stations, longitude, latitude)
+    cell(station) = (argmin(abs.(longitude .- station.longitude)), argmin(abs.(latitude .- station.latitude)))
+    cells = unique(cell.(stations))
+    return map(cells) do position
+        members = [station for station in stations if cell(station) == position]
+        names = join([join(line, ", ") for line in Iterators.partition([station.name for station in members], MAP_NAMES_PER_LINE)], "\n")
+        (names, mean(station.longitude for station in members), mean(station.latitude for station in members))
+    end
+end
+
+"""
+    edge_line(edge, (west, east, south, north))
+
+The two ends of one lateral edge of the border, as `(longitudes, latitudes)`.
+"""
+edge_line(::Val{:south}, (west, east, south, north)) = ([west, east], [south, south])
+edge_line(::Val{:north}, (west, east, south, north)) = ([west, east], [north, north])
+edge_line(::Val{:west}, (west, east, south, north)) = ([west, west], [south, north])
+edge_line(::Val{:east}, (west, east, south, north)) = ([east, east], [south, north])
+
+"""
+    plot_drift(path, entries, start, stop; variables = ("S", "T"))
+
+Each station at one depth through `start` to `stop`: the model at every record as a line, the casts
+on their days as points. One row per station, one column per variable.
+
+`entries` is `(station, depth, pairs)`, `pairs` the station's `(observed, modelled, tolerance)` per
+variable. A cast's value is the mean of its samples within 1 m of `depth`; the model's is its
+profile interpolated to `depth`.
+"""
+function plot_drift(path, entries, start, stop; variables = ("S", "T"))
+    isempty(entries) && return nothing
+    days(time) = elapsed_hours(time, start) / 24
+
+    figure = Figure(size = (1500, 270 * length(entries) + 40))
+    for (row, (station, depth, pairs)) in enumerate(entries), (column, variable) in enumerate(variables)
+        index = findfirst(pair -> pair[1].variable == variable, pairs)
+        isnothing(index) && continue
+        observed, modelled, _ = pairs[index]
+
+        axis = Axis(
+            figure[row, column];
+            title = @sprintf("%s, %s at %.0f m", station, variable, depth),
+            ylabel = observed.units,
+            xlabel = row == length(entries) ? "days since $(Date(start))" : "",
+        )
+        modelled_values = [first(profile_at(modelled.depths, view(modelled.values, n, :), [depth])) for n in eachindex(modelled.times)]
+        lines!(axis, days.(modelled.times), modelled_values; color = MODELLED_COLOUR, linewidth = 2, label = "modelled")
+
+        near = [k for k in eachindex(observed.depths) if abs(observed.depths[k] - depth) <= 1]
+        observed_values = [cast_mean(view(observed.values, n, near)) for n in eachindex(observed.times)]
+        scatter!(axis, days.(observed.times), observed_values; color = OBSERVED_COLOUR, markersize = 12, label = "observed")
+
+        xlims!(axis, 0, days(stop))
+        row == 1 && column == 1 && axislegend(axis; position = :lb, labelsize = 10)
+    end
 
     save(path, figure)
     return path
 end
+
+cast_mean(values) = (finite = filter(isfinite, values); isempty(finite) ? NaN : mean(finite))
 
 """
     plot_current_rose(path, observed, modelled; title, bins)

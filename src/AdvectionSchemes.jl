@@ -1,6 +1,6 @@
 module AdvectionSchemes
 
-export RiverMouthAdvection
+export RiverMouthAdvection, SurfaceLayerAdvection
 
 using Adapt
 using Oceananigans: Oceananigans, Center
@@ -71,6 +71,34 @@ function RiverMouthScheme(interior, upwind, zone)
             Oceananigans.Grids.required_halo_size_z(interior))
     TD = typeof(TimeSteppers.time_discretization(interior))
     return RiverMouthScheme{N, eltype(interior), TD}(interior, upwind, zone)
+end
+
+"""
+    SurfaceLayerAdvection(; surface, interior, surface_levels)
+
+A tracer advection scheme: `surface` on every face of the top `surface_levels` cells, horizontal and
+vertical, `interior` on every face below. Each face carries one flux shared by both cells beside it,
+so the tracer stays conserved.
+
+Made for two `WENO`s that differ in their fallback. A face too close to land, the seabed or the
+surface for its stencil drops to a lower order, by default at last to `Centered(order = 2)`, or to
+first-order upwind with `minimum_buffer_upwind_order = 1`; this picks between them by depth. Either
+may be a bounded `WENO`, and it can be a `RiverMouthAdvection`'s `interior`.
+"""
+struct SurfaceLayerAdvection{N, FT, TD, S, I} <: AbstractAdvectionScheme{N, FT, TD}
+    surface::S
+    interior::I
+    surface_levels::Int
+    SurfaceLayerAdvection{N, FT, TD}(surface::S, interior::I, surface_levels::Int) where {N, FT, TD, S, I} =
+        new{N, FT, TD, S, I}(surface, interior, surface_levels)
+end
+
+function SurfaceLayerAdvection(; surface, interior, surface_levels)
+    N = max(Oceananigans.Grids.required_halo_size_x(surface), Oceananigans.Grids.required_halo_size_y(surface),
+            Oceananigans.Grids.required_halo_size_z(surface), Oceananigans.Grids.required_halo_size_x(interior),
+            Oceananigans.Grids.required_halo_size_y(interior), Oceananigans.Grids.required_halo_size_z(interior))
+    TD = typeof(TimeSteppers.time_discretization(interior))
+    return SurfaceLayerAdvection{N, eltype(interior), TD}(surface, interior, Int(surface_levels))
 end
 
 """
@@ -162,6 +190,38 @@ Advection.materialize_advection(scheme::RiverMouthScheme, grid) =
 Advection.update_advection!(scheme::RiverMouthScheme, model, tracer) =
     Advection.update_advection!(scheme.interior, model, tracer)
 
+Base.summary(scheme::SurfaceLayerAdvection) =
+    string("SurfaceLayerAdvection(top ", scheme.surface_levels, " levels=", summary(scheme.surface),
+           ", below=", summary(scheme.interior), ")")
+
+Base.show(io::IO, scheme::SurfaceLayerAdvection) = print(io, summary(scheme))
+
+TimeSteppers.time_discretization(scheme::SurfaceLayerAdvection) = TimeSteppers.time_discretization(scheme.interior)
+
+Adapt.adapt_structure(to, scheme::SurfaceLayerAdvection{N, FT, TD}) where {N, FT, TD} =
+    SurfaceLayerAdvection{N, FT, TD}(Adapt.adapt(to, scheme.surface), Adapt.adapt(to, scheme.interior),
+                                     scheme.surface_levels)
+
+Architectures.on_architecture(arch, scheme::SurfaceLayerAdvection{N, FT, TD}) where {N, FT, TD} =
+    SurfaceLayerAdvection{N, FT, TD}(on_architecture(arch, scheme.surface), on_architecture(arch, scheme.interior),
+                                     scheme.surface_levels)
+
+Advection.adapt_advection_order(scheme::SurfaceLayerAdvection, grid::AbstractGrid) =
+    SurfaceLayerAdvection(surface = Advection.adapt_advection_order(scheme.surface, grid),
+                          interior = Advection.adapt_advection_order(scheme.interior, grid),
+                          surface_levels = scheme.surface_levels)
+
+Advection.materialize_advection(scheme::SurfaceLayerAdvection, grid) =
+    SurfaceLayerAdvection(surface = Advection.materialize_advection(scheme.surface, grid),
+                          interior = Advection.materialize_advection(scheme.interior, grid),
+                          surface_levels = scheme.surface_levels)
+
+function Advection.update_advection!(scheme::SurfaceLayerAdvection, model, tracer)
+    Advection.update_advection!(scheme.surface, model, tracer)
+    Advection.update_advection!(scheme.interior, model, tracer)
+    return nothing
+end
+
 #####
 ##### Fluxes
 #####
@@ -181,6 +241,25 @@ Advection.update_advection!(scheme::RiverMouthScheme, model, tracer) =
 
 @inline Advection._advective_tracer_flux_z(i, j, k, grid, scheme::RiverMouthScheme, W, c) =
     interior_flux_z(i, j, k, grid, scheme.interior, W, c)
+
+# A vertical face `k` is the bottom face of cell `k`, so the same test puts the faces of the top
+# `surface_levels` cells, both ways, in the surface layer.
+@inline in_surface_layer(k, grid, scheme) = k > grid.Nz - scheme.surface_levels
+
+@inline Advection._advective_tracer_flux_x(i, j, k, grid, scheme::SurfaceLayerAdvection, U, c) =
+    ifelse(in_surface_layer(k, grid, scheme),
+           interior_flux_x(i, j, k, grid, scheme.surface, U, c),
+           interior_flux_x(i, j, k, grid, scheme.interior, U, c))
+
+@inline Advection._advective_tracer_flux_y(i, j, k, grid, scheme::SurfaceLayerAdvection, V, c) =
+    ifelse(in_surface_layer(k, grid, scheme),
+           interior_flux_y(i, j, k, grid, scheme.surface, V, c),
+           interior_flux_y(i, j, k, grid, scheme.interior, V, c))
+
+@inline Advection._advective_tracer_flux_z(i, j, k, grid, scheme::SurfaceLayerAdvection, W, c) =
+    ifelse(in_surface_layer(k, grid, scheme),
+           interior_flux_z(i, j, k, grid, scheme.surface, W, c),
+           interior_flux_z(i, j, k, grid, scheme.interior, W, c))
 
 @inline interior_flux_x(i, j, k, grid, scheme, U, c) =
     Advection._advective_tracer_flux_x(i, j, k, grid, scheme, U, c)

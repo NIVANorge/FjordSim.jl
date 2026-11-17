@@ -101,6 +101,7 @@ end
             :BoundarySponge,
             :RiverMouthMixing,
             :RiverMouthAdvection,
+            :SurfaceLayerAdvection,
             :SnapshotWriter,
             :FieldSnapshotWriter,
             :SurfaceSnapshotWriter,
@@ -579,6 +580,89 @@ end
         @test minimum(wet(model.tracers.c)) > -1e-10
         @test maximum(wet(model.tracers.c)) < 1 + 1e-10
         @test maximum(interior(model.advection.c.interior.bounds.limiter)) > 0
+    end
+
+    @testset "surface layer advection" begin
+        Advection = Oceananigans.Advection
+        # Six levels over a seabed rising to two cells in the south, so faces meet the surface, the
+        # seabed and land.
+        grid = ImmersedBoundaryGrid(
+            RectilinearGrid(
+                CPU();
+                size = (16, 8, 6),
+                halo = (4, 4, 4),
+                x = (0, 16),
+                y = (0, 8),
+                z = (-6, 0),
+                topology = (Periodic, Bounded, Bounded),
+            ),
+            GridFittedBottom((x, y) -> y < 1 ? 0.0 : y < 3 ? -2.0 : -6.0),
+        )
+        upwind_fallback = Advection.materialize_advection(WENO(order = 5; minimum_buffer_upwind_order = 1), grid)
+        centred_fallback = Advection.materialize_advection(WENO(order = 5), grid)
+        scheme = Advection.materialize_advection(
+            SurfaceLayerAdvection(surface = upwind_fallback, interior = centred_fallback, surface_levels = 2),
+            grid,
+        )
+        c = CenterField(grid)
+        set!(c, (x, y, z) -> sin(x) * cos(2y) + exp(z))
+        Oceananigans.fill_halo_regions!(c)
+        U = XFaceField(grid)
+        set!(U, (x, y, z) -> 1 + cos(y) + z / 6)
+        Oceananigans.fill_halo_regions!(U)
+        flux_x(s, i, j, k) = Advection._advective_tracer_flux_x(i, j, k, grid, s, U, c)
+        flux_y(s, i, j, k) = Advection._advective_tracer_flux_y(i, j, k, grid, s, U, c)
+        flux_z(s, i, j, k) = Advection._advective_tracer_flux_z(i, j, k, grid, s, U, c)
+
+        # Every face of the top two cells, the vertical face under them included, is `surface`'s;
+        # every face below is `interior`'s.
+        for k in 5:6
+            @test flux_x(scheme, 5, 4, k) == flux_x(upwind_fallback, 5, 4, k)
+            @test flux_y(scheme, 5, 4, k) == flux_y(upwind_fallback, 5, 4, k)
+        end
+        for k in 1:4
+            @test flux_x(scheme, 5, 4, k) == flux_x(centred_fallback, 5, 4, k)
+            @test flux_y(scheme, 5, 4, k) == flux_y(centred_fallback, 5, 4, k)
+        end
+        # The face under the top cell, too close to the surface for WENO's stencil, takes the upwind
+        # fallback; a face as close to the seabed takes the centred one.
+        @test flux_z(scheme, 5, 6, 6) == flux_z(upwind_fallback, 5, 6, 6)
+        @test flux_z(scheme, 5, 6, 6) != flux_z(centred_fallback, 5, 6, 6)
+        @test flux_z(scheme, 5, 6, 2) == flux_z(centred_fallback, 5, 6, 2)
+        @test flux_z(scheme, 5, 6, 2) != flux_z(upwind_fallback, 5, 6, 2)
+        # The shallow columns lie inside the surface layer from top to bottom.
+        @test flux_z(scheme, 5, 2, 6) == flux_z(upwind_fallback, 5, 2, 6)
+
+        # As a `RiverMouthAdvection`'s interior, stepped through a model, with a bounded `surface`:
+        # the tracer is conserved, and the limiter it carries is updated.
+        model = HydrostaticFreeSurfaceModel(
+            grid;
+            tracer_advection = model_tracer_advection(
+                RiverMouthAdvection(
+                    interior = SurfaceLayerAdvection(
+                        surface = WENO(order = 5; bounds = (0, 1), minimum_buffer_upwind_order = 1),
+                        interior = WENO(order = 5),
+                        surface_levels = 2,
+                    ),
+                    width_cells = 1,
+                    narrow_cells = false,
+                ),
+                grid,
+                (; target_i = [4], target_j = [5]),
+            ),
+            tracers = :c,
+            buoyancy = nothing,
+            velocities = PrescribedVelocityFields(u = 1),
+            momentum_advection = nothing,
+        )
+        set!(model, c = (x, y, z) -> 1 < x < 4 ? 1.0 : 0.0)
+        wet(field) = interior(field)[:, 2:end, :]
+        total = sum(wet(model.tracers.c))
+        for _ in 1:20
+            time_step!(model, 0.2)
+        end
+        @test sum(wet(model.tracers.c)) ≈ total rtol = 1e-12
+        @test maximum(interior(model.advection.c.interior.surface.bounds.limiter)) > 0
     end
 
     @testset "boundary condition configs" begin

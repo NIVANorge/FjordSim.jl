@@ -881,7 +881,7 @@ FjordConfig(
         # No island is flooded. At 6 the stage flooded 106 islands on this grid, 412 cells, nearly all
         # of them land on the 40 m native grid, Kaholmen in the Drøbak Sound among them. Keeping
         # them adds no one-cell-wide channel (27 either way, `close_narrow_passages` closes them),
-        # only 751 coastal cells to the 7140, which `narrow_cells` upwinds.
+        # only 751 coastal cells to the 7140.
         max_island_cells      = 0,
         close_narrow_passages = true,
         spike_ratio           = 0.5,
@@ -1170,10 +1170,10 @@ FjordConfig(
         # Salinity's WENO bounded: on this box plain WENO drove the
         # surface cells beside Numedalslågen's mouth below TEOS10's -32 psu floor at day 1.5.
         #
-        # Coastal cells upwinded too: with WENO, one-cell channels and corners at a fresh front sat
-        # 3-8 K below every neighbour, and under a slab ice the frazil reset turned that into ice
-        # growing up to 4 m a day (Larvik, the Glomma sound, Svelvik). Upwinding only cells with two
-        # wet neighbours moved it to the next cell at Larvik, which has three.
+        # Coastal cells not upwinded (`narrow_cells = false`): first-order upwind diffuses about
+        # |u|Δx/2, 8-40 m²/s at the surface on 160 m cells, against ~0.1 m²/s observed at that
+        # scale, and the 7140 cells with three or fewer wet neighbours line the whole coast. They
+        # were upwinded against runaway slab ice in one-cell channels, and this setup has no ice.
         #
         # On a face too close to land, the seabed or the surface for its stencil, WENO drops to a
         # lower order, and by default at last to `Centered(order = 2)`: the face carries the mean
@@ -1187,18 +1187,31 @@ FjordConfig(
         # Drammensfjord at 30 m lost 3.7 g/kg in 16 months (run of stamp 20261112T205524). S keeps
         # the centred fallback and its single-cell overshoots.
         #
+        # T's upwind fallback only in the top four cells (to 5.5 m). Below, its faces beside the
+        # seabed and walls mixed heat into the sill basins, and in the top cells the centred
+        # fallback left the surface too warm. Over the first 50 days from 1 October 2024, κ_T
+        # below 52 m at Bn1 was 2.4e-4 m²/s with the upwind fallback everywhere, 0.87e-4 centred
+        # everywhere and 0.86e-4 split; T RMSE on the casts was 1.05, 1.55 and 1.13 °C in the top
+        # 5 m and 0.81, 0.69 and 0.69 °C below 50 m (stamps 20261115T121441, 20261116T074419,
+        # 20261116T194914). The split keeps single cells up to 25 °C in the Glomma channel's salt
+        # wedge at 9 m, below the top four cells, where the upwind fallback everywhere stayed under 19.
+        #
         # Oceananigans gives any tracer a NamedTuple omits the unbounded `Centered()` default,
         # so it names CATKE's `e`, and a setup adding tracers must name those too.
         tracer_advection   = (
             T = RiverMouthAdvection(
-                interior = WENO(FT; minimum_buffer_upwind_order = 1),
+                interior = SurfaceLayerAdvection(
+                    surface = WENO(FT; minimum_buffer_upwind_order = 1),
+                    interior = WENO(FT),
+                    surface_levels = 4,
+                ),
                 width_cells = 3,
-                narrow_cells = true,
+                narrow_cells = false,
             ),
             S = RiverMouthAdvection(
                 interior = WENO(FT; bounds = (0, 40)),
                 width_cells = 3,
-                narrow_cells = true,
+                narrow_cells = false,
             ),
             e = WENO(FT; minimum_buffer_upwind_order = 1),
         ),

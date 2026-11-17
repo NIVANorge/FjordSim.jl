@@ -173,6 +173,10 @@ spacing have to be worked out for the new grid rather than copied:
   `interior` elsewhere, a bounded `WENO` included. It needs a `river_config`. Turn `narrow_cells`
   on where a front runs along the coast or through one-cell channels: WENO leaves such a cell below
   every neighbour, and with sea ice that becomes runaway ice growth.
+- **`SurfaceLayerAdvection(surface = ..., interior = ..., surface_levels = ...)`** uses `surface` on
+  every face of the top `surface_levels` cells and `interior` below, for example a `WENO` with
+  `minimum_buffer_upwind_order = 1` near the surface and the default centred fallback beside the
+  seabed. It can be a `RiverMouthAdvection`'s `interior`.
 - **`CATKEVerticalDiffusivity`'s `minimum_tke`** sets the background `κ = 0.098·e_min/N` wherever the
   prognostic TKE is below it, which in a stratified fjord is most of the column, so it is effectively
   the vertical-mixing knob.

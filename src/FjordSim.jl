@@ -46,6 +46,7 @@ export
     BoundarySponge,
     RiverMouthMixing,
     RiverMouthAdvection,
+    SurfaceLayerAdvection,
     SnapshotWriter,
     FieldSnapshotWriter,
     SurfaceSnapshotWriter,

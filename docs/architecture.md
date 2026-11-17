@@ -672,6 +672,28 @@ upwinding only those (2.8 %) fixed the bend cell (−17 → +397 K/day) but move
 next cell along the coast, which has three; it froze on 2 January and reached 47 m by 12 February.
 On that 2 January snapshot at freezing, WENO gave it −10 to −29 K/day and upwind +91 to +96 K/day.
 
+### `SurfaceLayerAdvection`
+
+WENO's fallback on a face too close to a boundary for its stencil is one choice for the whole
+domain: `Centered(order = 2)` by default, or first-order upwind with
+`minimum_buffer_upwind_order = 1`. On the Oslofjord at 160 m the two did different things at
+different depths. Under the top cell the centred face carries the two-cell mean, which cooled
+freezing top cells at Svelvik by 7–121 K/day. Beside the seabed and walls of the sill basins the
+upwind faces mixed heat: over the first 50 days from 1 October 2024, κ_T from the heat budget below
+52 m at Bn1 was 2.4·10⁻⁴ m²/s with the upwind fallback against 0.83·10⁻⁴ centred, while raising WENO's
+order to 9 changed neither. `SurfaceLayerAdvection` picks a scheme by depth: `surface` on every face
+of the top `surface_levels` cells, `interior` below.
+
+- **By level, every direction.** A vertical face `k` is the bottom face of cell `k`, so one test,
+  `k > Nz − surface_levels`, sorts all three; the top cells' horizontal faces beside land go with
+  them. A column no deeper than the layer is `surface`'s from top to bottom.
+- **Same face fluxes as `RiverMouthAdvection`**: one flux per face from `_advective_tracer_flux_x/y/z`,
+  a bounded `WENO` through `interior_flux_*`, `update_advection!` forwarded to both schemes.
+  Both are evaluated on every face (`ifelse`); for T on the Oslofjord at 160 m the run's wall time
+  did not change (50 s per model hour on the GPU VM with either scheme).
+- It is a scheme, not a config: it needs nothing from the river columns or the grid beyond `Nz`, so
+  `model_tracer_advection` passes it through, or `RiverMouthAdvection` wraps it as `interior`.
+
 ## 16. Simulations (`src/Simulations.jl`)
 
 `coupled_model` lives here, not in `src/FjordSim.jl`, because a function defined after the

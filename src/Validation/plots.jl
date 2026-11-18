@@ -503,6 +503,10 @@ The one figure that answers "how does this run score overall" at a glance, and a
 reports predate. A point on the arc at radius 1 has the right variability, a point near the axis has
 the right phasing, and the reference marker at `(1, 0)` is a perfect model.
 
+The radius is limited to 2, so a point whose normalised standard deviation exceeds 2 lies off the
+diagram rather than shrinking every other point toward the origin; its row in the skill table
+gives its value.
+
 `entries` is `label => SkillMetrics`.
 """
 function plot_taylor(path, entries::AbstractVector{<:Pair}; title = "Taylor diagram")
@@ -511,6 +515,7 @@ function plot_taylor(path, entries::AbstractVector{<:Pair}; title = "Taylor diag
         figure[1, 1];
         title,
         thetalimits = (0, π / 2),
+        rlimits = (0, 2),
         rticks = 0:0.5:2,
         thetaticks = (acos.([1.0, 0.99, 0.95, 0.9, 0.8, 0.6, 0.4, 0.2, 0.0]),
                       ["1", "0.99", "0.95", "0.9", "0.8", "0.6", "0.4", "0.2", "0"]),

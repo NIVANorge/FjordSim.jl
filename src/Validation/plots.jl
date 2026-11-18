@@ -275,7 +275,8 @@ function plot_cast_profiles(path, pairs; title = "", spin_up_end = nothing, colu
                 axis, observed.values[cast, :], observed.depths;
                 color = OBSERVED_COLOUR, linewidth = 2, label = "observed",
             )
-            ylims!(axis, 0, deepest)
+            # Deepest first: `ylims!` with the low end first sets `yreversed` back to false.
+            ylims!(axis, deepest, 0)
             shade_spin_up!(axis, time, spin_up_end)
             block_index == 1 && row == 1 && column == 1 && axislegend(axis; position = :lb, labelsize = 10)
         end

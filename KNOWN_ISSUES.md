@@ -124,6 +124,12 @@ RMSE 1.58 °C (1.45): the overshoots below are gone, but the water mixes more.
   Vannmiljø. Unchecked: the Vorma outlet's mean against the ~344 m³/s at Ertesekken, η against the
   120.3–123.0 m observed at Hamar in 2025, and whether T stays smooth in the outlet's columns.
 
+## Performance
+
+- Output writing leaves the GPU idle about a quarter of the time (`oslofjorden.jl` on an NVIDIA
+  L4). The pauses, about 1 s each, match the 10-minute `FieldStationWriter` and the hourly
+  writers; this is by timing, not profiled.
+
 ## Design
 
 `docs/dispatch-map.md` lists every supertype's hooks and which built-in types implement them. These

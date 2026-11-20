@@ -6921,11 +6921,16 @@ end
         touch(joinpath(directory, "$(stem)_20260915T120000_loop02_Km1.nc"))
         touch(joinpath(directory, "unrelated.nc"))
 
+        touch(joinpath(directory, "$(stem)_20260914T120000_Km1.nc"))
+
         found = station_files(directory, stem)
-        @test length(found) == 3
+        @test length(found) == 4
         @test Set(first.(found)) == Set(["Km1", "TO_1"])
-        # Newest run first, so a directory holding several runs defaults to the latest.
-        @test occursin("loop02", last(first(found)))
+        # Written order: run tag, then loop.
+        @test basename.(last.(filter(pair -> first(pair) == "Km1", found))) == [
+            "$(stem)_20260914T120000_Km1.nc", "$(stem)_20260915T120000_Km1.nc",
+            "$(stem)_20260915T120000_loop02_Km1.nc",
+        ]
         @test isempty(station_files(directory, "no_such_writer"))
         @test isempty(station_files(joinpath(directory, "missing"), stem))
     end
@@ -6959,6 +6964,19 @@ end
         @test series.values[:, 1] ≈ [0.1, -0.2]
         @test series.times[2] - series.times[1] == Minute(10)
         @test isnothing(FjordSim.Validation.model_series(simulation, writer, gauge, "T"))
+
+        # A resumed run writes under a later run tag from its checkpoint on, which replaces the
+        # first launch's records from there.
+        JLD2.jldopen(joinpath(directory, "stations_tidegauge_20260916T080000_Km1.jld2"), "w") do file
+            file["timeseries/η/serialized/location"] = (Center, Center, Nothing)
+            for (iteration, seconds, η) in ((60, 600.0, 0.5), (120, 1200.0, 0.3))
+                file["timeseries/t/$iteration"] = seconds
+                file["timeseries/η/$iteration"] = fill(η, 1, 1, 1)
+            end
+        end
+        joined = FjordSim.Validation.model_series(simulation, writer, gauge, "eta")
+        @test joined.values[:, 1] ≈ [0.1, 0.5, 0.3]
+        @test joined.times[3] - joined.times[1] == Minute(20)
     end
 
     @testset "read_station_netcdf masks the immersed cells" begin

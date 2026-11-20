@@ -154,15 +154,12 @@ function model_series(
     directory = results_root(config)
     stem = first(splitext(writer.output_file))
     tag = station_tag(station)
-    candidates = [path for (found, path) in station_files(directory, stem) if found == tag]
-    isempty(candidates) && return nothing
+    paths = [path for (found, path) in station_files(directory, stem) if found == tag]
+    isempty(paths) && return nothing
 
-    path = first(candidates)
-    return if endswith(path, ".jld2")
-        read_station_jld2(path, String(name), start_date(config))
-    else
-        read_station_netcdf(path, String(name))
-    end
+    read_file(path) = endswith(path, ".jld2") ? read_station_jld2(path, String(name), start_date(config)) :
+                      read_station_netcdf(path, String(name))
+    return join_station_series(map(read_file, paths))
 end
 
 # The model field an observed variable is read from, where the two names differ. Observation sources

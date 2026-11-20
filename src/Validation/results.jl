@@ -34,24 +34,51 @@ end
 """
     station_files(directory, writer_name)
 
-Every station file a writer produced, as `tag => path`, newest run first.
+Every station file a writer produced, as `tag => path`, in the order they were written: by run tag,
+then loop.
 
-Files are named `<stem>_<run tag>_<station tag>.<ext>` and the run tag is a timestamp, so sorting
-the paths in reverse puts the most recent run first — which is what a validation wants by default
-when a results directory holds several.
+Files are named `<stem>_<run tag>[_loop<N>]_<station tag>.<ext>`. A results directory holds one run,
+so several run tags are that run resumed: `join_station_series` joins a station's files.
 """
 function station_files(directory, writer_name::AbstractString)
     isdir(directory) || return Pair{String,String}[]
 
-    pattern = Regex("^" * writer_name * "_(\\d{8}T\\d{6}(?:_loop\\d+)?)_(.+)\\.(nc|jld2)\$")
-    found = Pair{String,String}[]
-    for file in sort(readdir(directory); rev = true)
+    pattern = Regex("^" * writer_name * "_(\\d{8}T\\d{6})(?:_loop(\\d+))?_(.+)\\.(nc|jld2)\$")
+    found = Tuple{String,Int,String,String}[]
+    for file in readdir(directory)
         match_result = match(pattern, file)
         isnothing(match_result) && continue
-        push!(found, match_result.captures[2] => joinpath(directory, file))
+        run_tag, loop, station = match_result.captures
+        push!(found, (run_tag, isnothing(loop) ? 0 : parse(Int, loop), station, joinpath(directory, file)))
     end
 
-    return found
+    return [station => path for (_, _, station, path) in sort!(found)]
+end
+
+"""
+    join_station_series(series)
+
+One station's `ModelSeries` from its files in written order. A resumed run writes under a new run tag
+from its checkpoint on, and each loop starts its model time again, so each file replaces every earlier
+record from its own first time on, as `snapshot_records` does.
+"""
+function join_station_series(series)
+    joined = first(series)
+    for next in series[2:end]
+        isempty(next.times) && continue
+        next.depths == joined.depths ||
+            throw(ArgumentError("Station $(next.station)'s files differ in depths, so they are not one run."))
+        keep = joined.times .< first(next.times)
+        joined = ModelSeries(
+            joined.station,
+            joined.variable,
+            vcat(joined.times[keep], next.times),
+            joined.depths,
+            vcat(joined.values[keep, :], next.values),
+            joined.metadata,
+        )
+    end
+    return joined
 end
 
 """

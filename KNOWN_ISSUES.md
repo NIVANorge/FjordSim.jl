@@ -19,6 +19,28 @@ On the samples NorKyst v3 160 m has, FjordSim's are 2.02 g/kg and 1.42 °C, NorK
   31.0–31.4) and from 31.6 to 31.0 at 100 m (casts 31.6). The Svelvik sill is a one-cell channel
   12–14 m deep. Whether mixing below the halocline or too little salt water over the sill causes it
   is unknown.
+- The February 2026 inflow to the Inner Oslofjord is missed. The casts show salty, warm water at Dk1
+  (60 m) and Fl1 (100 m) from February; on 9 February FjordSim has 32.64 g/kg at Dk1 against 33.45
+  observed (NorKyst v3 160 m 33.76, NorFjords 34.10), and from March to July both stations are
+  2.0–3.2 °C too cold. Bunnefjorden is never renewed: at Ep1, 120 m, FjordSim falls from 32.9 to
+  32.1 g/kg and from 8.4 to 6.0 °C, while the casts stay at 32.6–33.0 g/kg and 7.7–9.1 °C. Outside
+  the Drøbak sill (Im2, 100 m) the February–June 2026 casts average 34.67 g/kg, FjordSim 34.10 and
+  NorKyst v3 160 m 34.15. At sill depth outside (Im2, 18–28 m) FjordSim's density is within
+  0.1 kg/m³ of the casts' in January–February 2026, and its excess over Fl1's deep water is larger
+  (0.98 kg/m³ on 9 February against 0.61 observed). The water is diluted inside the sill: on 9
+  February the casts at Hm4, 30–80 m, are as dense as Im2 at sill depth, FjordSim 0.85 kg/m³ lighter.
+  The cause is convection where the inflow lands. The 3D snapshots show the crest's bottom cell as
+  dense as the water outside on the inflow days. The water then flows off the step into the next,
+  deeper column, lands on lighter water, and CATKE overturns that column to the bottom. On each pulse
+  (4–14 January, 28 January–2 February, 10–15 February) the TKE in Hm4 below 25 m rises from about
+  1e-7 to 1e-3 m²/s² with no shear, and the column from 36 to 99 m turns uniform within a day; Fl1
+  below 50 m follows. The casts show the inflow as a bottom current under a stratified column.
+  NorKyst and NorFjords follow the seabed with their levels, and NorKyst v3 160 m's inner basins are
+  only 50–70 m deep. Finer z-levels would still overturn at every step; a downslope-flow
+  parameterization would target it. The bathymetry adds a deeper route: the sill's east channel is
+  21 m (about 20 m real), but the west channel, which the Drøbak jetty closes to about 6 m, is open at
+  23.5 m. In March–May 2026 the water below 50 m is 1.9–2.3 °C too cold (NorKyst v3 160 m
+  1.5–2.1 °C); NorKyst v3 800 m, the boundary source, has the same error near the boundary.
 - `CastCorrectedInitialState` leaves 121 surface cell pairs between cast and Norkyst columns, 6.3
   g/kg apart (median), at the Drøbak and Svelvik sills and around inner-fjord pockets it does not
   reach; the cast profiles add 3200 small density inversions (≤ 0.43 kg/m³, against 1.31 without

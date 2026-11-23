@@ -143,7 +143,7 @@ raw file's name carries `_linear`, so a cached inverse-distance file is never re
 ### The smoothing stages, and why their order is forced
 
 `smooth_bathymetry_gaps!` runs the topological cleanup every source gets (diagonal pairs, isolated
-sea/land cells), then eight opt-in stages, each skipped when its `smoothing_options` parameter is
+sea/land cells), then nine opt-in stages, each skipped when its `smoothing_options` parameter is
 `false` or zero:
 
 1. `clear_open_boundary_land`
@@ -153,8 +153,9 @@ sea/land cells), then eight opt-in stages, each skipped when its `smoothing_opti
 5. `snap_partial_bottom_cells` (first pass)
 6. `limit_bottom_slope`
 7. `preserve_sill_depths`
-8. `snap_partial_bottom_cells` (second pass)
-9. `raise_open_boundary_pockets`
+8. `cap_depths`
+9. `snap_partial_bottom_cells` (second pass)
+10. `raise_open_boundary_pockets`
 
 - Topological cleanup first: checkerboard noise would skew the neighbour medians.
 - **Land-mask stages before depth stages**, or the cells about to change would already have
@@ -167,6 +168,8 @@ sea/land cells), then eight opt-in stages, each skipped when its `smoothing_opti
 - Despiking before slope limiting: a spike is the one-cell feature slope limiting would smear into
   its neighbours instead of removing.
 - `preserve_sill_depths` after slope limiting, which would raise the channel it carves.
+- `cap_depths` after `preserve_sill_depths`, which would carve the channel a structure closes back
+  to the soundings' depth, and before the second snap, which clears the slivers a cap leaves.
 - **The snap runs twice.** Slope limiting ignores the vertical faces, so it puts back slivers the
   first snap removed: 2628 of them — 6 % of bottom cells — at `max_slope_factor = 0.25` on the
   24-level grid. The second snap leaves none, at the cost of raising the steepest slope from 0.250 to
@@ -273,6 +276,16 @@ them at sill depth, a 0-1 BFS finds the path crossing the fewest too-shallow cel
 whose deepest source water reaches the sill — and deepens it. No land changes and nothing goes
 deeper than the source. On `oslofjorden_validation`: 1467 cells, Svelvik 10.8 m, mean depth changed
 by under 0.1 m. It only deepens, so a connection the regrid made too *deep* is out of reach.
+
+### `cap_depths`
+
+For a structure the soundings miss or the regrid averages away: a `DepthCap` polyline raises every
+wet cell it crosses to no deeper than its depth. The Drøbak jetty, the 1874–79 barrier from Søndre
+Kaholmen to Hurum, shows in the soundings as a line of 1–2 m values, but on 160 m cells the channel it
+closes came out 23.5 m deep, 2.5 m below the real sill's east channel, and the deepest route into the
+Inner Oslofjord ran through it. Segments are sampled at a quarter of a cell, so every cell a segment
+passes through is capped; a chain of cells touching only at corners still blocks flow, since water
+crosses cell faces.
 
 ## 6. Regridding (`src/Regridding.jl`)
 
@@ -880,7 +893,35 @@ MB per checkpoint on the Oslofjord grid, hence `cleanup = true`.
 - Snapshots *are* per launch, so a resumed run's file starts at the resume point.
 - `pickup` supersedes `initial_conditions`.
 
-## 17. Validation (`src/Validation/`)
+## 17. Downslope (`src/Downslope.jl`)
+
+`DownslopeFlow` is a callback config: `attach_callback!` puts a `DownslopeStep` on the coupled
+simulation, run every iteration after the time step.
+
+- **Why it exists.** A z-level model moves dense water off a step sideways, onto lighter water in the
+  next column, and CATKE then overturns that column to the bottom. In the Oslofjord run archived as
+  `oslofjorden_2026-11-20`, each inflow pulse over the Drøbak sill in January–February 2026 raised
+  the TKE below 25 m at Hm4 from about 1e-7 to 1e-3 m²/s² with no shear and mixed 36–99 m uniform
+  within a day, so the renewal arrived 0.85 kg/m³ too light. Finer levels do not remove this: each
+  step down a slope steeper than Δz/Δx overturns again.
+- **What it does.** MITgcm's form of Campin & Goosse (1999): across every face where the shallower
+  column's bottom cell is denser than the deeper column at that level, a closed loop carries that
+  water to the deeper column's neutral level, up the deeper column and back across. Transport
+  `U = Δy Δz s (g Δρ / ρ₀) friction_timescale`, with the density of both waters evaluated at each
+  level by the model's equation of state.
+- **A callback, not a tracer forcing**, because it needs one column's water at another column's
+  depth. Two passes, both read from the state before the step: the transport, source level and
+  neutral level of every face, then each tracer's increment cell by cell from its four faces, so no
+  cell is written while another reads it.
+- **Stable and conservative by construction.** The loop is closed and upstream, so a tracer's
+  content is unchanged and every value stays within the range it started the step with. Each
+  face's transport is capped so no cell of its loop exchanges more than a quarter of its volume per
+  step, since a cell can sit on four loops; at 160 m and a 3-minute step that caps the speed at
+  0.22 m/s.
+- **MITgcm's `DWNSLP_drFlow`**, a cap on the flow layer's thickness, is left out: the flow layer is
+  the shallow column's bottom cell, and the volume cap already bounds the transport.
+
+## 18. Validation (`src/Validation/`)
 
 The only module that runs after a simulation. It reads what the setup's `observation_configs` have
 on disk (`Observations`), and fetches only the Kartverket gauges `default_observations` builds from
@@ -913,7 +954,7 @@ The figures are per station, not per scored pair: every cast beside the model's 
 where scored, with the river outlets and the open edges (`map.png`). Tables go in `validation/data/`, figures in
 `validation/plots/`.
 
-## 18. CLI (`src/CLI.jl`)
+## 19. CLI (`src/CLI.jl`)
 
 **No setup is part of the package.** A setup is a script ending in its `FjordConfig`, and
 `fjord_config(path)` `Base.include`s it into `Main` on every call. So each step gets a fresh config —
@@ -938,7 +979,7 @@ reproducible by re-running, and it is the only step guaranteed a `results_root`.
   to `{…}`. `STACKTRACE_WIDTH` below 120 changes nothing (`Base.type_depth_limit` floors it).
 - During a run `stdout` is a `Pipe`, so `displaysize` is 24x80 and wide `show` output may wrap.
 
-## 19. Top-level (`src/FjordSim.jl`)
+## 20. Top-level (`src/FjordSim.jl`)
 
 **It overrides one NumericalEarth method**, `update_net_ocean_fluxes!` on `NoSeaIceInterfaceModel`,
 with a copy of upstream's body. Without sea ice, NumericalEarth's zero fluxes are an untyped

@@ -144,6 +144,7 @@ optional smoothing stage off:
 | `minimum_cell_fraction` | `0.0` | snap partial bottom cells; set it to `0.2`, `PartialCellBottom`'s `minimum_fractional_cell_height` |
 | `max_slope_factor` | `0.0` | limit the bottom slope between neighbours |
 | `preserve_sills` | `false` | restore sills the regrid averaged away |
+| `depth_caps` | `DepthCap[]` | structures the soundings miss, such as a submerged dam: `DepthCap(; longitude, latitude, depth)` |
 | `raise_boundary_pockets` | `false` | raise each open-edge cell to no deeper than the cell inside it |
 | `geonorge_cache`, `regrid_cache` | `true`, `true` | reuse intermediate files |
 

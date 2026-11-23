@@ -108,9 +108,9 @@ No built-in implementation.
 
 ### `AbstractCallbackConfig`
 
-| Hook | Status | `ProgressCallback` |
-|---|---|---|
-| `attach_callback!` | required | ✓ |
+| Hook | Status | `DownslopeFlow` | `ProgressCallback` |
+|---|---|---|---|
+| `attach_callback!` | required | ✓ | ✓ |
 
 ### `AbstractClosureConfig`
 

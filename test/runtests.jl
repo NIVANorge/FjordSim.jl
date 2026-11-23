@@ -80,6 +80,7 @@ end
             :validate_simulation,
             :EvenGrid,
             :DybdedataConfig,
+            :DepthCap,
             :NVELakeBathymetryConfig,
             :NorKystConfig,
             :NorKystHindcastConfig,
@@ -102,6 +103,7 @@ end
             :RiverMouthMixing,
             :RiverMouthAdvection,
             :SurfaceLayerAdvection,
+            :DownslopeFlow,
             :SnapshotWriter,
             :FieldSnapshotWriter,
             :SurfaceSnapshotWriter,
@@ -1909,6 +1911,7 @@ end
         # else, which is what leaves every other source's bathymetry unchanged. Asserted on configs
         # built here rather than on the example setups', whose numbers are a per-fjord choice.
         smoothing_options = FjordSim.Bathymetry.smoothing_options
+        jetty = [DepthCap(longitude = [10.1, 10.2], latitude = [59.1, 59.2], depth = 6.0)]
         @test smoothing_options(test_bathymetry_config()) == (
             open_boundary_land_cells = 0,
             max_island_cells = 0,
@@ -1918,6 +1921,7 @@ end
             max_slope_factor = 0.0,
             minimum_depth = 0.0,
             preserve_sills = false,
+            depth_caps = DepthCap[],
             raise_boundary_pockets = false,
         )
         @test smoothing_options(test_bathymetry_config(
@@ -1929,6 +1933,7 @@ end
             max_slope_factor = 0.4,
             minimum_depth = 2.0,
             preserve_sills = true,
+            depth_caps = jetty,
             raise_boundary_pockets = true,
         )) == (
             open_boundary_land_cells = 5,
@@ -1939,6 +1944,7 @@ end
             max_slope_factor = 0.4,
             minimum_depth = 2.0,
             preserve_sills = true,
+            depth_caps = jetty,
             raise_boundary_pockets = true,
         )
 
@@ -2271,6 +2277,45 @@ end
         set!(field, regridded)
         FjordSim.Bathymetry.smooth_bathymetry_gaps!(field)
         @test Array(interior(field, :, :, 1))[2:4, 2] == fill(-11.0, 3)
+    end
+
+    @testset "depth caps" begin
+        cap_depths = FjordSim.Bathymetry.cap_depths
+        # A 4×3 grid of 1° cells, 50 m deep, with land in the corner (4, 3).
+        h = fill(-50.0, 4, 3)
+        h[4, 3] = 1.0
+        h[2, 2] = -3.0
+        wall = DepthCap(longitude = [0.5, 3.9], latitude = [1.5, 1.5], depth = 6.0)
+        capped = cap_depths(h, (0.0, 4.0), (0.0, 3.0), [wall])
+        @test capped[:, 2] == [-6.0, -3.0, -6.0, -6.0]   # the 3 m cell stays shallower
+        @test capped[:, [1, 3]] == h[:, [1, 3]]
+
+        # A diagonal line marks every cell it passes through, so the cells it leaves on either
+        # side meet only at corners and no face connects them.
+        diagonal = DepthCap(longitude = [0.5, 2.5], latitude = [0.5, 2.5], depth = 6.0)
+        capped = cap_depths(fill(-50.0, 3, 3), (0.0, 3.0), (0.0, 3.0), [diagonal])
+        for i in 1:3
+            @test capped[i, i] == -6.0
+        end
+
+        # Land and cells outside the domain are left alone.
+        capped = cap_depths(h, (0.0, 4.0), (0.0, 3.0), [DepthCap(longitude = [3.5, 9.0], latitude = [2.5, 2.5], depth = 6.0)])
+        @test capped[4, 3] == 1.0
+        @test capped == h
+
+        @test_throws ArgumentError DepthCap(longitude = [1.0], latitude = [1.0], depth = 6.0)
+        @test_throws ArgumentError DepthCap(longitude = [1.0, 2.0], latitude = [1.0, 2.0], depth = -6.0)
+
+        # Wired into smooth_bathymetry_gaps! after sill preservation: the cap survives the second
+        # snap, as a partial cell at its own depth.
+        grid = LatitudeLongitudeGrid(CPU(); size = (4, 3, 3), halo = (1, 1, 1), longitude = (0.0, 4.0),
+                                     latitude = (0.0, 3.0), z = [-50.0, -8.0, -4.0, 0.0])
+        bottom_height = Field{Center, Center, Nothing}(grid)
+        set!(bottom_height, fill(-50.0f0, 4, 3))
+        FjordSim.Bathymetry.smooth_bathymetry_gaps!(bottom_height; minimum_cell_fraction = 0.2,
+                                                    depth_caps = [wall])
+        @test interior(bottom_height, :, 2, 1) == fill(-6.0f0, 4)
+        @test interior(bottom_height, :, 1, 1) == fill(-50.0f0, 4)
     end
 
     @testset "sounding gridding" begin
@@ -5318,6 +5363,55 @@ end
         @test heating[20] ≈ 0.58 * (1 - exp(-1 / 0.35)) + 0.42 * (1 - exp(-1 / 3)) rtol = 1e-4
     end
 
+    @testset "downslope flow" begin
+        Downslope = FjordSim.Downslope
+        @test_throws ArgumentError DownslopeFlow(name = :downslope, tracers = (:T, :S), friction_timescale = 0)
+        @test_throws ArgumentError DownslopeFlow(name = :downslope, tracers = (), friction_timescale = 1000)
+
+        # Column i = 1 is a 20 m shelf, i = 2 and 3 are 60 m deep, on 10 m levels.
+        mktempdir() do dir
+            bottom_height = fill(-60.0, 3, 3)
+            bottom_height[1, :] .= -20.0
+            (; grid) = immersed_test_grid(joinpath(dir, "bathymetry.nc"); size = (3, 3, 6), halo = (3, 3, 3),
+                                          bottom_height)
+            FT = eltype(grid)
+            buoyancy = SeawaterBuoyancy(FT; equation_of_state = TEOS10EquationOfState(FT))
+            model = HydrostaticFreeSurfaceModel(grid; buoyancy, tracers = (:T, :S))
+            volume = [Oceananigans.Operators.Vᶜᶜᶜ(i, j, k, grid) for i in 1:3, j in 1:3, k in 1:6]
+            wet = [!Oceananigans.Grids.inactive_node(i, j, k, grid, Center(), Center(), Center())
+                   for i in 1:3, j in 1:3, k in 1:6]
+            content(c) = sum(interior(c)[wet] .* volume[wet])
+
+            # Shelf water saltier, the deep columns stratified so it sinks to level 2 and no further.
+            salinity = fill(32.0, 3, 3, 6)
+            salinity[1, :, :] .= 34.0
+            salinity[2:3, :, 1] .= 35.0
+            set!(model; T = 8.0, S = salinity)
+            step = Downslope.DownslopeStep(model, (:T, :S), 1000.0)
+            before = copy(interior(model.tracers.S))
+            salt = content(model.tracers.S)
+
+            Downslope.downslope_step!(model, step, 60.0)
+            S = interior(model.tracers.S)
+            @test content(model.tracers.S) ≈ salt rtol = 1e-6
+            @test all(S[1, :, 5] .< 34)                           # the shelf's bottom cell gave water
+            @test all(S[2, :, 2] .> 32)                           # and it arrived at the neutral level
+            @test S[2, :, 1] == before[2, :, 1]                   # not below it
+            @test S[3, :, :] == before[3, :, :]                   # a deep column beside a deep one is left alone
+            @test all(32 .<= S[wet] .<= 35)
+            @test all(interior(model.tracers.T)[wet] .== 8)       # a uniform tracer stays uniform
+
+            # Lighter shelf water stays where it is.
+            salinity[1, :, :] .= 31.0
+            set!(model; T = 8.0, S = salinity)
+            before = copy(interior(model.tracers.S))
+            Downslope.downslope_step!(model, step, 60.0)
+            @test interior(model.tracers.S) == before
+
+            @test_throws ArgumentError Downslope.DownslopeStep(model, (:T, :e), 1000.0)
+        end
+    end
+
     @testset "slab sea ice" begin
         model_sea_ice = FjordSim.Simulations.model_sea_ice
         time_step! = Oceananigans.TimeSteppers.time_step!
@@ -6065,10 +6159,17 @@ end
                 boundary_data_config = boundaries_config,
                 model_config = test_model_config(),
                 boundary_condition_configs = test_boundary_conditions(),
-                run_config = test_run_config(results_root = tmp),
+                run_config = test_run_config(
+                    results_root = tmp,
+                    callbacks = (
+                        test_progress_callback(),
+                        DownslopeFlow(name = :downslope, tracers = (:T, :S), friction_timescale = 1000),
+                    ),
+                ),
             )
 
             simulation = build_simulation(config)
+            @test haskey(simulation.callbacks, :downslope)
             run!(simulation)
 
             ocean_model = simulation.model.ocean.model

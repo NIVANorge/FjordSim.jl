@@ -897,6 +897,14 @@ FjordConfig(
         # Regridding averages a channel narrower than a cell with its flanks: Svelvik came out
         # at 5.6 m against 11 m real. This restores each lost sill along one path of cells.
         preserve_sills        = true,
+        # The Drøbak jetty, the 1874-79 underwater barrier from Søndre Kaholmen to Hurum, as the
+        # line of 1-2 m soundings south of Kaholmen and west to the Hurum shore. Without it the
+        # sound's deepest crossing is 23.5 m through the channel the jetty closes, against the
+        # 21 m east channel, the real ~20 m sill. Its two openings, ~6 m deep and tens of metres
+        # wide, become the whole line at 6 m.
+        depth_caps            = [
+            DepthCap(longitude = [10.6096, 10.6100, 10.6005], latitude = [59.6725, 59.6648, 59.6641], depth = 6.0),
+        ],
         # The open southern edge crosses the Hvaler trench slope. On this box at 193 m its
         # boundary row held cells walled off from the interior below some level, and the
         # domain minimum sat below −1.5 °C in them on 591 of 640 days.
@@ -1373,7 +1381,16 @@ FjordConfig(
         # Overloads attach_callback! — what the run reports while it runs. `report` is the
         # function itself, so a model whose tracers omit :T (which `progress` reads) names its
         # own here instead. An empty tuple runs silently.
-        callbacks = (ProgressCallback(name = :progress, interval = 1hour, report = progress),),
+        # The downslope flow takes dense water down the Drøbak Sound's inner slope to its own level.
+        # Without it each inflow pulse of winter 2026 landed on lighter water in the column beyond
+        # the sill, CATKE overturned that column to the bottom, and the February renewal arrived
+        # 0.85 kg/m³ too light at Hm4. 1000 s gives 0.5 m/s for the 0.4 kg/m³ excess the sill
+        # water held over the next column on the sound's 0.13 slope, which the scheme's cap of a
+        # quarter of a cell per step limits to Δx/4Δt, 0.22 m/s at the 3-minute step.
+        callbacks = (
+            ProgressCallback(name = :progress, interval = 1hour, report = progress),
+            DownslopeFlow(name = :downslope, tracers = (:T, :S), friction_timescale = 1000),
+        ),
         # Overloads attach_time_stepping! and initial_time_step.
         time_stepping = AdaptiveTimeStep(
             initial_time_step    = 1second,

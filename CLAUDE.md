@@ -98,7 +98,7 @@ The modules, in `include` order from `src/FjordSim.jl`:
    vocabulary (`LATERAL_EDGES`, `open_edges`).
 4. **Plotting** (`src/Plotting.jl`) — one `plot_*` function per pipeline, dispatching on config
    supertypes, and the `plot_path` generic each pipeline adds a method to.
-5. **Bathymetry** (`src/Bathymetry/`) — `prepare_bathymetry` and the eight-stage
+5. **Bathymetry** (`src/Bathymetry/`) — `prepare_bathymetry` and the nine-stage
    `smooth_bathymetry_gaps!` pipeline (order is forced; see the doc before reordering).
 6. **Regridding** (`src/Regridding.jl`) — the core `Forcing`, `InitialState` and `BoundaryData`
    share: source records and time axes, water masks, the projected source grid and its rotation,
@@ -131,13 +131,15 @@ The modules, in `include` order from `src/FjordSim.jl`:
     `RunConfig`, `build_simulation` (staged in `assemble_simulation`: `validate_model_inputs`,
     `model_inputs`, `coupled_model`)/`run_simulation` (`run_loops`), writers, callbacks, looping,
     checkpointing, initial conditions, the run tag.
-17. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation: skill
+17. **Downslope** (`src/Downslope.jl`) — `DownslopeFlow`, a callback that takes dense water on a
+    step down the slope to its own level (Campin & Goosse 1999, as MITgcm's `down_slope`).
+18. **Validation** (`src/Validation/`) — the only module that runs *after* a simulation: skill
     and tidal statistics, and the comparison figures; with a
     `ValidationConfig`, columns and domain statistics from the 3D snapshots and depth-band tables.
     It reads the observations `download_observations` fetched; `StationWriter` (in `Simulations`) is
     what a run writes for it.
-18. **CLI** (`src/CLI.jl`) — `fjord_config` (loads a config file), subcommand dispatch, logging.
-19. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
+19. **CLI** (`src/CLI.jl`) — `fjord_config` (loads a config file), subcommand dispatch, logging.
+20. **Top-level** (`src/FjordSim.jl`) — re-exports and `main`.
 
 ## Setups
 

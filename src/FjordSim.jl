@@ -24,6 +24,7 @@ export
     # built-in sources
     EvenGrid,
     DybdedataConfig,
+    DepthCap,
     NVELakeBathymetryConfig,
     NorKystConfig,
     NorKystHindcastConfig,
@@ -47,6 +48,7 @@ export
     RiverMouthMixing,
     RiverMouthAdvection,
     SurfaceLayerAdvection,
+    DownslopeFlow,
     SnapshotWriter,
     FieldSnapshotWriter,
     SurfaceSnapshotWriter,
@@ -98,6 +100,8 @@ include("Boundaries/BoundaryConditions/BoundaryConditions.jl")
 include("Boundaries/BoundaryData/BoundaryData.jl")
 include("AdvectionSchemes.jl")
 include("Simulations.jl")
+# Downslope extends `Simulations.attach_callback!`, so it comes after Simulations.
+include("Downslope.jl")
 include("Validation/Validation.jl")
 # CLI names every driver, so it comes last.
 include("CLI.jl")
@@ -117,6 +121,7 @@ using .BoundaryConditions
 using .BoundaryData
 using .AdvectionSchemes
 using .Simulations
+using .Downslope
 using .Validation
 using .CLI
 

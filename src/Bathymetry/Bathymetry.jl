@@ -1,6 +1,7 @@
 module Bathymetry
 
-export DybdedataConfig,
+export DepthCap,
+    DybdedataConfig,
     NVELakeBathymetryConfig,
     prepare_bathymetry
 
@@ -287,10 +288,10 @@ end
     smooth_bathymetry_gaps!(bottom_height; open_boundary_land_cells = 0, max_island_cells = 0,
                             close_narrow_passages = false, spike_ratio = 0,
                             minimum_cell_fraction = 0, max_slope_factor = 0, minimum_depth = 0,
-                            preserve_sills = false, raise_boundary_pockets = false,
-                            native = nothing, edges = nothing)
+                            preserve_sills = false, depth_caps = DepthCap[],
+                            raise_boundary_pockets = false, native = nothing, edges = nothing)
 
-Clean up the regridded bathymetry in place, in nine stages.
+Clean up the regridded bathymetry in place, in ten stages.
 
 First the topological pass every source gets: one diagonal-pair fill, then
 `BATHYMETRY_GAP_FILL_PASSES` rounds of isolated sea/land cell cleanup, following the fixed cleanup
@@ -304,8 +305,11 @@ that configures none keeps exactly the behavior above: `clear_open_boundary_land
 `remove_narrow_passages` with `close_narrow_passages`, `fill_shallow_spikes` with `spike_ratio`,
 `snap_partial_bottom_cells` with `minimum_cell_fraction`, `limit_bottom_slope` with
 `max_slope_factor` and `minimum_depth`, and `preserve_sill_depths` with `preserve_sills` and
-`native`, the source's bathymetry before regridding (see `native_bathymetry`), and
-`raise_open_boundary_pockets` with `raise_boundary_pockets` and `edges`.
+`native`, the source's bathymetry before regridding (see `native_bathymetry`), `cap_depths` with
+`depth_caps`, and `raise_open_boundary_pockets` with `raise_boundary_pockets` and `edges`.
+
+`cap_depths` runs after `preserve_sill_depths`, which would otherwise carve the channel a structure
+closes back to the soundings' depth, and before the second snap, which clears the slivers it leaves.
 
 `raise_open_boundary_pockets` runs last, after the second snap, because every depth stage can
 recreate a pocket on an open edge.
@@ -365,6 +369,7 @@ function smooth_bathymetry_gaps!(
     max_slope_factor = 0,
     minimum_depth = 0,
     preserve_sills = false,
+    depth_caps = DepthCap[],
     raise_boundary_pockets = false,
     native = nothing,
     edges = nothing,
@@ -416,11 +421,17 @@ function smooth_bathymetry_gaps!(
         h = preserve_sill_depths(h, longitude, latitude, native)
     end
 
-    # Both stages above move depths without regard for where the vertical faces are, so they put
+    if !isempty(depth_caps)
+        before = copy(h)
+        h = cap_depths(h, x_domain(bottom_height.grid), y_domain(bottom_height.grid), depth_caps)
+        @info "Raised $(count(h .!= before)) cells to the depth of a structure across them"
+    end
+
+    # The stages above move depths without regard for where the vertical faces are, so they put
     # back the very slivers the snap above removed — and the tighter the slope limit, the more of
     # them. Snapping again is what makes the stages compose instead of one undoing the other; see
     # the docstring for what it costs.
-    (max_slope_factor > 0 || preserve_sills) && minimum_cell_fraction > 0 &&
+    (max_slope_factor > 0 || preserve_sills || !isempty(depth_caps)) && minimum_cell_fraction > 0 &&
         (h = snap_and_report(h, z_faces, minimum_cell_fraction, minimum_depth, "after slope limiting and sill preservation"))
 
     if raise_boundary_pockets
@@ -784,6 +795,58 @@ function preserve_sill_depths(h, longitude, latitude, native)
     carved = carve_sills(h, deepest, basin_merges(native.h, cell))
     @info "Deepened $(count(carved .!= h)) cells to restore sill depths the regrid lost"
     return carved
+end
+
+"""
+    DepthCap(; longitude, latitude, depth)
+
+A structure the soundings miss, such as a submerged dam or jetty: every wet cell the polyline through
+the vertices `longitude[n]`, `latitude[n]` (degrees) crosses is made no deeper than `depth` (m,
+positive). Land stays land and shallower cells keep their depth.
+
+A cell the line only touches at a corner is not crossed, but a chain of corner-touching cells still
+blocks flow, since water moves between cells through their faces.
+"""
+struct DepthCap
+    longitude::Vector{Float64}
+    latitude::Vector{Float64}
+    depth::Float64
+
+    function DepthCap(longitude, latitude, depth)
+        length(longitude) == length(latitude) >= 2 ||
+            throw(ArgumentError("a DepthCap needs at least two vertices, as many longitudes as latitudes"))
+        depth > 0 || throw(ArgumentError("a DepthCap's depth is positive metres below the surface, got $depth"))
+        return new(longitude, latitude, depth)
+    end
+end
+
+DepthCap(; longitude, latitude, depth) = DepthCap(longitude, latitude, depth)
+
+"""
+    cap_depths(h, x_domain, y_domain, caps)
+
+`h` with every wet cell crossed by a `DepthCap` raised to no deeper than its depth, on a regular
+grid spanning `x_domain` × `y_domain` in degrees. Each segment is sampled at a quarter of the
+smaller cell step, so no cell it passes through is skipped.
+"""
+function cap_depths(h, x_domain, y_domain, caps)
+    Nx, Ny = size(h)
+    Δλ, Δφ = domain_step(x_domain, Nx), domain_step(y_domain, Ny)
+    capped = copy(h)
+
+    for cap in caps, n in 1:(length(cap.longitude) - 1)
+        λ₁, φ₁ = cap.longitude[n], cap.latitude[n]
+        λ₂, φ₂ = cap.longitude[n + 1], cap.latitude[n + 1]
+        samples = max(2, ceil(Int, 4 * max(abs(λ₂ - λ₁) / Δλ, abs(φ₂ - φ₁) / Δφ)) + 1)
+        for s in range(0, 1; length = samples)
+            i = floor(Int, (λ₁ + s * (λ₂ - λ₁) - x_domain[1]) / Δλ) + 1
+            j = floor(Int, (φ₁ + s * (φ₂ - φ₁) - y_domain[1]) / Δφ) + 1
+            (1 <= i <= Nx && 1 <= j <= Ny && capped[i, j] < 0) || continue
+            capped[i, j] = max(capped[i, j], -cap.depth)
+        end
+    end
+
+    return capped
 end
 
 """

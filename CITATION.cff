@@ -10,5 +10,6 @@ authors:
   - name: FjordSim.jl contributors
 abstract: >-
   Regional ocean and lake simulations, built on Oceananigans.jl and NumericalEarth.jl.
+doi: 10.5281/zenodo.24538068
 license: MIT
 repository-code: https://github.com/NIVANorge/FjordSim.jl

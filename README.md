@@ -1,5 +1,7 @@
 # FjordSim.jl
 
+[![DOI](https://zenodo.org/badge/833174195.svg)](https://doi.org/10.5281/zenodo.24538068)
+
 A package for regional ocean and lake simulations built on top of
 [Oceananigans](https://github.com/CliMA/Oceananigans.jl) and
 [NumericalEarth](https://github.com/NumericalEarth/NumericalEarth.jl).

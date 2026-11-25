@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+title: FjordSim.jl
+message: If you use this software, please cite it using these metadata.
+type: software
+authors:
+  - family-names: Iakubov
+    given-names: Shamil
+    affiliation: Norwegian Institute for Water Research (NIVA)
+    orcid: https://orcid.org/0000-0001-9488-7690
+  - name: FjordSim.jl contributors
+abstract: >-
+  Regional ocean and lake simulations, built on Oceananigans.jl and NumericalEarth.jl.
+license: MIT
+repository-code: https://github.com/NIVANorge/FjordSim.jl

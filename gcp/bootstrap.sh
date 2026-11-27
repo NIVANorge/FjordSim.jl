@@ -4,12 +4,9 @@
 # scp'd to the VM and run there. On a VM without a GPU — a preprocessing VM — the driver and
 # container toolkit stages are skipped.
 #
-# The launcher jobs create a plain `ubuntu-2204-lts` instance, so none of this is preinstalled. Every
-# stage is a no-op on the second call, and after `down`/`up`, since the boot disk survives a guest
-# poweroff.
-#
-# It does not survive a *preemption*: that deletes the instance and its disk, and bootstrap has to
-# run again from scratch.
+# `up` creates a plain `ubuntu-2204-lts` instance, so none of this is preinstalled. Every stage is a
+# no-op on the second call, and after `down`/`up` or host maintenance, since those only stop the VM and
+# its boot disk survives. After a `delete` bootstrap runs again from scratch.
 set -euo pipefail
 
 readonly IMAGE_URI="${IMAGE_URI}"

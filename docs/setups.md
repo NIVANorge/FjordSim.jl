@@ -1,7 +1,8 @@
 # Adding a simulation setup
 
 > Read this before writing a new setup or changing an existing one's parameters. The worked setups
-> are in `examples/`; the rationale behind each of their values is in their own comments.
+> are in `examples/`; the rationale behind each of their values is in a short comment beside it and
+> in the setup folder's `README.md`.
 
 ## What a setup is
 

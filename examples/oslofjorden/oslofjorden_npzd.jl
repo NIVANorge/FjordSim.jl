@@ -567,26 +567,35 @@ rivers = NPZDRivers(
     plot_file = base.river_config.plot_file,
 )
 
-# `oslofjorden.jl`'s boundary data is its Norkyst-v3 config inside `TideCorrectedBoundaries`. The
-# NPZD variables go on the Norkyst-v3 file and the tide correction on top, which leaves them alone.
-source = base.boundary_data_config.source
-boundaries = TideCorrectedBoundaries(
-    NPZDBoundaries(
-        NorKystV3BoundaryDataConfig(
-            data_root = data_root,
-            output_directory = source.output_directory,
-            output_file = source.output_file,
-            plot_file = source.plot_file,
-            open_edges = source.open_edges,
-            margin = source.margin,
-            architecture = source.architecture,
-            member = source.member,
-            parameters = source.parameters,
-            start_date = source.start_date,
-            stop_date = source.stop_date,
+# `oslofjorden.jl`'s boundary data is its Norkyst-v3 config inside `TideCorrectedBoundaries`, inside
+# `FerryBoxCorrectedBoundaries`. The NPZD variables go on the Norkyst-v3 file and both corrections
+# on top, which leave them alone. The FerryBox files are `oslofjorden.jl`'s.
+ferrybox = base.boundary_data_config
+tide = ferrybox.source
+source = tide.source
+boundaries = FerryBoxCorrectedBoundaries(
+    TideCorrectedBoundaries(
+        NPZDBoundaries(
+            NorKystV3BoundaryDataConfig(
+                data_root = data_root,
+                output_directory = source.output_directory,
+                output_file = source.output_file,
+                plot_file = source.plot_file,
+                open_edges = source.open_edges,
+                margin = source.margin,
+                architecture = source.architecture,
+                member = source.member,
+                parameters = source.parameters,
+                start_date = source.start_date,
+                stop_date = source.stop_date,
+            ),
         ),
-    ),
-    base.boundary_data_config.gains,
+        tide.gains,
+    );
+    directory = ferrybox.directory,
+    band = ferrybox.band,
+    smoothing_days = ferrybox.smoothing_days,
+    taper_depth = ferrybox.taper_depth,
 )
 
 base_run = base.run_config

@@ -18,7 +18,7 @@
 # the boundary tide to the gauge unchanged; both hold for the Oslofjord (see its setup).
 #
 # A config whose boundary data config wraps another one in a `source` field, as the Oslofjord's tide
-# correction does, is measured on that source.
+# and salinity corrections do, is measured on the innermost source.
 using FjordSim
 using FjordSim: BoundaryData, Configs
 using FjordSim.Observations: KartverketSeaLevel, fetch_observations, observation_series, observation_stations
@@ -55,8 +55,10 @@ function main(arguments)
     length(arguments) == 2 || error("usage: measure_boundary_tide.jl CONFIG GAUGE")
     config_path, name = arguments
     config = fjord_config(config_path)
-    boundary = Configs.boundary_data_config(config)
-    source = hasproperty(boundary, :source) ? boundary.source : boundary
+    source = Configs.boundary_data_config(config)
+    while hasproperty(source, :source)
+        source = source.source
+    end
 
     sources = (
         default_observations(Configs.run_config(config), Configs.bathymetry_config(config))...,

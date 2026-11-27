@@ -1,106 +1,5 @@
-# The Oslofjord setup: Geonorge Sjøkart Dybdedata bathymetry, an operational Norkyst-v3 initial
-# state (its 160 m Oslofjord nest, filled out by the 800 m reference run, with NIVA casts over the
-# sill basins), NVE rivers, hourly operational Norkyst-v3 data on the open southern edge with its
-# tide corrected to Viker, NORA3 atmosphere with snowfall, and the water held at or above freezing,
-# on a 424 x 681 x 39 grid of 160 m cells covering 10.00-11.20°E, 58.95-59.93°N. It runs from 1
-# October 2024 to 1 October 2026, two winters, and writes what `validate_simulation` scores it with:
-# tide gauges, CTD stations, current moorings, a section along the Drammensfjord and fixed-point
-# temperature sites.
-#
-# The box is the one MET Norway's ROMS model FjordOs CL covers (Røed et al., *A high-resolution,
-# curvilinear ROMS model for the Oslofjord*, METreport 4/2016, evaluated in Hjelmervik et al.,
-# *Evaluation of the FjordOs-model*, METreport 11/2017), and most station positions below come from
-# those reports. Three extensions beyond the inner fjord each bring something in:
-#
-# - *East to 11.20°E*: the Hvaler archipelago, both arms of Glomma's delta and CTD station S-9.
-#   Glomma is the largest river in the domain, and its outlet being in the *outer* fjord rather than
-#   at the head is what METreport 4/2016 §1.1 calls out as making the Oslofjord's estuarine
-#   circulation "deviate considerably from a classical textbook example".
-# - *West to 10.00°E*: Numedalslågen, 6514 km², the third largest catchment in the FjordOs river
-#   table, and CTD station LA-1.
-# - *South to 58.95°N*: LA-1, at 59.019°N, about 7.7 km inside the southern edge rather than inside
-#   its 3.2 km `BoundarySponge`.
-#
-# The surface freezes, but the water is only clamped at freezing, with no ice. On this box's 193 m
-# run of 2014-15, a mild winter, surface cells sat at freezing on 115 of 641 days, up to 5.6 % of
-# the wet surface (2014-12-27): Drammensfjorden above all, then the Glomma estuary and the inner
-# fjord off Oslo, all brackish at 1-10 g/kg. A non-drifting slab ice, run on this setup through
-# 2024-25, turned every heat deficit the advection left in a column into ice that stayed: 305 m in
-# a one-cell channel at Larvik, 0.9 m in the fast-flowing Svelvik sound.
-#
-# The physics was measured against the NIVA casts of 2014-15 on this box at 193 m, in the runs
-# archived as `oslofjorden_validation_2026-10-16` and `oslofjorden_validation_2026-10-21`: 5.06 m
-# levels between 41 and 132 m, CATKE's `minimum_tke` at 7e-7, no biharmonic tracer diffusion and
-# bounded WENO for salinity. Each is argued beside its value.
-#
-# The rivers are **discovered**, not stated: `minimum_discharge = 0.5` has `add_rivers` read NVE's
-# ELVIS river network and REGINE catchments for this domain and place every mouth at or above that
-# size, so no river coordinate appears in this file. On the smaller 10.2-11.02°E, 59.0-59.93°N box
-# that was 21 mouths carrying 99.6 % of its 1179 m³/s; this one adds Numedalslågen in the west and
-# Glomma's Singlefjord side in the east. Every discovered mouth enters whether or not it appears
-# below: an outlet discovery finds already gets a catchment-normal discharge on its own, with or
-# without an override. The `outlets` list is eight overrides, keyed by `vassdragsnr`, and their job
-# is attaching a real HydAPI gauge — `discharge_station`, sometimes `temperature_station` — to a
-# mouth discovery already found, so its inflow follows an observed series instead of its catchment
-# normal; splitting a discharge with `discharge_fraction` is the exception Glomma's two mouths need,
-# not what the list is for. Every other discovered mouth runs at its catchment's constant normal,
-# carrying the temperature of the water it enters. Only the gauge half needs a credential, an NVE
-# HydAPI key in `NVE_API_KEY` (free at https://hydapi.nve.no/Users); the map services are open, and
-# nothing else here needs one either.
-#
-# The river config gets the same `data_root` as the rest of the setup, so the cached NVE responses
-# land alongside it rather than being shared from elsewhere. It writes `rivers_nve.nc`, which
-# `build_simulation` reads as a volume inflow.
-#
-# It also names a model, its boundary conditions and a `run_config`, so `run_simulation`
-# works once the preparation steps have run. Nothing about the run has a default, so every knob is
-# stated here and nowhere else — split by what dispatches on it: `CoupledHydrostaticModel` is what
-# the model is, the `boundary_condition_configs` tuple is what bounds it, the `writers` tuple is what
-# it writes, and `AdaptiveTimeStep` is how its clock advances. Results go to `~/FjordSim_results/oslofjorden/`,
-# separate from the input data root, and each writer's file carries the launch tag so runs do not
-# overwrite each other.
-#
-# Every dataset states its own `start_date` and `stop_date`, the period it is downloaded and prepared
-# for, and the run states its own; here they are all `start_date` and `stop_date` below. A run inside
-# the datasets' period needs nothing re-prepared. Changing a dataset's period means re-running its
-# download and prepare steps (`add_rivers` for the rivers), and the initial state is the hourly
-# instant of its config's `start_date`, which `FromInitialState` requires to be the run's.
-#
-# # What it can and cannot be expected to show
-#
-# At 160 m this grid is finer than NorKyst-800 everywhere and much finer in the vertical, but about
-# twice as coarse as FjordOs CL in exactly the places FjordOs was built for. The Drøbak Sound is
-# 1-2 km wide, six to twelve cells here against fifteen to twenty-five there; the Drøbak Jetty's two
-# openings are ~6 m deep and tens of metres wide and are not representable at all; Svelvik is 180 m
-# wide and 11 m deep, one cell. So the sill-controlled tidal jets METreport 4/2016 features, and the
-# Drammensfjord exchange through Svelvik, are out of reach on this grid whatever is tuned.
-#
-# # Scoring it
-#
-# `validate_simulation` scores the run's station files against the observations and writes tables
-# and figures to `<results_root>/validation/`. **Kartverket water level** it fetches itself, at the
-# stations the `:tidegauge` writer records `η` at. The NIVA and IMR casts come from Vannmiljø
-# (`observation_configs` below), fetched by `download_observations`; each station takes the
-# Vannmiljø location nearest it, under the name given below, which is how the run's station files
-# are matched to it. The current moorings and the temperature sites are held by their owners, so
-# each wants a `CsvObservations` over an export, or a source of its own — see
-# `docs/adding-a-source.md`.
-#
-# # Preparing and running it
-#
-#   julia --project -m FjordSim prepare_bathymetry     --config examples/oslofjorden/oslofjorden.jl
-#   julia --project -m FjordSim download_observations  --config examples/oslofjorden/oslofjorden.jl   # needs VANNMILJO_API_KEY
-#   julia --project -m FjordSim download_initial_state --config examples/oslofjorden/oslofjorden.jl   # needs VANNMILJO_API_KEY
-#   julia --project -m FjordSim prepare_initial_state  --config examples/oslofjorden/oslofjorden.jl
-#   julia --project -m FjordSim add_rivers             --config examples/oslofjorden/oslofjorden.jl
-#   julia --project -m FjordSim download_boundary_data --config examples/oslofjorden/oslofjorden.jl
-#   julia --project scripts/measure_boundary_tide.jl examples/oslofjorden/oslofjorden.jl Viker
-#       # paste its gains into `VIKER_TIDE_GAINS`
-#   julia --project -m FjordSim prepare_boundary_data  --config examples/oslofjorden/oslofjorden.jl
-#   julia --project -m FjordSim download_atmosphere    --config examples/oslofjorden/oslofjorden.jl
-#   julia --project -m FjordSim prepare_atmosphere     --config examples/oslofjorden/oslofjorden.jl
-#   julia --project -m FjordSim run_simulation         --config examples/oslofjorden/oslofjorden.jl   # needs a GPU
-#   julia --project -m FjordSim validate_simulation    --config examples/oslofjorden/oslofjorden.jl
+# The Oslofjord setup, 160 m, October 2024 to October 2026. What it covers, how to prepare and run
+# it, and why its values are what they are: README.md beside this file.
 
 using FjordSim
 using Oceananigans:
@@ -111,7 +10,7 @@ using Oceananigans:
     WENOVectorInvariant
 using Oceananigans.TurbulenceClosures: HorizontalScalarBiharmonicDiffusivity
 using Oceananigans.Units: day, days, hour, hours, minutes, second
-using Dates: DateTime, Dates, Day, Month, Second
+using Dates: Date, DateTime, Dates, Day, Hour, Month, Second
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using FjordSim: BoundaryData, Grids, InitialState, Plotting
 using FjordSim.Configs: AbstractBoundaryDataConfig, AbstractInitialStateConfig,
@@ -122,32 +21,21 @@ using FjordSim.Validation: TIDAL_CONSTITUENTS, ValidationConfig
 using LinearAlgebra: qr
 using NCDatasets: NCDataset
 using NumericalEarth: FreezingLimitedOceanTemperature
+using Printf: @sprintf
+using Statistics: mean, median
 
-# --- Station positions ------------------------------------------------------------------------
+# --- Stations ---------------------------------------------------------------------------------
 #
-# Grouped by the observation programme they come from. Provenance matters here and is recorded per
-# group: a coordinate that came from a published table is exact, and one that came from a description
-# in prose is not. `StationWriter` logs how far each station moved when it was snapped to the grid,
-# which is the number that says whether an approximate position mattered.
+# Each group states where its positions come from: a published table is exact, prose or a map is not.
 
-# The three permanent Norwegian Mapping Authority gauges in the fjord, from Kartverket's own station
-# register (`vannstand.kartverket.no/tideapi.php?tide_request=stationlist&type=perm`). Exact.
-# METreport 11/2017 Table 3 compares simulated and observed tidal constituents at all three, and
-# Viker is the station FjordOs' own tidal forcing was calibrated against.
+# Kartverket's permanent tide gauges, from its station register. Exact.
 const OSLOFJORD_TIDE_GAUGES = [
     Station(name = "Viker",      longitude = 10.949769, latitude = 59.036046),
     Station(name = "Oscarsborg", longitude = 10.604861, latitude = 59.678073),
     Station(name = "Oslo",       longitude = 10.734510, latitude = 59.908559),
 ]
 
-# The six Statnett/NIVA/UiO ADCP moorings deployed mid-September to late November 2014, from
-# METreport 11/2017 Table 1, kept because a station writer costs next to nothing and a station with
-# no observation in the window is a blank row in the scores. Exact, to six decimals. Km1/Kn2 form
-# the Filtvedt-Brenntangen transect at the entrance to the Drøbak Sound; Ri1/Rl1/Rm1/Rn1 form the
-# Småskjær-Evje transect across the fjord further south. The depths in the table are Statnett's
-# terrain model, not the model's. METreport 11/2017 Fig. 11 notes that "the true position of
-# Station Km1 is a little to the west" of where the model results were extracted, so its snapped
-# offset is worth reading.
+# The ADCP moorings of September-November 2014, METreport 11/2017 Table 1, with its depths. Exact.
 const OSLOFJORD_MOORINGS = [
     Station(name = "Km1", longitude = 10.627372, latitude = 59.582064),  # Filtvedt,       153 m
     Station(name = "Kn2", longitude = 10.646087, latitude = 59.581803),  # Brenntangen,     54 m
@@ -155,22 +43,12 @@ const OSLOFJORD_MOORINGS = [
     Station(name = "Rl1", longitude = 10.581023, latitude = 59.343452),  # Laksetrappa,     75 m
     Station(name = "Rm1", longitude = 10.626822, latitude = 59.352375),  # Botnegrunnen,    96 m
     Station(name = "Rn1", longitude = 10.653576, latitude = 59.363182),  # Evje,            64 m
-    # The ExxonMobil bottom-mounted ADCP at the Slagen refinery, measuring at 2.5 m and 10 m since
-    # 1997 and the longest current record in the fjord. METreport 11/2017 places it only in prose —
-    # "northwest of Turning Dolphin at the Slagen Refinery" (§3.2.2, Fig. 3) — and tabulates no
-    # position, so this one is APPROXIMATE and must be replaced with the instrument metadata when
-    # the record itself is obtained. It is the comparison most likely to succeed, being in open
-    # water rather than in a sill or a narrow sound.
+    # ExxonMobil's ADCP at the Slagen refinery, from the report's prose. APPROXIMATE.
     Station(name = "Slagen", longitude = 10.517, latitude = 59.383),
 ]
 
-# NIVA CTD stations of the Ytre Oslofjord monitoring programme, from METreport 11/2017 Table 2.
-# Exact, to four decimals. OF-1, OF-5 and D-3 are the three the report draws Hovmøller diagrams
-# for; OF-1, LA-1 and D-2 the three it overlays profiles at. The other eight agree with AquaMonitor
-# (`observations/niva_ctd/stations.csv`) to 200 m. OF-1 does not: AquaMonitor puts it 5 km west, at
-# 10.6652°E 59.036°N, but Kartverket's soundings there are 76 m within 500 m, and every OF-1 cast
-# reaches 440 m. The table's position has a 462 m sounding 228 m away, so it is kept. The table's
-# SF-1 is left out: it has no casts in 2024–2026, and SF-3 below is Sandefjord's station.
+# NIVA's Ytre Oslofjord stations, METreport 11/2017 Table 2. Exact. AquaMonitor puts OF-1 5 km west,
+# in 76 m of water, where its casts reach 440 m; the table's position is 462 m deep.
 const OSLOFJORD_CTD_STATIONS = [
     Station(name = "D-2",  longitude = 10.4210, latitude = 59.6280),  # Inner Drammensfjord
     Station(name = "D-3",  longitude = 10.3140, latitude = 59.7060),  # Solumstrand
@@ -183,8 +61,7 @@ const OSLOFJORD_CTD_STATIONS = [
     Station(name = "Ø-1",  longitude = 10.8340, latitude = 59.1370),  # Leira, Vesterelva
 ]
 
-# The programme's other stations with casts in 2024–2026, not in METreport 11/2017, at AquaMonitor's
-# positions (`observations/niva_ctd_2024-2025/stations.csv`). Exact.
+# The programme's other stations with casts in 2024-2026, at AquaMonitor's positions. Exact.
 const OSLOFJORD_PROGRAMME_STATIONS = [
     Station(name = "BO-1",  longitude = 10.536233, latitude = 59.189933),  # Bolærne,          cast to 58 m
     Station(name = "I-1",   longitude = 11.001966, latitude = 59.109432),  # Ramsø, Østerelva, cast to 51 m
@@ -195,12 +72,7 @@ const OSLOFJORD_PROGRAMME_STATIONS = [
     Station(name = "VAL-1", longitude = 10.525400, latitude = 59.270100),  # Vallø,            cast to 129 m
 ]
 
-# Stations of the Inner Oslofjord, monitored for hydrography and oxygen by NIVA on behalf of Fagrådet
-# since 1973. Not in either METreport; the positions are the programme's own, from AquaMonitor
-# (`observations/niva_ctd_2024-2025/stations.csv`). Exact. Dk1 and Ep1 are the two deep basins:
-# deep-water renewal in them is what this domain is judged on, and neither report covers it — this
-# is the part of the validation that goes beyond reproducing FjordOs. Im2 is the Drøbak Sound south
-# of the sill, Fl1 Vestfjorden, Gk1 the sill's inner side, Bl4 and Cj1 the shallow western bays.
+# NIVA's Inner Oslofjord stations, at AquaMonitor's positions. Exact.
 const INNER_OSLOFJORD_STATIONS = [
     Station(name = "Dk1", longitude = 10.569384, latitude = 59.814999),  # Steilene,         cast to 99 m
     Station(name = "Ep1", longitude = 10.723783, latitude = 59.786301),  # Bunnefjorden,     cast to 149 m
@@ -211,15 +83,8 @@ const INNER_OSLOFJORD_STATIONS = [
     Station(name = "Cj1", longitude = 10.506983, latitude = 59.840483),  # Holmenfjorden,    cast to 56 m
 ]
 
-# A section along the Drammensfjord's deepest water, from the Drammenselva mouth (the river's own
-# cell in `rivers_nve.nc`) through the basin, over the Svelvik sill and down Sandebukta to the head of
-# Breiangen. Not an observation programme: it is there to show the basin's vertical mixing and its
-# renewal over the sill, and the deep freshening the 2014-15 runs at 7e-6 showed. The
-# positions are cell centres of the deepest path through the 193 m grid's 39-level `bathymetry.nc`,
-# found by Dijkstra over wet cells with a step cost of distance / depth², every second cell of its
-# 150 plus the last and the sill's shallowest. On the 160 m grid each snaps to the nearest cell, and
-# a change to the bathymetry moves the path. The comments give distance along the path and the 193 m model's
-# depth.
+# The Drammensfjord's deepest path, from the Drammenselva mouth over the Svelvik sill to Breiangen
+# (README.md): distance along it and depth on the 193 m grid it was found on.
 const DRAMMENSFJORD_SECTION = [
     Station(name = "DS-00", longitude = 10.21026, latitude = 59.73954),  #  0.00 km,   5.0 m
     Station(name = "DS-01", longitude = 10.21709, latitude = 59.73597),  #  0.55 km,   4.3 m
@@ -300,10 +165,8 @@ const DRAMMENSFJORD_SECTION = [
     Station(name = "DS-76", longitude = 10.40513, latitude = 59.51422),  # 33.89 km, 153.4 m
 ]
 
-# IMR's monthly casts, at Vannmiljø's positions: ØkoKyst and the Tisler acidification stations.
-# Exact. Named as IMR names them. Torbjørnskjær and Breiangen vest are OF-1 and OF-5, Bastøy and Missingene OF-4 and OF-2.
-# Færder lies 12 rows from the southern edge, inside the boundary sponge; Missingene's cell is 110 m
-# deep against casts to 350 m, and Tisler-5's 31 m against 120 m, with 120 m water a cell away.
+# IMR's ØkoKyst and Tisler stations, at Vannmiljø's positions. Exact. Torbjørnskjær, Breiangen vest,
+# Bastøy and Missingene are NIVA's OF-1, OF-5, OF-4 and OF-2.
 const IMR_STATIONS = [
     Station(name = "Bastøy",         longitude = 10.590569, latitude = 59.358670),  # cast to 280 m
     Station(name = "Breiangen vest", longitude = 10.458333, latitude = 59.486668),  # cast to 190 m
@@ -314,17 +177,11 @@ const IMR_STATIONS = [
     Station(name = "Torbjørnskjær",  longitude = 10.760812, latitude = 59.040700),  # cast to 440 m
 ]
 
-# The NIVA stations the casts are scored at, and every station the hydrography writer profiles.
 const NIVA_CTD_STATIONS =
     vcat(OSLOFJORD_CTD_STATIONS, OSLOFJORD_PROGRAMME_STATIONS, INNER_OSLOFJORD_STATIONS)
 const OSLOFJORD_HYDROGRAPHY_STATIONS = vcat(NIVA_CTD_STATIONS, IMR_STATIONS)
 
-# Fixed-point temperature sites, METreport 11/2017 §3.4 and Figs. 3-4. All APPROXIMATE: the Scanmar
-# mooring is placed only as "three kilometres south of Åsgårdstrand" and the three beaches only on a
-# map. The beaches measure 40 cm below the surface in a few metres of water, so they snap to the
-# model's top cell in whatever column the coastline gives them, and the report already cautions that
-# "the model is therefore not expected to capture such detailed effects" — they are a sanity check on
-# the surface heat budget, not a skill target.
+# Fixed-point temperature sites, METreport 11/2017 §3.4, placed from its prose and maps. APPROXIMATE.
 const OSLOFJORD_TEMPERATURE_STATIONS = [
     Station(name = "Åsgårdstrand", longitude = 10.470, latitude = 59.322),  # Scanmar, 1 m
     Station(name = "Sjøstrand",    longitude = 10.471, latitude = 59.811),
@@ -333,11 +190,7 @@ const OSLOFJORD_TEMPERATURE_STATIONS = [
 ]
 
 # The NIVA stations whose casts start the water below the Drøbak and Svelvik sills
-# (`CastCorrectedInitialState`), at AquaMonitor's positions
-# (`observations/niva_ctd_2024-2025/stations.csv`).
-# Exact. Every one has a cast in the 14 days before `start_date` and lies in that water, except Im2,
-# which lies in the Drøbak Sound's pocket south of the sill, closed off from the open edge below
-# 104 m.
+# (`CastCorrectedInitialState`), at AquaMonitor's positions. Exact.
 const OSLOFJORD_BASIN_CAST_STATIONS = [
     Station(name = "Im2", longitude = 10.628217, latitude = 59.622032),  # Elle, Drøbak Sound
     Station(name = "D-2", longitude = 10.420983, latitude = 59.627766),  # Drammensfjord
@@ -358,25 +211,8 @@ const OSLOFJORD_BASIN_CAST_STATIONS = [
 
 # --- The boundary tide ------------------------------------------------------------------------
 #
-# Norkyst-v3's hindcast sea level along the southern boundary has the wrong tide, and FjordSim
-# carries it straight in. Fitted from 2014-05-01 to 2015-12-31, its M2 is 17.7 cm and its S2 1.4 cm,
-# against 12.3 cm and 2.9 cm observed at Viker. The model's own tide at Viker is the boundary's (M2
-# 17.3 cm), and its amplification from Viker to Oscarsborg is right (M2 x1.17 against x1.16
-# observed). The model/observed amplitude ratio is the same at all three gauges, and the boundary
-# tide is nearly uniform along the 60 km edge (M2 17.2-17.8 cm, phase within 1.3°). So one
-# correction per constituent, applied along the whole edge, fixes the input. FjordOs did the same:
-# METreport 4/2016 §4.3 forced its boundary with a tide corrected to Viker.
-#
-# `TideCorrectedBoundaries` does it after the regrid, inside `prepare_boundary_data`. It holds the
-# Norkyst-v3 boundary config and forwards everything else to it. Specific to this dataset and this
-# box, which is why it lives here and not in `src/`.
-#
-# The gains are the operational Norkyst-v3's, which has its own tide. They are measured at the
-# boundary rather than at the model's Viker, as the hindcast's were, so they need no run: on the
-# hindcast run the model's tide at Viker was the boundary's (M2 17.3 cm against 17.2-17.8 cm along
-# the edge). `scripts/measure_boundary_tide.jl` fits the downloaded boundary sea level and Viker's
-# record over the same window and prints them; `prepare_boundary_data` refuses to run until they
-# are stated.
+# Norkyst-v3's boundary tide is too strong and nearly uniform along the edge, so one gain per
+# constituent corrects the whole edge (README.md).
 
 """
     TidalGain(constituent, amplitude_factor, phase_shift)
@@ -391,13 +227,8 @@ struct TidalGain
     phase_shift::Float64
 end
 
-# Observed at Viker over the operational Norkyst-v3's boundary, each phase shift the observed phase
-# minus the boundary's, measured with `scripts/measure_boundary_tide.jl` over 2024-10-01 to
-# 2026-09-30. For comparison, the hindcast's over 2014-05-01 to 2015-12-31,
-# measured against the model at Viker, were M2 x0.713 +2.7°, S2 x2.071 -34.0°, N2 x0.903 -4.1°,
-# K2 x1.254 +32.7°, O1 x1.552 +7.7°, K1 x0.353 +17.8°. On that run Oscarsborg and Oslo gave the same
-# gains within 0.02 for M2 and 0.15 for S2, and their M2 phase was 11° ahead against Viker's 3°, a
-# fault of the interior that a boundary correction cannot reach.
+# Viker's tide over the boundary's, from `scripts/measure_boundary_tide.jl` over 2024-10-01 to
+# 2026-09-30.
 const VIKER_TIDE_GAINS = [
     TidalGain("M2", 0.704, 3.3),     # 17.41 cm at the boundary, 12.26 observed, ± 0.08
     TidalGain("S2", 1.377, -27.6),   # 1.72 cm at the boundary, 2.37 observed, ± 0.08
@@ -542,25 +373,214 @@ function correct_boundary_tide!(path, edges, gains)
     return path
 end
 
-# --- The basin water ---------------------------------------------------------------------------
+# --- The boundary salinity --------------------------------------------------------------------
 #
-# The 160 m Norkyst-v3 nest is 76-104 m deep within 1.5 km of D-2, Dk1, Fl1 and Ep1, whose casts
-# reach 98-166 m, and its z-levels end at 65-100 m there. The regrid carries each basin's deepest
-# covered water down below that (`Regridding.TargetFill`), but that water is itself wrong. Regridded
-# for 2024-10-01, Bunnefjorden (Ep1) has 33.90 g/kg and 6.18 °C at 120 m against 32.91 and 8.45 in
-# the cast of 2024-09-26, and 33.47 g/kg and 6.20 °C at 60 m against 32.55 and 8.12; the Drammensfjord
-# (D-2) 33.53 g/kg and 7.51 °C at 100 m against 31.65 and 8.09 on 2024-09-20. These basins are
-# renewed only by occasional inflows: started from Norkyst's state, Ep1 at 120 m freshened by 0.2 g/kg
-# from October 2024 to January 2025 (run of stamp 20261107T210205). `CastCorrectedInitialState` gives
-# the columns over the basins the NIVA casts nearest `start_date` instead, those of 2024-09-20 and
-# -26, which the casts of the following weeks match within 0.1 g/kg and 0.2 °C below 50 m. The outer
-# fjord's trapped pockets (S-9, MO-2, SF-3) keep Norkyst's water, which the casts there match within
-# 0.1 g/kg below 50 m.
+# Norkyst-v3 800 m lacks the brackish surface layer at the mouth, so the edge's salinity is scaled
+# to NIVA's FerryBox where the ships cross it (README.md).
+
+"""
+    FerryBoxCorrectedBoundaries(source; directory, band, smoothing_days, taper_depth)
+
+`source`'s open-boundary data with the southern edge's salinity corrected to the FerryBox files in
+`directory`.
+
+`prepare_boundary_data` writes the file exactly as `source` would, then corrects it in place
+(`correct_boundary_salinity!`). Every other hook is `source`'s: where the file is, which edges are
+open, the download, and how the run reads the file.
+"""
+struct FerryBoxCorrectedBoundaries{C <: AbstractBoundaryDataConfig} <: AbstractBoundaryDataConfig
+    source::C
+    directory::String
+    band::Float64
+    smoothing_days::Int
+    taper_depth::Float64
+end
+
+FerryBoxCorrectedBoundaries(source; directory, band, smoothing_days, taper_depth) =
+    FerryBoxCorrectedBoundaries(source, String(directory), Float64(band), Int(smoothing_days),
+                                Float64(taper_depth))
+
+BoundaryData.boundary_data_path(config::FerryBoxCorrectedBoundaries) =
+    BoundaryData.boundary_data_path(config.source)
+BoundaryData.boundary_data_directory(config::FerryBoxCorrectedBoundaries) =
+    BoundaryData.boundary_data_directory(config.source)
+Plotting.plot_path(config::FerryBoxCorrectedBoundaries) = Plotting.plot_path(config.source)
+Grids.open_edges(config::FerryBoxCorrectedBoundaries) = Grids.open_edges(config.source)
+BoundaryData.boundary_variable_names(config::FerryBoxCorrectedBoundaries) =
+    BoundaryData.boundary_variable_names(config.source)
+BoundaryData.fetch_boundary_data(target_grid, config::FerryBoxCorrectedBoundaries) =
+    BoundaryData.fetch_boundary_data(target_grid, config.source)
+
+function BoundaryData.regrid_boundary_data(target_grid, config::FerryBoxCorrectedBoundaries)
+    records = ferrybox_minutes(config.directory)
+    result = BoundaryData.regrid_boundary_data(target_grid, config.source)
+    correct_boundary_salinity!(result.output_file, records, config)
+    return result
+end
+
+"""
+    ferrybox_minutes(directory)
+
+Every minute with a salinity in the FerryBox files `<ship>_<yyyymm>.csv` in `directory`, as
+`(ship, time, longitude, latitude, salinity)`. Each file's columns are `time` (UTC), `lon`, `lat`,
+`temperature` and `salinity`.
+"""
+function ferrybox_minutes(directory)
+    pattern = r"^[A-Za-z0-9]+_\d{6}\.csv$"
+    files = isdir(directory) ? filter(f -> occursin(pattern, f), readdir(directory)) : String[]
+    isempty(files) && error(
+        "No FerryBox files `<ship>_<yyyymm>.csv` in $directory. Put NIVA's FerryBox minutes there " *
+        "(see examples/oslofjorden/README.md).",
+    )
+    records = @NamedTuple{
+        ship::String, time::DateTime, longitude::Float64, latitude::Float64, salinity::Float64,
+    }[]
+    for file in files
+        ship = first(split(file, "_"))
+        for line in Iterators.drop(eachline(joinpath(directory, file)), 1)
+            timestamp, longitude, latitude, _, salinity = split(line, ",")
+            isempty(salinity) && continue
+            push!(records, (ship = ship, time = DateTime(timestamp), longitude = parse(Float64, longitude),
+                            latitude = parse(Float64, latitude), salinity = parse(Float64, salinity)))
+        end
+    end
+    return records
+end
+
+"""
+    piecewise_linear(x, xs, ys)
+
+The piecewise-linear interpolant through `(xs, ys)` at `x`, held at the end values outside `xs`.
+"""
+function piecewise_linear(x, xs, ys)
+    x <= first(xs) && return first(ys)
+    x >= last(xs) && return last(ys)
+    j = searchsortedlast(xs, x)
+    w = (x - xs[j]) / (xs[j + 1] - xs[j])
+    return (1 - w) * ys[j] + w * ys[j + 1]
+end
+
+"""
+    daily_ratio(salinity, longitudes, edge_latitude, times, records, config)
+
+Each ship's daily ratio of the FerryBox's salinity to the boundary's `salinity` (longitude × time,
+at the ships' depth), over its minutes within `config.band` degrees north of the edge, and where it
+crosses the edge (the median longitude of those minutes). The daily ratios are running means over
+`config.smoothing_days`, with what gaps remain filled by linear interpolation. Outside a ship's
+record its series is that of the ship with the longest record plus their mean difference.
+"""
+function daily_ratio(salinity, longitudes, edge_latitude, times, records, config)
+    days = Date(first(times)):Day(1):Date(last(times))
+    series = Dict{String, Vector{Float64}}()
+    crossing = Dict{String, Float64}()
+    for ship in unique(m.ship for m in records)
+        boundary_sums, ferry_sums = zeros(length(days)), zeros(length(days))
+        counts, crossed = zeros(Int, length(days)), Float64[]
+        for m in records
+            (m.ship == ship && edge_latitude <= m.latitude < edge_latitude + config.band &&
+             first(longitudes) <= m.longitude <= last(longitudes) &&
+             first(times) <= m.time <= last(times)) || continue
+            n = searchsortedfirst(times, m.time)
+            n = n > 1 && times[n] - m.time > m.time - times[n - 1] ? n - 1 : n
+            boundary = salinity[argmin(abs.(longitudes .- m.longitude)), n]
+            isnan(boundary) && continue
+            d = Dates.value(Date(m.time) - first(days)) + 1
+            boundary_sums[d] += boundary
+            ferry_sums[d] += m.salinity
+            counts[d] += 1
+            push!(crossed, m.longitude)
+        end
+        isempty(crossed) && continue
+        half = config.smoothing_days ÷ 2
+        smoothed = map(eachindex(days)) do d
+            window = max(1, d - half):min(length(days), d + half)
+            known = filter(e -> counts[e] > 0, window)
+            isempty(known) ? NaN : mean(ferry_sums[e] / boundary_sums[e] for e in known)
+        end
+        known = findall(isfinite, smoothed)
+        inside = first(known):last(known)
+        series[ship] = [k in inside ? piecewise_linear(k, known, smoothed[known]) : NaN for k in eachindex(days)]
+        crossing[ship] = median(crossed)
+    end
+    isempty(series) && error("No FerryBox minute lies within $(config.band)° of the southern edge.")
+
+    reference = argmax(ship -> count(isfinite, series[ship]), collect(keys(series)))
+    series[reference] = [piecewise_linear(k, findall(isfinite, series[reference]),
+                                     filter(isfinite, series[reference])) for k in eachindex(days)]
+    for (ship, values) in series
+        ship == reference && continue
+        known = isfinite.(values)
+        offset = mean(values[known] .- series[reference][known])
+        values[.!known] .= series[reference][.!known] .+ offset
+    end
+    return days, series, crossing
+end
+
+"""
+    correct_boundary_salinity!(path, records, config)
+
+Correct the southern edge's salinity in the prepared boundary file at `path` to the FerryBox
+`records`, in place.
+
+At each hour the ratio is each ship's `daily_ratio`, linear in time between the days' noons and
+along the edge between the ships' crossings, held beyond the outermost ones. It scales the salinity
+in full at the surface, tapering linearly to no change at `config.taper_depth`: a ratio, as fresh
+water the source lacks, since subtracting the difference took the source's fresh pulses below zero.
+Dry nodes, all missing in the file, stay missing. A file this has already corrected is refused
+rather than corrected twice.
+"""
+function correct_boundary_salinity!(path, records, config)
+    NCDataset(path, "a") do ds
+        haskey(ds.attrib, "salinity_correction") && error(
+            "$path already has its boundary salinity corrected ($(ds.attrib["salinity_correction"])). " *
+            "Re-run `prepare_boundary_data` to start from the uncorrected data.",
+        )
+        longitudes = ds["Nx"][:]
+        depths = -ds["Nz"][:]
+        times = ds["time"][:]
+        # The ships' intake is at about 4 m.
+        ferry_level = argmin(abs.(depths .- 4))
+        salinity = Float64.(coalesce.(ds["south_S"][:, ferry_level, :], NaN))
+        days, series, crossing = daily_ratio(salinity, longitudes, ds["Ny"][1], times, records, config)
+
+        ships = sort(collect(keys(series)), by = ship -> crossing[ship])
+        crossings = [crossing[ship] for ship in ships]
+        first_noon = DateTime(first(days)) + Hour(12)
+        weights = max.(1 .- depths ./ config.taper_depth, 0)
+        corrected_levels = findall(>(0), weights)
+        lowest = Inf
+        for chunk in Iterators.partition(eachindex(times), 1000)
+            values = ds["south_S"][:, :, chunk]
+            for (c, n) in enumerate(chunk)
+                day = Dates.value(times[n] - first_noon) / 86_400_000 + 1
+                at_ships = [piecewise_linear(day, eachindex(days), series[ship]) for ship in ships]
+                for i in axes(values, 1)
+                    ratio = piecewise_linear(longitudes[i], crossings, at_ships)
+                    for k in corrected_levels
+                        ismissing(values[i, k, c]) && continue
+                        values[i, k, c] *= 1 - weights[k] * (1 - ratio)
+                        lowest = min(lowest, values[i, k, c])
+                    end
+                end
+            end
+            ds["south_S"][:, :, chunk] = values
+        end
+
+        for ship in ships
+            @info @sprintf("FerryBox %s crosses the edge at %.2f°E: its salinity over the boundary's %.3f",
+                           ship, crossing[ship], mean(series[ship]))
+        end
+        @info "Corrected south_S down to $(config.taper_depth) m; its lowest corrected value is $lowest g/kg"
+        ds.attrib["salinity_correction"] =
+            "FerryBox " * join(ships, ", ") * ", tapering to none at $(config.taper_depth) m"
+    end
+    return path
+end
+
+# --- The basin water --------------------------------------------------------------------------
 #
-# The Drøbak Sound south of the sill (Im2) is closed off below 104 m, under open water. Norkyst does
-# not reach it, and `TargetFill` fills it from above: 9.9 °C at 150 m against 7.1 in the cast of
-# 2024-09-26. Its cast replaces that water alone. Over whole columns it would also replace the
-# surface of the open fjord above the pocket, 1825 columns, leaving 12.8 g/kg beside Norkyst's 24.5.
+# Norkyst-v3's water in the sill basins is wrong, so `CastCorrectedInitialState` replaces it with the
+# NIVA casts nearest the start (README.md).
 
 """
     CastCorrectedInitialState(source, casts, maximum_cast_offset, deep_only)
@@ -685,10 +705,9 @@ within a cell of its position. A station in `config.deep_only` replaces only the
 columns and has no fringe. Other columns keep `config.source`'s values. A file this has already
 corrected is refused.
 
-Whole columns, because Norkyst's water above the sills is 2-3 g/kg saltier than the casts: kept above
-the cast water it lay up to 6.5 kg/m³ denser than the water below it, and blended linearly into it,
-it gave twice as many inversions. The fringe, because the coastal columns otherwise kept Norkyst's
-surface water, 6.9 g/kg (median) saltier than the corrected columns beside them.
+Whole columns, because Norkyst's water above the sills is 2-3 g/kg saltier than the casts and lay up
+to 6.5 kg/m³ denser than the cast water below it. The fringe, because the coastal columns otherwise
+kept Norkyst's surface water, 6.9 g/kg (median) saltier than the corrected columns beside them.
 """
 function correct_basin_water!(path, edges, config::CastCorrectedInitialState, date; fringe_cells = 8)
     isempty(something(edges, Symbol[])) && error("Telling trapped water from open needs an open edge.")
@@ -785,86 +804,35 @@ end
 
 data_root = fjord_data_root("oslofjorden")
 start_date = DateTime(2024, 10, 1)
-# Two years, so each winter falls whole inside the run: 730 days, as neither 2025 nor 2026 is a leap
-# year. Every dataset below is downloaded and prepared for the same period.
+# Two years, two whole winters.
 stop_date = DateTime(2026, 10, 1)
-# The full-field writers start a new file on the 1st of each month, so a finished month can leave
-# the VM.
+# The full-field writers start a new file each month, so a finished month can leave the VM.
 monthly_splits = [(start_date + Month(month) - start_date) / Second(1) for month in 1:23]
-# Stated here and passed to the grid and to every model component below, rather than set on
-# `Oceananigans.defaults.FloatType` — see `EvenGrid`'s `float_type`.
 FT = Float32
-# A geometric stretch, ratio 1.25 capped at 33.5 m, from a 1 m surface cell to a deepest face at
-# -467 m, with 41-132 m split into eighteen 5.06 m levels. The deepest sounding is 470.0 m, in the
-# Hvalerdjupet, which METreport 4/2016 §1.1 describes as "a 400 m deep basin extending northeastward
-# from the Skagerrak". The rule above would add a layer to -500.5 m, and measured on this grid, that
-# layer held no water: only 13 columns of the trench reach below -467 m, by at most 2.4 m, and
-# `PartialCellBottom` clips such slivers of a 33.5 m layer, so the model is the same either way. `limit_bottom_slope` only ever makes the deepest column shallower;
-# a change to the gridding or the box can move it, so re-check the deepest cell in `bathymetry.nc`
-# after one.
-#
-# Both errors cost something. Too shallow and the basin is silently truncated —
-# `snap_partial_bottom_cells` skips a sounding below the deepest face and `PartialCellBottom` clips
-# it, so nothing complains. Too deep and `grid.Lz` feeds `sqrt(g·Lz)` in `SplitExplicitFreeSurface`,
-# buying a shorter barotropic substep for water that is not there.
-#
-# The stretch alone has five 11-27 m levels between 41 and 132 m, and on them WENO's implicit
-# vertical diffusion, ~|w|Δz with the basins' 1-4e-4 m/s grid-scale w, mixed the sill basins at
-# 5-10x CATKE's κ. Over the first 60 days on this box at 193 m the split cut the
-# Drammensfjord salt-budget diffusivity below 41-105 m from 4.5e-5-3.8e-4 to 1.7e-5-7.0e-5 m²/s, and
-# the Inner Oslofjord's 1.4-5x below 41 m, at no cost in wet columns.
+# A geometric stretch from a 1 m surface cell to the deepest sounding, with 41-132 m in 5.06 m levels
+# against WENO's vertical diffusion in the sill basins (README.md).
 z_faces = vcat(
     [-467.0, -433.5, -400.0, -366.5, -333.0, -299.5, -266.0, -232.5, -199.0, -165.5],
     range(-132.0, -41.0; length = 19),
     [-32.0, -25.0, -19.0, -14.5, -10.8, -7.9, -5.5, -3.7, -2.2, -1.0, 0.0],
 )
 
-# FjordConfig holds every component side by side. Each step (prepare_forcing(), add_rivers(),
-# run_simulation(), ...) picks out the components it reads and hands them to a function that
-# dispatches on them, which calls the finer-grained hooks the configs below overload.
 FjordConfig(
-    # EvenGrid overloads the two grid hooks — domain_grid(config, architecture), which every
-    # prepare_* pipeline calls, and simulation_grid(config, bathymetry_file, architecture),
-    # which build_simulation reads the model grid through — both dispatching on this config's
-    # type. Implemented here by wrapping LatitudeLongitudeGrid / ImmersedBoundaryGrid.
     grid_config = EvenGrid(
-        # 160 m both ways: 1.20° is 67.8 km at 59.44°N (157.7-162.3 m from the northern to the
-        # southern edge) and 0.98° is 109.0 km, 11.3 M cells. Every coefficient below tied to Δx is
-        # scaled to it.
+        # 160 m both ways at 59.44°N. Every coefficient below tied to Δx is scaled to it.
         size      = (424, 681, length(z_faces) - 1),
         halo      = (7, 7, 7),
         longitude = (10.00, 11.20),
         latitude  = (58.95, 59.93),
-        # See beside `z_faces` above. `z_faces` is written into `bathymetry.nc` and
-        # `simulation_grid` reads the file, so a change here needs `prepare_bathymetry` re-run.
         z_faces   = z_faces,
         float_type = FT,
     ),
-    # The basin depths these knobs give, measured on this box at 193 m: the deepest cell within
-    # 2 km of each station against the deepest sounding there, in m.
-    #
-    #                                          Ep1   Fl1   Im2   Hm4   Drøbak   Svelvik
-    #   soundings                              154   166   211   119   211      11
-    #   inverse-distance gridding, factor 2    114   138   176   104   176       8.8
-    #   ... regridded                          111   127   170    88   170       6.6
-    #   ... slope limit 0.25 and snap          111   114   166    71   166       5.5
-    #   linear, factor 4, 0.5, preserve_sills  153   153   209    99   209      10.8
-    #
-    # Most of the loss was the gridding, before any smoothing stage ran; the rest was the regrid
-    # averaging channels with their flanks, which `preserve_sills` undoes, and the slope limiter. The
-    # domain's mean depth went from 62.4 m to 72.9 m. Drøbak's sill stays at 23.5 m against a real
-    # ~20 m: no stage that only deepens can correct a sill the regrid made too deep.
-    #
-    # DybdedataConfig overloads bathymetry_dataset (required), plus regrid_options and
-    # smoothing_options (both optional) — hooks prepare_bathymetry calls, dispatching on this
-    # config's type.
+    # Basin and sill depths each knob gives: README.md.
     bathymetry_config = DybdedataConfig(
         data_root             = data_root,
         output_file           = "bathymetry.nc",
         plot_file             = "bathymetry.png",
-        # 4, so the native grid is 40 m. The Svelvik strait is 180 m wide and 11 m deep; a
-        # ~97 m native grid holds it at 8.5 m, a ~48 m one at 11.3 m, which `preserve_sills`
-        # then carries onto the model grid. It was 2 while the gridding took three hours.
+        # A 40 m native grid, which holds Svelvik's 11 m.
         raw_resolution_factor = 4,
         padding_cells         = 2,
         include_contours      = false,
@@ -872,68 +840,31 @@ FjordConfig(
         interpolation_passes  = 1,
         major_basins          = 1,
         minimum_depth         = 2.0,
-        # Flood land within five rows of the open southern edge, so the boundary condition is
-        # not reconciling a radiation scheme, a prescribed exterior state and a headland within
-        # a couple of cells of each other. On this domain's 193 m grid the band was nearly clear
-        # already and moved nine cells, none in the boundary row itself — cheap insurance rather
-        # than a correction. The open edges come from `boundary_data_config` below.
+        # No headland within five rows of the open edge.
         open_boundary_land_cells = 5,
-        # No island is flooded. At 6 the stage flooded 106 islands on this grid, 412 cells, nearly all
-        # of them land on the 40 m native grid, Kaholmen in the Drøbak Sound among them. Keeping
-        # them adds no one-cell-wide channel (27 either way, `close_narrow_passages` closes them),
-        # only 751 coastal cells to the 7140.
+        # Every island kept, Kaholmen in the Drøbak Sound among them.
         max_island_cells      = 0,
         close_narrow_passages = true,
         spike_ratio           = 0.5,
         minimum_cell_fraction = 0.2,
-        # 0.5, back from 0.25. The tighter limit was measured as nearly free on the
-        # inverse-distance gridding, which had already averaged the trenches flat; on the
-        # linear one it takes the deep cell of every narrow trench up once per shallow
-        # neighbour. On this box at 193 m 0.25 cost 34 m in Vestfjorden at Fl1 and 24 m
-        # at Hm4, where 0.5 costs 8 m and 4 m. Nothing measured 0.5 as unstable: the earlier
-        # runs that died did so at slivers, spikes and one-cell passages, which the stages
-        # above now remove.
+        # 0.25 took 34 m off Fl1 and 24 m off Hm4; 0.5 takes 8 and 4.
         max_slope_factor      = 0.5,
-        # Regridding averages a channel narrower than a cell with its flanks: Svelvik came out
-        # at 5.6 m against 11 m real. This restores each lost sill along one path of cells.
+        # Regridding took Svelvik to 5.6 m against 11 m real.
         preserve_sills        = true,
-        # The Drøbak jetty, the 1874-79 underwater barrier from Søndre Kaholmen to Hurum, as the
-        # line of 1-2 m soundings south of Kaholmen and west to the Hurum shore. Without it the
-        # sound's deepest crossing is 23.5 m through the channel the jetty closes, against the
-        # 21 m east channel, the real ~20 m sill. Its two openings, ~6 m deep and tens of metres
-        # wide, become the whole line at 6 m.
+        # The Drøbak jetty, whose ~6 m openings the grid cannot hold. Without it the sill is the
+        # 23.5 m channel the jetty closes rather than the 21 m east channel.
         depth_caps            = [
             DepthCap(longitude = [10.6096, 10.6100, 10.6005], latitude = [59.6725, 59.6648, 59.6641], depth = 6.0),
         ],
-        # The open southern edge crosses the Hvaler trench slope. On this box at 193 m its
-        # boundary row held cells walled off from the interior below some level, and the
-        # domain minimum sat below −1.5 °C in them on 591 of 640 days.
+        # Walled-off cells in the boundary row sat below −1.5 °C.
         raise_boundary_pockets = true,
         geonorge_cache        = true,
         regrid_cache          = false,
-        # This box reaches two places the FileGDB has no data for, and the gridding fills both
-        # with water extrapolated from soundings tens of kilometres away: the land north of Drammen
-        # above 59.76°N west of 10.25°E, a gap in the FileGDB's inland coverage, which became a 7 m
-        # sea joined to the Drammensfjord; and Swedish territory south of Strömstad, which became a
-        # 100 m one on the eastern wall. Every real wet cell lies within 1.5 km of a sounding, so
-        # 2 km removes both and nothing else.
+        # Removes the water the gridding put where the FileGDB has no data (README.md).
         max_sounding_distance = 2000.0,
     ),
-    # NorKystV3InitialStateConfig overloads initial_state_record, initial_state_source_grid and
-    # initial_state_variable_names — hooks prepare_initial_state calls — plus
-    # download_initial_state, which fetches the instant `start_date` and merges the nest into the
-    # 800 m run. Read by `initial_conditions = FromInitialState()` below.
-    #
-    # The 160 m nest reaches every sill basin and the whole fjord north of about 59.5°N, 49 % of
-    # the box; the outer fjord south of about 59.3°N is the 800 m reference run. The nest's own
-    # two-way parent is published only from 2024-11-23, after `start_date`. On 2024-10-01T00 the
-    # two differ at the seam by a median 1.0 g/kg in surface salinity and 0.15 °C in temperature,
-    # against 0.03 g/kg and 0.01 °C between neighbouring cells elsewhere.
-    #
-    # Over the Drøbak and Svelvik sill basins the water is the NIVA casts' instead
-    # (`CastCorrectedInitialState`, "The basin water" above), from Vannmiljø, fetched by
-    # `download_initial_state` over the weeks either side of `start_date`. Casts are practical
-    # salinity and in-situ temperature, taken as S and T as Norkyst's are.
+    # The 160 m nest where it reaches, the 800 m run elsewhere, and the sill basins from the NIVA
+    # casts within 14 days of the start, Im2's only below its sill (README.md).
     initial_state_config = CastCorrectedInitialState(
         NorKystV3InitialStateConfig(
             data_root        = data_root,
@@ -955,57 +886,21 @@ FjordConfig(
         Day(14),
         ["Im2"],
     ),
-    # NVERiversConfig overloads river_locations, river_series, river_discharge and
-    # fetch_rivers (all required, hooks add_rivers calls), all dispatching on this
-    # config's type. It queries NVE, so the window follows its period and every value has
-    # provenance. The HydAPI half needs an API key — `NVE_API_KEY`, free at
-    # https://hydapi.nve.no/Users.
     river_config = NVERiversConfig(
         data_root  = data_root,
         output_file = "rivers_nve.nc",
         plot_file   = "rivers_nve.png",
         start_date  = start_date,
         stop_date   = stop_date,
-        # Every outlet below is *discovered* from NVE's ELVIS river network and sized by
-        # its REGINE catchment, so this setup states no river coordinate at all. It used
-        # to state nine, copied from the OF800 dataset's outlet table, and measured
-        # against NVE's own mouths they were wrong in ways nothing checked: Mosseleva 7 km
-        # and Gjersjøelva 6 km from their rivers, Drammenselva 602 m from the nearest
-        # water in a column at the 2 m `minimum_depth` floor, Glomma on a shelf beside
-        # both of its beds rather than in either, and Glomma's whole western arm missing.
-        #
-        # On the smaller 10.2-11.02°E, 59.0-59.93°N box 0.5 m³/s gave 21 mouths carrying 99.6 %
-        # of its 1179 m³/s, and lowering it to 0.15 would have added twelve more streams for the
-        # remaining 0.3 %.
+        # Every mouth this size or larger, discovered from NVE's river network (README.md).
         minimum_discharge = 0.5,
-        # A river's water enters through the surface of its columns, so this is a vertical
-        # Courant bound on the 1 m top cell: 1 mm/s is w·Δt/Δz = 0.18 at the 3-minute
-        # `max_time_step` below, leaving the time step to the horizontal CFL rather than to
-        # the river mouths. `add_rivers` spreads each river over as many of the 160 m
-        # columns around its mouth as its peak discharge needs to stay under it — one for a
-        # small stream, tens for Glomma — and logs the count.
+        # A vertical Courant number of 0.18 on the 1 m top cell at the 3-minute time step.
         maximum_inflow_velocity = 1.0e-3,
-        # Overrides, keyed by the `vassdragsnr` of each mouth's terminal ELVIS segment.
-        # They never add a river — a mouth discovery finds enters with or without one —
-        # and an override matching no discovered mouth is an error. An override's job is
-        # attaching a gauge (`discharge_station`, sometimes `temperature_station`) to a
-        # mouth that would otherwise run on its catchment normal alone; Glomma's two also
-        # split one gauge between its mouths with `discharge_fraction`. The mouths named
-        # nowhere below — Numedalslågen, Aulivassdraget, Årosvassdraget, Hølenelva, Alna and
-        # the other small ones — run at their catchment normal, which is the whole point of
-        # discovery: a river with no gauge still enters at its own size.
+        # Gauges attached to discovered mouths, keyed by `vassdragsnr`. The rest run at their
+        # catchment's normal.
         outlets = [
-            # Glomma, Norway's largest catchment, reaching the sea through **two** mouths
-            # at Fredrikstad: Østerelva east of Kråkerøy and Vesterelva west of it. Both
-            # beds are resolved on this grid. ELVIS files
-            # Vesterelva under the small Seutelva catchment, so discovery finds it as a
-            # 1.7 m³/s stream; these two overrides put Solbergfoss's observed series
-            # across both instead, and the 2/3–1/3 split is a stated assumption — NVE's
-            # own Nedre Glomma flood report describes the division and publishes no
-            # fraction, and none was found elsewhere.
-            #
-            # Discharge at Solbergfoss and temperature 40 km downstream at Sarpfossen,
-            # because no station carries both.
+            # Glomma's two mouths share Solbergfoss's discharge, split by assumption (README.md),
+            # with Sarpfossen's temperature.
             NVERiver(
                 vassdragsnr = "002.A21", name = "Glomma (Osterelva)",
                 discharge_station = "2.605.0", temperature_station = "2.1087.0",
@@ -1016,87 +911,60 @@ FjordConfig(
                 discharge_station = "2.605.0", temperature_station = "2.1087.0",
                 discharge_fraction = 1 // 3,
             ),
-            # Drammenselva, the second largest input. Mjøndalen bru carries discharge and
-            # temperature on one id at 4 m a.s.l., ~5 km above the fjord.
             NVERiver(
                 vassdragsnr = "012.A2", name = "Drammenselva",
                 discharge_station = "12.534.0", temperature_station = "12.534.0",
             ),
-            # Mossevassdraget at Moss dam, 693 km². No water temperature series.
+            # Mossevassdraget. No temperature series.
             NVERiver(vassdragsnr = "003.A4", discharge_station = "3.23.0"),
-            # Nordmarkvassdraget is Akerselva's catchment. Temperature deliberately
-            # omitted: the 2020 series averages 21.2 °C and peaks at 31.1 °C, which is a
-            # dry or sun-exposed sensor, not an Oslo river. The river carries the mean
-            # temperature of the gauged ones instead.
+            # Akerselva's temperature gauge is a sun-exposed sensor, so none is attached.
             NVERiver(
                 vassdragsnr = "006.A10", name = "Akerselva",
                 discharge_station = "6.38.0",
             ),
-            # Lysakerelva. Temperature omitted for the same reason and worse: mean
-            # 19.6 °C, max 37.2 °C in 2020.
+            # Lysakerelva, as Akerselva.
             NVERiver(vassdragsnr = "007.A0", discharge_station = "7.29.0"),
-            # Sandvikselva, 226 km², and the only small stream here whose temperature
-            # survives inspection: mean 8.4 °C, range 1.0-20.9 °C in 2020.
             NVERiver(
                 vassdragsnr = "008.A2",
                 discharge_station = "8.2.0", temperature_station = "8.2.0",
             ),
-            # Lierelva at Oppsal, 223 km² of a 310 km² catchment. No temperature series.
+            # Lierelva. No temperature series.
             NVERiver(vassdragsnr = "011.A0", discharge_station = "11.6.0"),
         ],
     ),
-    # The exterior state along the open southern edge, from the *hourly* operational Norkyst-v3: a
-    # Flather boundary compares the model's own η against the exterior one, and daily means have
-    # the tide averaged out of them. Only the boundary row is prepared at that cadence, so the file
-    # is a few hundred MB. Its tide is corrected to Viker; see "The boundary tide" above.
-    #
-    # It is what states the open edge — for the boundary steps and for the boundary condition.
-    # NorKystV3BoundaryDataConfig overloads boundary_variable_names and download_boundary_data
-    # and shares boundary_time_steps and boundary_source_grid with the other NorKyst configs —
-    # hooks prepare_boundary_data and download_boundary_data call.
-    #
-    # The reference run `m00`, the one member published over the whole run. The source's 15 levels
-    # stop at 300 m, so below that the boundary repeats the 300 m value; the edge reaches 317 m.
-    boundary_data_config = TideCorrectedBoundaries(
-        NorKystV3BoundaryDataConfig(
-            data_root        = data_root,
-            output_directory = "norkyst_v3_hourly",
-            output_file      = "boundaries.nc",
-            plot_file        = "boundaries.png",
-            # Measured from the 193 m grid's land mask. The southern wall is 311 wet cells of 351,
-            # to 317 m; the northern one is dry. The western one is wet for 14 cells, 2.8 km at
-            # 58.95-58.97°N off Nevlunghavn, to 41 m — all of it inside the 3.2 km
-            # `BoundarySponge` of the southern edge it meets, so the westward outflow METreport
-            # 4/2016 §5.1 describes turning "inside of Store Færder" leaves through the southern
-            # boundary a few cells from the corner rather than being blocked. The eastern one is wet
-            # for 26 cells at 59.07-59.11°N, to 66 m, where the Idefjord approach meets the Swedish
-            # border, and the edge of what the Norwegian FileGDB covers: a sill fjord with no large
-            # exchange, on data that thins out at the wall.
-            #
-            # Opening either would cost far more than it buys. `boundary_domain` takes the
-            # *bounding box* of the open edges' bands, and a full-width southern band with a
-            # full-height western or eastern one spans the whole domain — about 110 GB of hourly
-            # download over two years against roughly 5 GB for the southern edge alone.
-            open_edges       = :south,
-            margin           = 0.05,
-            architecture     = :auto,
-            member           = "m00",
-            # The source has no barotropic pair; the download writes `ubar_eastward` and
-            # `vbar_northward` as the depth means of `u_eastward` and `v_northward`.
-            parameters       = [
-                "temperature", "salinity", "u_eastward", "v_northward", "zeta",
-                "ubar_eastward", "vbar_northward",
-            ],
-            start_date       = start_date,
-            stop_date        = stop_date,
-        ),
-        VIKER_TIDE_GAINS,
+    # Hourly, so the Flather condition sees the tide. The reference run `m00`, the one member
+    # published over the whole period; its levels stop at 300 m, the edge reaches 317 m.
+    boundary_data_config = FerryBoxCorrectedBoundaries(
+        TideCorrectedBoundaries(
+            NorKystV3BoundaryDataConfig(
+                data_root        = data_root,
+                output_directory = "norkyst_v3_hourly",
+                output_file      = "boundaries.nc",
+                plot_file        = "boundaries.png",
+                # The western and eastern walls stay closed (README.md).
+                open_edges       = :south,
+                margin           = 0.05,
+                architecture     = :auto,
+                member           = "m00",
+                # The download writes `ubar_eastward` and `vbar_northward` as depth means.
+                parameters       = [
+                    "temperature", "salinity", "u_eastward", "v_northward", "zeta",
+                    "ubar_eastward", "vbar_northward",
+                ],
+                start_date       = start_date,
+                stop_date        = stop_date,
+            ),
+            VIKER_TIDE_GAINS,
+        );
+        # NIVA's FerryBox minutes (README.md).
+        directory      = joinpath(data_root, "observations", "niva_ferrybox_2024-2026"),
+        # Minutes within 0.05° (5.6 km) north of the edge's cell centres.
+        band           = 0.05,
+        # A week, so a day with one crossing does not set the edge alone.
+        smoothing_days = 7,
+        # Fitted to the Færder casts (README.md).
+        taper_depth    = 25.0,
     ),
-    # NORA3Config overloads atmosphere_time_steps, atmosphere_source_grid and
-    # atmosphere_variable_names — hooks prepare_atmosphere calls — plus download_atmosphere
-    # (called by the driver-level download_atmosphere) and prescribed_atmosphere /
-    # prescribed_radiation (called directly by build_simulation, since the setup is
-    # simulated). All dispatch on this config's type.
     atmosphere_config = NORA3Config(
         data_root        = data_root,
         output_directory = "nora3",
@@ -1109,60 +977,14 @@ FjordConfig(
         # Snow falls into the water, which supplies the heat that melts it.
         snowfall         = true,
     ),
-    # CoupledHydrostaticModel overloads coupled_model and model_tracers — the model hooks
-    # build_simulation calls, dispatching on this config's type.
     model_config = CoupledHydrostaticModel(
         buoyancy           = SeawaterBuoyancy(FT, equation_of_state = TEOS10EquationOfState(FT)),
-        # A BoundarySponge rather than a bare closure tuple: it adds a harmonic viscosity
-        # and diffusivity ramping to zero over 20 cells (3.2 km) inward from whichever
-        # edges `boundary_data_config` opens, and passes `base` through untouched everywhere
-        # else. Without it nothing damped what the open boundary radiates — the 2020 run
-        # carried velocities of 0.4 m/s std and 2 m/s peak on the boundary row against
-        # 0.13 and 0.43 in the interior, and grid-scale salinity roughness 70x the interior
-        # value, which accumulated for 50 days in the near-boundary bottom cells and then
-        # ran away. Viscous rather than a tracer relaxation band, so it cannot fight the
-        # open boundary's own nudging towards the same data.
-        #
-        # 20 m² s⁻¹ is set by explicit-diffusion stability, not by taste: Δt ≤ Δx²/4ν is
-        # 320 s on this 160 m cell, comfortably clear of `max_time_step` below. Raising it
-        # much past 35 would cap the time step instead of the CFL doing it.
+        # A sponge damps what the open boundary radiates (README.md).
         closure            = BoundarySponge(
-            # `minimum_tke` is not a safety net on this grid — it *is* the vertical
-            # closure over most of the column. CATKE takes `w★ = sqrt(max(minimum_tke, e))`,
-            # and measured on the 2020 run at day 20.5 the prognostic `e` sat below a 7e-6
-            # floor in 85 % of wet cells: 89 % below 6 m, 95-100 % below 9 m. So κ there is
-            # the documented background κ = Cʰⁱᶜ·e_min/N = 0.098·e_min/N with
-            # ν = 0.242·e_min/N, which the domain-median κᵤ/κᶜ of 2.38 against
-            # Cʰⁱᵤ/Cʰⁱᶜ = 2.47 confirms.
-            #
-            # 7e-7 rather than ROMS' `GLS_KMIN` default (7.6e-6). Against the NIVA casts of
-            # 9 April 2014 on this box, 7e-6 left the top 5 m too salty
-            # and too weakly stratified: salinity at 25 m minus 1 m was 7.3 at Ep1 and 6.2 at
-            # Dk1, against 11.0 and 9.4 observed and 9.3 and 7.4 at 7e-7. Over 640 days at 7e-7
-            # the salinity RMSE against 216 casts was 1.73 g/kg and the temperature RMSE
-            # 1.22 °C. The cost was overheating in 2-3 m deep cells.
-            #
-            # `Cᵇ` stays at Oceananigans' 0.28 rather than NumericalEarth's regional 0.01
-            # (`default_ocean_closure`), deliberately: it scales the near-bottom mixing
-            # length, and Stigebrandt attributed the high basin-mean diffusivity here to
-            # exactly that boundary mixing.
+            # `minimum_tke` is the vertical mixing below the surface layer (README.md).
             base = (
                 CATKEVerticalDiffusivity(FT; minimum_tke = 7e-7),
-                # 9.4e3 m⁴ s⁻¹. Biharmonic damping of the 2Δx mode goes as ν₄·16/Δx⁴, an
-                # e-folding of 72 min on this 160 m cell — the 2e4 measured on 193 m cells,
-                # scaled by (160/193)⁴. 1e5 on 193 m cells gave 14.5 min. 72 min keeps the
-                # scale selectivity that leaves an 8 km baroclinic eddy alone (56 h at 8Δx).
-                # For scale, Norkyst-800 — the ROMS system feeding this run — applies no
-                # explicit interior viscosity at all.
-                #
-                # It also matters for a stability limit nothing else watches: the explicit
-                # biharmonic needs Δt ≤ Δx⁴/32ν₄, which is 2180 s here, and
-                # `AdaptiveTimeStep` measures only the advective CFL
-                # (`cell_advection_timescale_coupled_model`).
-                #
-                # κ is 0. Over the first 60 days on this box, κ = 2e3
-                # left the deep-basin salt budgets unchanged and the stations within 0.05 g/kg,
-                # but overshot at fronts, leaving 169 wet cells below 0 g/kg, against none at 0.
+                # The 2Δx mode damped in 72 min; κ = 0, as diffusion overshot at fronts (README.md).
                 HorizontalScalarBiharmonicDiffusivity(FT; ν = 9.4e3, κ = 0),
             ),
             width_cells = 20,
@@ -1170,42 +992,8 @@ FjordConfig(
             viscosity   = 20.0,
             diffusivity = 10.0,
         ),
-        # T and S upwinded horizontally around the river mouths: on the Møre og Romsdal setup
-        # WENO across a mouth's fresh front made water saltier than any source and a 2 m column
-        # −1 °C. Three cells is WENO5's stencil, so no face outside reconstructs across a river
-        # column.
-        #
-        # Salinity's WENO bounded: on this box plain WENO drove the
-        # surface cells beside Numedalslågen's mouth below TEOS10's -32 psu floor at day 1.5.
-        #
-        # Coastal cells not upwinded (`narrow_cells = false`): first-order upwind diffuses about
-        # |u|Δx/2, 8-40 m²/s at the surface on 160 m cells, against ~0.1 m²/s observed at that
-        # scale, and the 7140 cells with three or fewer wet neighbours line the whole coast. They
-        # were upwinded against runaway slab ice in one-cell channels, and this setup has no ice.
-        #
-        # On a face too close to land, the seabed or the surface for its stencil, WENO drops to a
-        # lower order, and by default at last to `Centered(order = 2)`: the face carries the mean
-        # of its two cells, so water leaving a cell colder or saltier than its neighbour takes
-        # heat or salt the cell does not have. That left single cells at -1.9 °C and above 36 g/kg
-        # and, under a slab ice, grew the ice at Svelvik. `minimum_buffer_upwind_order = 1` ends
-        # the fallback in first-order upwind instead, which cannot overshoot.
-        #
-        # T and e only. On S the upwind faces under the top cell and above the seabed mixed the
-        # halocline: with them, the top 5 m were 3.4 g/kg too salty against 2.5 without, and the
-        # Drammensfjord at 30 m lost 3.7 g/kg in 16 months (run of stamp 20261112T205524). S keeps
-        # the centred fallback and its single-cell overshoots.
-        #
-        # T's upwind fallback only in the top four cells (to 5.5 m). Below, its faces beside the
-        # seabed and walls mixed heat into the sill basins, and in the top cells the centred
-        # fallback left the surface too warm. Over the first 50 days from 1 October 2024, κ_T
-        # below 52 m at Bn1 was 2.4e-4 m²/s with the upwind fallback everywhere, 0.87e-4 centred
-        # everywhere and 0.86e-4 split; T RMSE on the casts was 1.05, 1.55 and 1.13 °C in the top
-        # 5 m and 0.81, 0.69 and 0.69 °C below 50 m (stamps 20261115T121441, 20261116T074419,
-        # 20261116T194914). The split keeps single cells up to 25 °C in the Glomma channel's salt
-        # wedge at 9 m, below the top four cells, where the upwind fallback everywhere stayed under 19.
-        #
-        # Oceananigans gives any tracer a NamedTuple omits the unbounded `Centered()` default,
-        # so it names CATKE's `e`, and a setup adding tracers must name those too.
+        # Upwind at the river mouths; T's WENO falls back to upwind near walls in the top four cells
+        # only; S's WENO is bounded (README.md). `e` is named, or it gets `Centered()`.
         tracer_advection   = (
             T = RiverMouthAdvection(
                 interior = SurfaceLayerAdvection(
@@ -1226,69 +1014,31 @@ FjordConfig(
         momentum_advection = WENOVectorInvariant(FT),
         tracers            = (:T, :S),
         coriolis           = HydrostaticSphericalCoriolis(FT),
-        # Every level clamped at freezing, the heat that takes discarded: see the top of the file.
+        # Clamped at freezing, with no ice (README.md).
         sea_ice            = FreezingLimitedOceanTemperature(FT),
-        # The shortwave heats the water below the top cell too. With all of it in the 1 m top cell,
-        # the run of stamp 20261107T210205 held the summer heat in the top metre: 29-33 °C cells in
-        # July 2025, 3.1-3.5 °C too cold at 2.5 m against the casts and 0.8-1.8 °C too cold at
-        # 5-20 m. The red band is NumericalEarth's (58 % over 0.35 m). The blue-green band's 3 m is
-        # an assumption from the fjord's 4-6 m Secchi depths, an attenuation of about 1.7/Secchi:
-        # NumericalEarth's 23 m default is open-ocean water.
+        # The blue-green band's 3 m from the fjord's 4-6 m Secchi depths (README.md).
         radiative_forcing  = TwoColorRadiationConfig(
             first_color_fraction = 0.58,
             first_decay_scale    = 0.35,
             second_decay_scale   = 3.0,
         ),
-        # Overloads free_surface(config, grid) — its own hook, called from inside
-        # coupled_model once the grid exists.
         free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),
-        # Anything else the three constructors coupled_model calls accept, one slot each:
-        # :ocean_model, :ocean_simulation, :coupled_model.
-        # Nothing extra here, but stated rather than defaulted like every other field.
         extra_kwargs       = (;),
     ),
-    # Each piece overloads boundary_condition_sides, and the model config's
-    # model_boundary_conditions merges them. Air-sea fluxes and quadratic bottom drag are
-    # separate pieces, so either can be swapped alone, plus the genuinely open southern
-    # edge — which edge, and whose exterior state, come from `boundary_data_config` above.
-    # Dropping it would close the domain; tuple order is merge precedence.
-    #
-    # The two timescales are Marchesiello et al. (2001): nudge hard towards the data on
-    # inflow, let radiation do the work on outflow.
+    # Nudged hard on inflow, radiating on outflow (Marchesiello et al., 2001).
     boundary_condition_configs = (
         AirSeaFluxes(),
         QuadraticBottomDrag(coefficient = 0.003),
         OpenLateralBoundaryFromData(
-            # 3 hours, not the 1 day this was. At the time steps this run actually takes
-            # (~10 s), a one-day timescale relaxes by 1.2e-4 per step against an advective
-            # rate into the boundary cell of ~2.5e-3 s⁻¹ — 200x weaker, which is why the
-            # nudging never caught the drift it was there to catch. Both numbers are
-            # tuning knobs: too strong an inflow nudge over-constrains an open boundary
-            # and reflects.
             inflow_timescale  = 3hours,
             outflow_timescale = 360days,
         ),
     ),
-    # How the model is run. Writers, callbacks and time stepping each dispatch on their own
-    # supertype; the run itself is read through the run config's accessors.
     run_config = RunConfig(
         results_root       = fjord_results_root("oslofjorden"),
         architecture       = :auto,
-        # Both overload attach_writer! — what the run writes. `variables` may name anything
-        # `Oceananigans.fields` exposes on the ocean model — add `:w`, `:η` or a
-        # biogeochemical tracer by naming it here. Dropping the `CheckpointWriter` turns
-        # checkpointing off entirely.
         writers = (
-            # Daily. One record of five fields on this grid is 225 MB, so three-hourly over 730 days
-            # would be about 1.3 TB against 164 GB daily. The full fields are for maps, sections
-            # and the M2 amplitude and phase maps, none of which needs sub-daily sampling —
-            # everything that does is the surface file or a station below. A new file every
-            # month, ~7 GB.
-            #
-            # `e` is CATKE's TKE tracer, in for diagnosis: the 2026-08-25 run died at day 11.5 on a
-            # TEOS10 `sqrt(Sᴬ + 32)` DomainError — one cell below -32 psu — and the file carried
-            # nothing that could show what led there. `e` drives the vertical diffusivity, so it is
-            # the field most likely to hold the precursor.
+            # Daily, a file a month; `e` for diagnosing the mixing.
             SnapshotWriter(
                 name               = :ocean,
                 output_file        = "snapshots_ocean.nc",
@@ -1297,14 +1047,7 @@ FjordConfig(
                 split_times        = monthly_splits,
                 overwrite_existing = true,
             ),
-            # The top level of T, S, u and v, and `η`, hourly, a new file every month. One record
-            # is 5.8 MB on this grid, about 4.2 GB a month and 100 GB over 730 days.
-            #
-            # `η` in JLD2 because it cannot go in the NetCDF file: Oceananigans' NetCDF writer
-            # cannot emit a `(Center, Center, Nothing)` user output at all — the free surface
-            # asks for a singleton `z_aaf = [0.0]` against the grid's own `z_aaf`, and it fails
-            # beside the 3D fields, alone in its own file, and with grid metrics off. See
-            # `FieldSnapshotWriter`.
+            # JLD2, as η cannot go in a NetCDF writer (`FieldSnapshotWriter`).
             SurfaceSnapshotWriter(
                 name               = :surface,
                 output_file        = "snapshots_surface.jld2",
@@ -1313,12 +1056,7 @@ FjordConfig(
                 split_times        = monthly_splits,
                 overwrite_existing = true,
             ),
-            # Ten minutes, and the only writer at that cadence. A tide gauge comparison is a
-            # harmonic analysis: METreport 11/2017 Table 3 resolves constituents down to MS4 at
-            # 6.1033 hours, and the shortest of them needs several samples per period to come back
-            # unaliased. Three points at 10 minutes over two years is about 1 MB.
-            #
-            # JLD2 because η cannot go in a NetCDF writer at all — see `FieldSnapshotWriter`.
+            # Ten minutes resolves the shortest constituents for the harmonic analysis.
             FieldStationWriter(
                 name               = :tidegauge,
                 output_file        = "stations_tidegauge.jld2",
@@ -1327,10 +1065,6 @@ FjordConfig(
                 interval           = 10minutes,
                 overwrite_existing = true,
             ),
-            # Hourly profiles of velocity at the ADCP sites. Hourly is what the observations are
-            # and what METreport 11/2017's own analysis assumes: the 49-hour running mean it
-            # separates the estuarine circulation with, and the tidal ellipses of its Table 4,
-            # both need the tide resolved in the record they are taken from.
             StationWriter(
                 name               = :moorings,
                 output_file        = "stations_moorings.nc",
@@ -1339,12 +1073,7 @@ FjordConfig(
                 interval           = 1hour,
                 overwrite_existing = true,
             ),
-            # Hourly T/S profiles at the CTD stations of both programmes. The
-            # observations are a dozen casts a year, so hourly is far more than the comparison at
-            # cast dates needs — but it is what resolves a deep-water renewal event, which happens
-            # over days and is the thing this domain is judged on. `e` rides along because the
-            # standing conclusions about this fjord are both about vertical mixing — too weak in
-            # the open fjord, too vigorous inside the sills — and the TKE is what would show it.
+            # `e` for the vertical mixing.
             StationWriter(
                 name               = :hydrography,
                 output_file        = "stations_hydrography.nc",
@@ -1353,9 +1082,6 @@ FjordConfig(
                 interval           = 1hour,
                 overwrite_existing = true,
             ),
-            # Hourly whole-column profiles along the Drammensfjord section: T and S for the
-            # mixing and renewal, `e` for the TKE, and u, v for the exchange over the sill. One
-            # file for all 77 rather than one per station, which cost about 7 minutes of start-up.
             SectionWriter(
                 name               = :section,
                 output_file        = "stations_section.nc",
@@ -1364,10 +1090,7 @@ FjordConfig(
                 interval           = 1hour,
                 overwrite_existing = true,
             ),
-            # The fixed-point temperature sites, hourly. The whole column is written rather than
-            # the top cell alone, because the explanation METreport 11/2017 gives for its beach
-            # discrepancy is a diurnal cycle in the model that is too strong, and that is a
-            # statement about the surface layer rather than the surface.
+            # The whole column, for the surface layer's diurnal cycle.
             StationWriter(
                 name               = :surface_temperature,
                 output_file        = "stations_temperature.nc",
@@ -1378,44 +1101,26 @@ FjordConfig(
             ),
             CheckpointWriter(interval = 12hours, cleanup = true),
         ),
-        # Overloads attach_callback! — what the run reports while it runs. `report` is the
-        # function itself, so a model whose tracers omit :T (which `progress` reads) names its
-        # own here instead. An empty tuple runs silently.
-        # The downslope flow takes dense water down the Drøbak Sound's inner slope to its own level.
-        # Without it each inflow pulse of winter 2026 landed on lighter water in the column beyond
-        # the sill, CATKE overturned that column to the bottom, and the February renewal arrived
-        # 0.85 kg/m³ too light at Hm4. 1000 s gives 0.5 m/s for the 0.4 kg/m³ excess the sill
-        # water held over the next column on the sound's 0.13 slope, which the scheme's cap of a
-        # quarter of a cell per step limits to Δx/4Δt, 0.22 m/s at the 3-minute step.
+        # The downslope flow takes dense water over the Drøbak sill down the slope to its own level
+        # rather than letting it convect (README.md).
         callbacks = (
             ProgressCallback(name = :progress, interval = 1hour, report = progress),
             DownslopeFlow(name = :downslope, tracers = (:T, :S), friction_timescale = 1000),
         ),
-        # Overloads attach_time_stepping! and initial_time_step.
         time_stepping = AdaptiveTimeStep(
             initial_time_step    = 1second,
             cfl                  = 0.3,
             max_time_step        = 3minutes,
             max_time_step_change = 1.01,
         ),
-        # The Norkyst-v3 state at `start_date`, from `initial_state_config`: T, S, u and v.
-        # `(T = 5.0, S = 33.0)` starts from a uniform water column at rest instead, and
-        # `FromResults("snapshots_ocean_<tag>.nc")` continues from a previous run.
         initial_conditions = FromInitialState(),
         start_date         = start_date,
         stop_date          = stop_date,
-        # One pass. Raise it to spin the deep basins up on the same year, carrying the
-        # state over; each repetition writes its own `_loopNN` file.
         loops              = 1,
         pickup             = false,
     ),
-    # The CTD casts of both NIVA programmes and IMR's, from Vannmiljø, fetched by
-    # `download_observations`. Each contractor registers its own casts, so one source per
-    # contractor scores each cast once. When fetched on 2026-11-14, Vannmiljø held NIVA's casts to
-    # 2025-12-12 and IMR's to March 2026; NIVA's later casts were in its own ODM2 database only.
-    # NIVA's casts there are the AquaMonitor export's, value for value, except I-4's, which
-    # Vannmiljø lacks. It places Ø-1 555 m and Cj1 620 m from the positions above, and the next
-    # NIVA location is 4.5 km from either, hence 1 km.
+    # One source per contractor, so each cast is scored once. Vannmiljø places Ø-1 and Cj1 about
+    # 600 m from the positions above, hence 1 km.
     observation_configs = (
         VannmiljoObservations(
             data_root        = data_root,
@@ -1437,11 +1142,7 @@ FjordConfig(
             source           = "IMR",
         ),
     ),
-    # Every cast station is in the hydrography writer, so the snapshots add the domain extremes
-    # here and score only a station added to the casts later. The first month is the adjustment
-    # from the initial state. Drammensfjord and the Inner Oslofjord are the two sill basins; every
-    # other station is the open fjord. Below -1 °C is colder than the freezing clamp allows; above
-    # 36 g/kg saltier than any inflowing water.
+    # Below -1 °C is colder than the freezing clamp allows; above 36 g/kg saltier than any inflow.
     validation_config = ValidationConfig(
         spin_up          = Day(31),
         depth_bands      = [(0, 5), (5, 20), (20, 50), (50, Inf)],

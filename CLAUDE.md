@@ -14,7 +14,7 @@
 | [`docs/adding-a-source.md`](docs/adding-a-source.md) | adding a grid, bathymetry, forcing, river, boundary, atmosphere or observation source |
 | [`docs/setups.md`](docs/setups.md) | writing a new setup or changing a setup's parameters |
 | [`README.md`](README.md) | user-facing overview, quick start, `run_simulation` fields |
-| [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) | relying on a setup's results, or on a component working for a new kind of grid or writer |
+| [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md), and a setup folder's own `KNOWN_ISSUES.md` and `README.md` | relying on a setup's results, or on a component working for a new kind of grid or writer |
 
 The `run-simulation` skill (`.claude/skills/run-simulation/`) is the checklist for running steps,
 and the `new-setup` skill (`.claude/skills/new-setup/`) the one for writing a new setup.
@@ -149,7 +149,8 @@ folder per fjord (`oslofjorden/`, `drammensfjorden/`, `lista/`, `moro/`, `roho/`
 the variants beside the setup they `include` (`oslofjorden/oslofjorden_npzd.jl`). Adding a fjord is
 one new folder with one file. `CoupledHydrostaticModel`, `RunConfig` and everything they nest have
 **no defaults** — every field is a scientific choice a setup must state. How to write one is
-`docs/setups.md`; why a setup has the values it has belongs in its own comments.
+`docs/setups.md`; why a setup has the values it has goes in a one-line comment beside each value,
+the measurements behind it in the folder's `README.md`.
 
 ## GPU & Kernel Compatibility
 
@@ -228,6 +229,11 @@ forcings.
   two Cloud Run jobs"), not who can do what. Personal facts and preferences go in Claude's memory.
 - **CLAUDE.md holds only what every task needs.** Procedures and rationale go in `docs/` or
   `gcp/README.md`, with a row in the docs table above; don't copy their content here.
+- **A setup's notes live in its folder.** A problem with one setup's simulation goes in
+  `examples/<fjord>/KNOWN_ISSUES.md`; a fact about the data it uses (a gauge gap, a station the grid
+  does not resolve, a dataset from another period) in `examples/<fjord>/README.md`. Create either
+  file when the setup gets its first such entry. The root `KNOWN_ISSUES.md` holds only issues of the
+  package itself.
 - **Remove fixed issues from `KNOWN_ISSUES.md`** when fixing them — don't mark them and leave them.
   If an open issue needs a result the fix produced, fold that result into the open issue in a line
   or two; the full record of what was done goes in the commit message.

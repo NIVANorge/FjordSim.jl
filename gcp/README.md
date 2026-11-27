@@ -1,8 +1,9 @@
 # Running FjordSim on GCP
 
-`run_simulation` needs a GPU. Everything else — the downloads and the regrids — runs anywhere, but
-`download_atmosphere` is close to 10000 OPeNDAP reads per simulated year and the Geonorge
-bathymetry source is a 4.5 GB FileGDB, so both halves are often better off in the cloud.
+`run_simulation` needs a GPU and runs on the GPU VM. Data preparation — every `download_*` and
+`prepare_*` step and `add_rivers` — runs on the CPU-only preprocessing VMs, not locally and not on
+the GPU VM, which would bill a GPU the prepare steps never use. `download_atmosphere` alone is close
+to 10000 OPeNDAP reads per simulated year, and the Geonorge bathymetry source is a 4.5 GB FileGDB.
 
 This directory runs any pipeline step of any setup on shared GCE VMs — a GPU VM for the
 simulation, and optionally CPU-only preprocessing VMs for the downloads and regrids — and moves data
@@ -136,37 +137,30 @@ creates it wherever there is room.
 then a reboot it drives itself), Docker and the container toolkit; on a second call, or after
 `down`/`up` or host maintenance, every stage is a no-op. After a `delete` it starts over.
 
-### Prepare locally, simulate in the cloud
+### Prepare on the preprocessing VMs
 
-Preparing on a laptop is fine and often simplest; only the simulation really needs the cloud.
-
-```bash
-julia --project -m FjordSim prepare_bathymetry --config examples/drammensfjorden/drammensfjorden.jl
-julia --project -m FjordSim add_rivers         --config examples/drammensfjorden/drammensfjorden.jl
-
-gcp/fjordsim-gcp push-data drammensfjorden          # only the top-level *.nc
-gcp/fjordsim-gcp run --config examples/drammensfjorden/drammensfjorden.jl --steps run_simulation --gpu
-gcp/fjordsim-gcp pull-results drammensfjorden
-```
-
-`push-data` uploads only the prepared NetCDFs, because that is all a simulation opens. `--all` adds
-the raw sources (`norkyst_hourly/`, `norkyst_initial/`, `nora3/`, the FileGDB), which only a
-`prepare_*` step needs.
-
-### Prepare in the cloud
-
-Better for the slow steps, and it keeps the raw sources off your disk entirely.
+Always pass `--vm N`: without it `run` goes to the GPU VM. The VMs are cheaper than the GPU VM and
+there can be several, so the slow downloads of one setup run side by side, each on its own VM:
 
 ```bash
-gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl \
-    --steps prepare_bathymetry,download_initial_state,prepare_initial_state,add_rivers,download_boundary_data,prepare_boundary_data
-gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl \
-    --steps download_atmosphere,prepare_atmosphere
-gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu
+gcp/fjordsim-gcp up --prep 3                         # creates or starts -1, -2 and -3
+for n in 1 2 3; do gcp/fjordsim-gcp bootstrap --vm $n; done
+
+gcp/fjordsim-gcp run --vm 1 --config examples/moro/moro.jl \
+    --steps prepare_bathymetry,download_initial_state,prepare_initial_state,add_rivers
+gcp/fjordsim-gcp run --vm 2 --config examples/moro/moro.jl --steps download_boundary_data
+gcp/fjordsim-gcp run --vm 3 --config examples/moro/moro.jl --steps download_atmosphere,prepare_atmosphere
+# once vm 1 and vm 2 have succeeded (gcp/fjordsim-gcp status):
+gcp/fjordsim-gcp run --vm 2 --config examples/moro/moro.jl --steps prepare_boundary_data
+
+gcp/fjordsim-gcp down --prep                         # stops all of them
+gcp/fjordsim-gcp delete --prep                       # deletes all of them, disks included
 ```
 
-Omitting `--gpu` hides the GPU from the container, and `architecture = :auto` resolves to `CPU()` —
-the same config runs either way without an edit. Anything a prep job writes under the fjord's data directory is synced
+With a single preprocessing VM, the same steps go to `--vm 1` one job after another.
+
+Prepare steps take no `--gpu`: `architecture = :auto` resolves to `CPU()`, so the same config serves
+both VMs without an edit. Anything a prep job writes under the fjord's data directory is synced
 back to the bucket when it finishes, so the next job finds it. Raw downloads in subdirectories are
 also synced every ten minutes, once a file is complete, so an interrupted download resumes from the
 bucket; prepared top-level files wait for the final sync. Every job other than a plain
@@ -188,28 +182,8 @@ A setup that reads another fjord's downloads by absolute path (`docs/setups.md`,
 fjord staged too:
 
 ```bash
-gcp/fjordsim-gcp run --config path/to/myfjord.jl --steps prepare_bathymetry \
+gcp/fjordsim-gcp run --vm 1 --config path/to/myfjord.jl --steps prepare_bathymetry \
     --stage oslofjorden --stage-all
-```
-
-### Prepare on the preprocessing VMs
-
-The CPU-only VMs are cheaper than the GPU VM and there can be several, so the slow downloads of one
-setup can run side by side, each on its own VM:
-
-```bash
-gcp/fjordsim-gcp up --prep 3                         # creates or starts -1, -2 and -3
-for n in 1 2 3; do gcp/fjordsim-gcp bootstrap --vm $n; done
-
-gcp/fjordsim-gcp run --vm 1 --config examples/moro/moro.jl \
-    --steps prepare_bathymetry,download_initial_state,prepare_initial_state,add_rivers
-gcp/fjordsim-gcp run --vm 2 --config examples/moro/moro.jl --steps download_boundary_data
-gcp/fjordsim-gcp run --vm 3 --config examples/moro/moro.jl --steps download_atmosphere,prepare_atmosphere
-# once vm 1 and vm 2 have succeeded (gcp/fjordsim-gcp status):
-gcp/fjordsim-gcp run --vm 2 --config examples/moro/moro.jl --steps prepare_boundary_data
-
-gcp/fjordsim-gcp down --prep                         # stops all of them
-gcp/fjordsim-gcp delete --prep                       # deletes all of them, disks included
 ```
 
 - **A job reads what is in the bucket when it starts**, and writes back when it finishes. A step
@@ -246,7 +220,7 @@ A setup that loads packages FjordSim's environment does not have — a biogeoche
 ```bash
 export IMAGE_URI=REGION-docker.pkg.dev/PROJECT/REPO/fjordsim-mysetup:latest
 gcp/fjordsim-gcp build --environment path/to/mysetup_env
-gcp/fjordsim-gcp run --config path/to/mysetup_env/mysetup.jl --steps prepare_bathymetry,add_rivers
+gcp/fjordsim-gcp run --vm 1 --config path/to/mysetup_env/mysetup.jl --steps prepare_bathymetry,add_rivers
 ```
 
 - **Its own `IMAGE_URI`**, for the build and for every `run` against it: `run` pulls `IMAGE_URI` at

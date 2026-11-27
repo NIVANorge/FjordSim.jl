@@ -9,7 +9,7 @@ The rules and commands are in `docs/running.md` (local) and `gcp/README.md` (clo
 relevant one first; this is the order to work through.
 
 1. **Ask before launching data steps.** `prepare_*` and `download_*` take minutes to days and can
-   download hundreds of GB. Confirm with the user which steps to run and where (laptop or VM).
+   download hundreds of GB. Confirm with the user which steps to run and on which preprocessing VM.
 2. **Find out what is stale.** Compare the config against what was prepared: a changed
    dataset `start_date`/`stop_date`, or `z_faces`/`size`/a bathymetry knob, needs the steps listed in
    `docs/running.md` ("What to re-run after a config change"), in that order.
@@ -20,14 +20,13 @@ relevant one first; this is the order to work through.
      never a new one) → the previous run should have been archived as `<name>_<YYYY-MM-DD>` when it
      finished; if it was not, archive it first (`gcp/README.md`, "When a run finishes"); confirm with
      the user before deleting anything in the bucket.
-4. **Run.**
-   - Locally: `julia --project -m FjordSim <step> --config <setup.jl>`.
-   - On GCP: check the VM is up, then
-     `gcp/fjordsim-gcp run --config <setup.jl> --steps <a,b,...> [--gpu] [--resume] [--run-id <id>]`.
-     Use `--dry-run` first when unsure what a launch will do. `add_rivers` needs `NVE_API_KEY`.
-     Where the deployment has CPU-only preprocessing VMs (`PREP_VM_PREFIX` in `gcp/config.env`),
-     download/prepare steps can go to them with `--vm N`, one job per VM, in parallel
+4. **Run.** Check the VM is up, then
+   `gcp/fjordsim-gcp run --config <setup.jl> --steps <a,b,...> [--vm N] [--gpu] [--resume] [--run-id <id>]`.
+   Use `--dry-run` first when unsure what a launch will do. `add_rivers` needs `NVE_API_KEY`.
+   - Data preparation (`download_*`, `prepare_*`, `add_rivers`) runs on the CPU-only preprocessing
+     VMs with `--vm N`, one job per VM, in parallel — never locally or on the GPU VM
      (`gcp/README.md`, "Prepare on the preprocessing VMs").
+   - `run_simulation` runs on the GPU VM, with `--gpu`.
 5. **Watch it.** `gcp/fjordsim-gcp status`, `gcp/fjordsim-gcp logs <run-id>`; stop any monitoring
    loop you started once it's no longer needed.
 6. **After the run.** `gcp/fjordsim-gcp pull-results <name>`, archive the run (step 3), then

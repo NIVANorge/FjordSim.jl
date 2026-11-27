@@ -113,7 +113,7 @@ upload_written_data() {
     return $code
 }
 
-# Raw downloads, mid-job, so a preemption loses minutes of them rather than the whole job. Files in
+# Raw downloads, mid-job, so an interruption loses minutes of them rather than the whole job. Files in
 # subdirectories are complete once they have their final name: every downloader writes `<name>.tmp`
 # and renames it, and the Geonorge archive is unpacked in a `*_staging` directory. Top-level
 # prepared files are written in place and would replace a good copy with a partial one, so only the
@@ -133,7 +133,7 @@ finish() {
     local data_synced=false
     upload_written_data && data_synced=true
     rm -f "$STAGED_STAMP"
-    # The VM's disk does not survive a preemption, so this copy is what `logs` falls back to.
+    # What `logs` falls back to once the VM is down or deleted.
     gcloud storage cp "$RUN_LOG" "$RUN_PREFIX/run.log" --quiet || true
 
     if [[ $code -eq 0 ]]; then mark succeeded; else mark "failed(exit=$code)"; fi

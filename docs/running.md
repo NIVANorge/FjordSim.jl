@@ -2,7 +2,8 @@
 
 How to take a setup from nothing to a scored run, and the rules that keep its data and results
 consistent. The quick start and the `run_simulation` fields are in the `README.md`; running on a
-cloud GPU is in `gcp/README.md`.
+cloud GPU, and preparing data on the CPU-only preprocessing VMs — the preferred place for every
+download and prepare step — is in `gcp/README.md`.
 
 `--config` is the only option of every subcommand, and it is required. It takes the path to a setup:
 a `.jl` file whose last expression is a `FjordConfig`, such as `examples/oslofjorden/oslofjorden.jl`. No setup

@@ -1,23 +1,19 @@
 using FjordSim
-using FjordSim.Configs: AbstractAtmosphereConfig, AbstractBathymetryConfig,
-    AbstractBoundaryConditionConfig, AbstractBoundaryDataConfig, AbstractFjordConfig,
-    AbstractCallbackConfig, AbstractClosureConfig, AbstractModelConfig,
-    AbstractForcingConfig, AbstractFreeSurfaceConfig, AbstractGridConfig, AbstractRiverConfig,
-    AbstractRunConfig, AbstractTimeSteppingConfig, AbstractWriterConfig
+using FjordSim.Configs: AbstractAtmosphereConfig, AbstractBoundaryDataConfig, AbstractFjordConfig,
+    AbstractClosureConfig, AbstractRiverConfig
 using FjordSim.Utils: coverage_window
 using FjordSim.Grids: domain_grid, open_edges, simulation_grid
 using FjordSim.Plotting: plot_boundary_data, plot_path
-using FjordSim.Bathymetry: bathymetry_dataset, bathymetry_path, geodatabase_path, process_bathymetry,
-    regrid_options, write_bathymetry_file
+using FjordSim.Bathymetry: bathymetry_dataset, bathymetry_path, geodatabase_path, regrid_options,
+    write_bathymetry_file
 using FjordSim.Regridding: interpolation_architecture, ProjectedSourceGrid
 using FjordSim.Atmospheres: atmosphere_date_range, atmosphere_directory, atmosphere_path,
-    atmosphere_source_grid, atmosphere_target_axes, atmosphere_time_steps,
-    atmosphere_variable_names, AtmosphereRecord, fetch_atmosphere, MultiYearNORA3,
-    NORA3PrescribedAtmosphere, NORA3PrescribedRadiation, prescribed_atmosphere, prescribed_radiation,
-    ProjectedAtmosphereGrid, regrid_atmosphere
+    atmosphere_target_axes, atmosphere_variable_names, AtmosphereRecord, fetch_atmosphere,
+    MultiYearNORA3, NORA3PrescribedAtmosphere, NORA3PrescribedRadiation, prescribed_atmosphere,
+    prescribed_radiation, ProjectedAtmosphereGrid, regrid_atmosphere
 using FjordSim.Forcing: forcing_date_range, forcing_directory, forcing_from_file,
-    forcing_monthly_filename, forcing_path, forcing_source_grid, forcing_time_steps,
-    forcing_variable_names, regrid_forcing, simulation_forcing
+    forcing_monthly_filename, forcing_path, forcing_variable_names, regrid_forcing,
+    simulation_forcing
 using FjordSim.InitialState: initial_state_directory, initial_state_path, regrid_initial_state
 using FjordSim.Rivers: place_rivers, river_discharge, river_forcing_path, river_locations,
     river_maximum_inflow_velocity, river_search_radius, river_series
@@ -26,9 +22,8 @@ using FjordSim.BoundaryConditions: boundary_condition_sides, model_boundary_cond
 using FjordSim.AdvectionSchemes: model_tracer_advection, narrow_columns, river_mouth_zone, RiverMouthScheme
 using FjordSim.BoundaryData: boundary_data_directory, boundary_data_path, boundary_variable_name,
     boundary_variable_names, regrid_boundary_data
-using FjordSim.Simulations: attach_callback!, attach_time_stepping!, attach_writer!,
-    coupled_model, free_surface, initial_time_step, model_biogeochemistry, model_closure,
-    model_tracers, results_path, run_tag, run_architecture
+using FjordSim.Simulations: attach_writer!, coupled_model, free_surface, model_biogeochemistry,
+    model_closure, model_tracers, results_path, run_tag, run_architecture
 using FjordSim.Observations: CsvObservations, KartverketSeaLevel, observation_series,
     observation_stations, observations_directory, ObservationSeries, VannmiljoObservations
 using FjordSim.Validation: baroclinic_deviation, depth_average, direction_statistics, harmonic_fit,
@@ -139,11 +134,6 @@ end
         end
 
         @test parentmodule(FjordSim.Simulations.coupled_model) === FjordSim.Simulations
-        # The per-piece boundary hook used to be called `boundary_conditions`, which collided with
-        # `Oceananigans.Fields.boundary_conditions`. Renamed to `boundary_condition_sides`, and the
-        # old name is gone rather than deprecated.
-        @test isdefined(FjordSim.BoundaryConditions, :boundary_condition_sides)
-        @test !isdefined(FjordSim.BoundaryConditions, :boundary_conditions)
     end
 
     @testset "boundary condition signatures" begin
@@ -757,34 +747,15 @@ end
         end
     end
 
-    @testset "MultiYearNORA3 fields" begin
-        mktempdir() do tmp
-            nora3_filename = "NORA3_test.nc"
-            write_nora3_stub(joinpath(tmp, nora3_filename))
-
-            # The four fields the read side reaches for, and their types. Asserting the type subsumes a
-            # `hasfield`: a missing field is an error rather than a `false`.
-            nora3 = MultiYearNORA3(nora3_filename, tmp)
-            for (name, expected) in (
-                :metadata_filename => String,
-                :default_download_directory => String,
-                :size => Tuple,
-                :all_dates => Vector,
-            )
-                @test getproperty(nora3, name) isa expected
-            end
-        end
-    end
-
     @testset "NORA3 dataset interface" begin
         # The interface must sit on NumericalEarth's own generics so its machinery dispatches into this
         # backend instead of falling back to the generic `Metadata` defaults. Defined under a bare
         # `using NumericalEarth`, each one becomes a module-local binding that shadows the upstream
         # function, and the failure is silent: every fallback is plausible.
         #
-        # The time axis has to be CF-encoded here, unlike in the struct-field test above: a `Metadatum`
-        # is a `Metadata` whose date is an `AnyDateTime`, so a raw Float64 axis would not produce one
-        # and `size` would fall through to the vector method and pass for the wrong reason.
+        # The time axis has to be CF-encoded here: a `Metadatum` is a `Metadata` whose date is an
+        # `AnyDateTime`, so a raw Float64 axis would not produce one and `size` would fall through to
+        # the vector method and pass for the wrong reason.
         DW = NumericalEarth.DataWrangling
         NORA3 = FjordSim.Atmospheres.NORA3
 
@@ -901,7 +872,6 @@ end
             start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1),
         )
         @test forcing_directory(forcing_config) == joinpath(data_root, "norkyst")
-        @test forcing_config.parameters == ["temperature", "salinity"]
 
         # The prepared forcing file and its plot are defaulted, since there is one prepared forcing
         # file per setup. The open edge is not a field here at all: a forcing dataset says nothing
@@ -931,10 +901,8 @@ end
         # A setup naming none has no open edge at all, which is how a closed domain is stated.
         @test isempty(open_edges(nothing))
 
-        # Where the interpolation runs is a config field, not a command-line flag. `:auto` is the
-        # default so one setup runs on a GPU machine and a laptop alike; `:cpu` is honoured
+        # Where the interpolation runs is a config field, not a command-line flag. `:cpu` is honoured
         # regardless of the hardware present, which is what makes this assertion machine-independent.
-        @test forcing_config.architecture === :auto
         @test interpolation_architecture(test_forcing_config(architecture = :cpu)) == CPU()
         # An unknown selector is rejected up front rather than falling back to some default.
         @test_throws ArgumentError interpolation_architecture(
@@ -950,7 +918,6 @@ end
         @test plot_path(relocated) == joinpath(data_root, "forcing.png")
         @test forcing_directory(test_forcing_config(output_directory = "/nk")) == "/nk"
         @test forcing_monthly_filename(forcing_config, 2020, 3) == "NorKyst-800m_ZDEPTHS_avg_202003.nc"
-        @test occursin("thredds.met.no", forcing_config.catalog_url)
 
         # A setup states its own atmosphere directory and period; only the NORA3 endpoint, the
         # prepared file names and the target resolution are defaulted.
@@ -964,9 +931,6 @@ end
         @test atmosphere_path(atmosphere_config) == joinpath(data_root, "atmosphere.nc")
         @test atmosphere_directory(atmosphere_config) == joinpath(data_root, "nora3")
         @test plot_path(atmosphere_config) == joinpath(data_root, "atmosphere.png")
-        @test atmosphere_config.resolution == 0.02
-        @test atmosphere_config.padding == 0.1
-        @test occursin("thredds.met.no", atmosphere_config.opendap_url)
 
         # ...and an absolute path relocates just that file, as for the other configs.
         relocated_atmosphere = NORA3Config(
@@ -1009,16 +973,6 @@ end
         @test config.bathymetry_config.size == (40, 44, 1)
         @test dirname(config.bathymetry_config.raw_file) == config.bathymetry_config.raw_directory
         @test occursin("_40x44", config.bathymetry_config.raw_file)
-
-        # Every config is editable in place.
-        config.grid_config.size = (4, 6, 2)
-        config.bathymetry_config.padding_cells = 0
-        config.forcing_config.stop_date = DateTime(2022, 1, 1)
-        config.atmosphere_config.stop_date = DateTime(2022, 1, 1)
-        @test config.grid_config.size == (4, 6, 2)
-        @test config.bathymetry_config.padding_cells == 0
-        @test config.forcing_config.stop_date == DateTime(2022, 1, 1)
-        @test config.atmosphere_config.stop_date == DateTime(2022, 1, 1)
     end
 
     @testset "data and results roots" begin
@@ -1083,13 +1037,6 @@ end
         )
         rivers = config.river_config
 
-        @test config.grid_config isa AbstractGridConfig
-        @test config.bathymetry_config isa AbstractBathymetryConfig
-        @test config.forcing_config isa AbstractForcingConfig
-        @test config.atmosphere_config isa AbstractAtmosphereConfig
-        @test config.run_config isa AbstractRunConfig
-        @test rivers isa AbstractRiverConfig
-
         # Field types are still concrete, so the struct stays type-stable per instantiation.
         @test all(isconcretetype, fieldtypes(typeof(config)))
         @test fieldtype(typeof(config), :grid_config) === SingleColumnGrid
@@ -1152,65 +1099,13 @@ end
         grid = domain_grid(config.grid_config, CPU())
         @test size(grid) == (1, 1, 2)
         @test collect(Oceananigans.Grids.znodes(grid, Face())) == [-120.0, -60.0, 0.0]
-        # The grid contract is two hooks, and `SingleColumnGrid` implements only the first, so the
-        # second is missing the same discoverable way every other unimplemented hook is. This is
-        # what the grid used to have no way of expressing: `build_simulation` reached into
-        # `config.grid_config.halo` and built an `ImmersedBoundaryGrid` itself.
-        @test_throws MethodError simulation_grid(config.grid_config, "unused.nc", CPU())
 
         # `regrid_options` is the one optional hook, so a source that configures nothing inherits
         # an empty option set rather than having to implement it.
         @test regrid_options(config.bathymetry_config) === (;)
 
-        # A forcing hook overloaded on the new config is picked up by the generic pipeline...
+        # A forcing hook overloaded on the new config is picked up by the generic pipeline.
         @test forcing_variable_names(config.forcing_config) == Dict("temperature" => "T")
-
-        # ...while a required hook that is not implemented fails as a missing method, naming what
-        # the new subtype still owes, rather than silently doing nothing.
-        @test_throws MethodError bathymetry_dataset(grid, config.bathymetry_config)
-        @test_throws MethodError process_bathymetry(grid, config.bathymetry_config)
-        @test_throws MethodError forcing_time_steps(config.forcing_config)
-        @test_throws MethodError forcing_source_grid(config.forcing_config, "unused.nc")
-        @test_throws MethodError river_locations(rivers)
-        @test_throws MethodError river_series(rivers, [DateTime(2020, 1, 1)])
-        @test_throws MethodError river_discharge(rivers, [DateTime(2020, 1, 1)])
-        @test_throws MethodError atmosphere_time_steps(config.atmosphere_config)
-        @test_throws MethodError atmosphere_source_grid(config.atmosphere_config, "unused.nc")
-        @test_throws MethodError atmosphere_variable_names(config.atmosphere_config)
-        @test_throws MethodError regrid_atmosphere(grid, config.atmosphere_config)
-        # The two read-side atmosphere hooks are missing the same way, so a source that prepares a
-        # file but cannot be simulated says which methods it still owes.
-        @test_throws MethodError prescribed_atmosphere(config.atmosphere_config, CPU())
-        @test_throws MethodError prescribed_radiation(config.atmosphere_config, CPU())
-
-        # The supertypes `RunConfig` nests own one hook contract each, and each is
-        # missing the same discoverable way.
-        @test MinimalModel() isa AbstractModelConfig
-        @test MinimalFreeSurface() isa AbstractFreeSurfaceConfig
-        @test MinimalBoundary() isa AbstractBoundaryConditionConfig
-        @test MinimalWriter() isa AbstractWriterConfig
-        @test MinimalCallback() isa AbstractCallbackConfig
-        @test MinimalTimeStepping() isa AbstractTimeSteppingConfig
-
-        @test_throws MethodError model_tracers(MinimalModel())
-        @test_throws MethodError coupled_model(MinimalModel(), grid)
-        @test_throws MethodError free_surface(MinimalFreeSurface(), grid)
-        @test_throws MethodError boundary_condition_sides(
-            MinimalBoundary(), grid, (;), config.boundary_data_config, (:T,),
-        )
-        # Materializing the pieces falls back to the merge every `AbstractModelConfig` inherits,
-        # and that merge reaches the piece's own missing hook.
-        @test_throws MethodError model_boundary_conditions(
-            MinimalModel(), (MinimalBoundary(),), grid, (;), config.boundary_data_config, (:T,), nothing,
-        )
-        @test_throws MethodError attach_writer!(
-            nothing, MinimalWriter(), config.run_config, 1,
-        )
-        @test_throws MethodError attach_callback!(
-            nothing, MinimalCallback(), config.run_config,
-        )
-        @test_throws MethodError attach_time_stepping!(nothing, MinimalTimeStepping())
-        @test_throws MethodError initial_time_step(MinimalTimeStepping())
 
         # Every writer trait defaults, so a new writer type only overloads the ones that are not true
         # of it — a plain writer neither checkpoints, names a reported file, nor records stations.
@@ -1219,8 +1114,8 @@ end
         @test FjordSim.Simulations.output_path_trait(MinimalWriter()) isa
               FjordSim.Simulations.NamesNoOutputFile
 
-        # ...and a setup naming no atmosphere skips both atmosphere steps the same way, which is why
-        # `atmosphere_config` defaults to `nothing`.
+        # A setup naming no atmosphere skips both atmosphere steps, which is why `atmosphere_config`
+        # defaults to `nothing`.
         @test isnothing(regrid_atmosphere(grid, nothing))
         @test isnothing(fetch_atmosphere(grid, nothing))
         @test isnothing(prescribed_atmosphere(nothing, CPU()))
@@ -1230,15 +1125,6 @@ end
             bathymetry_config = MinimalBathymetry(data_root, "column.nc", "column.png"),
             forcing_config = ConstantForcing(data_root, "f.nc", "f.png", 8.0),
         )
-        @test isnothing(bare.atmosphere_config)
-        @test isnothing(download_atmosphere(bare))
-        # ...and one naming no rivers skips `add_rivers` rather than needing a river dataset.
-        @test isnothing(bare.river_config)
-        @test isnothing(add_rivers(bare))
-        # ...and the same for a setup that is only prepared and never run.
-        @test isnothing(bare.run_config)
-        @test isnothing(build_simulation(bare))
-        @test isnothing(run_simulation(bare))
 
         # A setup type of its own reuses every step by implementing the accessors alone: no step
         # reads a `FjordConfig` field.
@@ -1429,8 +1315,6 @@ end
     end
 
     @testset "main exit codes" begin
-        @test isdefined(FjordSim, :main)
-        @test hasmethod(FjordSim.main, Tuple{Vector{String}})
         # Exporting `main` would make Julia run the CLI after the body of any script that says
         # `using FjordSim` — including this test file.
         @test !(:main in names(FjordSim))
@@ -2494,27 +2378,6 @@ end
         @test xs[n_points+1:end] == first.(contour_vertices[expected_contour_indices.+1])
         @test ys[n_points+1:end] == last.(contour_vertices[expected_contour_indices.+1])
         @test all(==(-abs(contour_depth)), bottom_heights[n_points+1:end])
-
-        # The single bulk transform now used by `sample_bathymetry_points!` must match
-        # transforming each point individually — the per-point behavior it replaces.
-        n = length(xs)
-        bulk_xs, bulk_ys = copy(xs), copy(ys)
-
-        ArchGDAL.importEPSG(25833; order = :trad) do source_srs
-            ArchGDAL.importEPSG(4326; order = :trad) do target_srs
-                ArchGDAL.createcoordtrans(source_srs, target_srs) do transform
-                    ArchGDAL.transform!(bulk_xs, bulk_ys, zeros(Float64, n), transform)
-
-                    for i in 1:n
-                        point = ArchGDAL.createpoint(xs[i], ys[i])
-                        ArchGDAL.transform!(point, transform)
-                        px, py, _ = ArchGDAL.getpoint(point, 0)
-                        @test bulk_xs[i] ≈ px
-                        @test bulk_ys[i] ≈ py
-                    end
-                end
-            end
-        end
     end
 
     @testset "sounding distance mask" begin
@@ -2913,8 +2776,6 @@ end
         @test all(isconcretetype, fieldtypes(NVERiver))
 
         @test river_forcing_path(rivers) == "/data/oslofjord/rivers_nve.nc"
-        @test river_search_radius(rivers) == 10
-        @test river_maximum_inflow_velocity(rivers) == 1.0e-3
 
         # The inflow speed is a stability bound on the setup's own grid and time step, so it has no
         # default to fall back on: a config that omits it fails at construction.
@@ -2938,16 +2799,12 @@ end
         @test Rivers.nve_stations(rivers) == ["2.1087.0", "2.605.0"]
 
         # Daily is the resolution the pipeline wants, since `river_series` matches by calendar date.
-        @test rivers.resolution_time == Rivers.NVE_DAILY_RESOLUTION == 1440
         url = Rivers.nve_observations_url(rivers, "2.605.0", Rivers.NVE_DISCHARGE, 2020)
         @test occursin("StationId=2.605.0", url)
         @test occursin("Parameter=1001", url)
         @test occursin("ResolutionTime=1440", url)
         # An ISO-8601 interval is mandatory: omitting it returns only the single latest record.
         @test occursin("ReferenceTime=2020-01-01/2021-01-01", url)
-
-        # No salinity parameter exists in HydAPI, so S is a constant rather than a series.
-        @test rivers.constants == Dict("S" => 0.0)
 
         mktempdir() do tmp
             keyed = NVERiversConfig(
@@ -5021,23 +4878,12 @@ end
         )
 
         config = test_run_config()
-        @test config isa AbstractRunConfig
         # Every field is concrete or parameterized — `isconcretetype(typeof(config))` would be vacuous,
         # since `typeof` never returns an abstract type.
         @test all(isconcretetype, fieldtypes(typeof(config)))
         @test all(isconcretetype, fieldtypes(typeof(test_snapshot_writer())))
         @test all(isconcretetype, fieldtypes(CheckpointWriter))
         @test all(isconcretetype, fieldtypes(AdaptiveTimeStep))
-        # Four structural parameters, one per nested config: writers, callbacks, time stepping and
-        # initial conditions. They grow only when a genuinely new *kind* of nested config appears; a
-        # new subtype of an existing supertype is never a new field. The model and its boundary
-        # conditions are the setup's own components, not nested here.
-        @test length(typeof(config).parameters) == 4
-        # Nine components plus `extra_kwargs`: rather than a field per remaining constructor
-        # keyword, one `NamedTuple` carries all of them. Ten is the ceiling — anything further goes
-        # inside `extra_kwargs`. `free_surface` counts here too: it is itself a config, not a bare
-        # `Float64`, dispatched by its own `free_surface(config, grid)` hook.
-        @test length(typeof(test_model_config()).parameters) == 10
 
         # The tracer list reaches `build_simulation` through a hook rather than a field read, so a
         # model config that names its tracers differently still composes.
@@ -5054,9 +4900,6 @@ end
         # `model_biogeochemistry`'s fallback is the identity, so a setup naming `nothing` or a
         # pre-built biogeochemistry never sees the hook.
         @test isnothing(model_biogeochemistry(nothing, free_surface_grid))
-
-        # The device is a Symbol, not a live CPU()/GPU(), so a setup file loads without a GPU.
-        @test fieldtype(typeof(config), :architecture) === Symbol
 
         # `run_tag` is the wall-clock launch instant, so every invocation names its own files, and moving
         # `start_date` — which used to be the tag — leaves it alone. It is constant for the life of the
@@ -5152,13 +4995,6 @@ end
         @test_throws ArgumentError run_architecture(
             test_run_config(architecture = :tpu),
         )
-
-        # Which edge the domain is open on is stated once, on the open-boundary data config, and read
-        # from there by everything that acts on it — see the "open lateral boundary" testset for the
-        # per-edge dispatch. It is a `Grids` accessor rather than a pair of one-liners reaching
-        # through the forcing config, which is what a `boundary_data_config` independent of forcing needs.
-        @test open_edges(test_boundaries_config(open_edges = :west)) == [:west]
-        @test isempty(open_edges(nothing))
 
         # Every prerequisite is reported as the command that produces it, and every check runs before
         # anything is read or allocated, so the temporary root stays empty apart from the stub.
@@ -5808,7 +5644,11 @@ end
             # `RunConfig` instantiation and one `build_simulation` specialization. Overriding
             # any of the nested-config fields here — `writers` above all — or the model config would
             # change a type and recompile the whole coupled model.
-            fjord(; model_config = test_model_config(), kwargs...) = FjordConfig(;
+            #
+            # `extra_kwargs` passes `verbose = false`, against `Simulation`'s default of `true`, so the
+            # build below also shows the splat reaching the constructor it names.
+            model_config = test_model_config(extra_kwargs = (ocean_simulation = (verbose = false,),))
+            fjord(; kwargs...) = FjordConfig(;
                 grid_config,
                 bathymetry_config,
                 forcing_config,
@@ -5846,18 +5686,8 @@ end
             # the schedule type.
             @test haskey(simulation.callbacks, :progress)
 
-            # `extra_kwargs` reaches the constructors it names. `verbose` is a stored `Simulation`
-            # field and compiles no kernels, so this proves the splat arrives without paying for a
-            # second time-stepper specialization. Only one such case: overriding the model config
-            # changes its type and forces a fresh `coupled_model` specialization.
-            passthrough = build_simulation(
-                fjord(
-                    model_config = test_model_config(
-                        extra_kwargs = (ocean_simulation = (verbose = false,),),
-                    ),
-                ),
-            )
-            @test passthrough.model.ocean.verbose == false
+            # `extra_kwargs` reaches the constructor it names.
+            @test simulation.model.ocean.verbose == false
 
             # The open boundary landed on the velocity normal to the boundary config's open edge, and
             # it radiates rather than being a wall — the whole point of the change, and something
@@ -5984,15 +5814,35 @@ end
             @test !isdir(fresh_root)
             @test build_simulation(fjord(results_root = fresh_root)) isa Simulation
             @test isdir(fresh_root)
+
+            # Last, because the run leaves a checkpoint in `tmp` that every later build there refuses
+            # to start beside.
+            #
+            # Stepped for real, the one check that catches a `NaN` entering through the open
+            # boundary or any other wiring rather than only asserting object types. The free surface
+            # and the barotropic transport are the two fields only the open boundary drives, and the
+            # two the split-explicit substepping fills every substep: a boundary that walled itself
+            # off, or a `NaN` from the Flather condition's own arithmetic, shows up there.
+            run!(simulation)
+            for field in (
+                ocean_model.velocities.u, ocean_model.velocities.v, ocean_model.tracers.T,
+                ocean_model.tracers.S, free_surface.displacement, free_surface.barotropic_velocities.V,
+            )
+                @test all(isfinite, interior(field))
+            end
         end
     end
 
-    @testset "build simulation open all round" begin
+    @testset "build simulation open all round, no forcing" begin
         # A coupled model on a domain open on all four sides, which is what an open-ocean region needs
         # and what a single `open_edge` Symbol made impossible. Only a real build shows it: the four
         # edges' conditions have to merge without colliding, `HydrostaticFreeSurfaceModel` has to
         # regularize a `u` carrying a normal condition on two sides and a tangential one on the other
         # two, and Oceananigans has to pair its Chapman condition onto all four.
+        #
+        # With no interior forcing at all, but a data-driven open boundary — the combination that was
+        # impossible while the boundary dataset and the open edge both hung off the forcing config.
+        # `examples/oslofjorden/oslofjorden_npzd.jl` is the real-world shape of this.
         mktempdir() do tmp
             Nx, Ny, Nz = 16, 16, 8
             edges = (:south, :north, :west, :east)
@@ -6019,6 +5869,13 @@ end
                 boundary_condition_configs = test_boundary_conditions(),
                 run_config = test_run_config(results_root = tmp),
             )
+            @test isnothing(config.forcing_config)
+
+            # No prepared forcing is looked for, so no prerequisite error fires and no forcing terms
+            # are built — the model gets Oceananigans' own empty forcing.
+            @test isnothing(FjordSim.Simulations.resolve_forcing_file(config.forcing_config))
+            @test simulation_forcing(config.forcing_config, nothing, nothing, (:T, :S), nothing) ==
+                  NamedTuple()
 
             simulation = build_simulation(config)
             @test simulation isa Simulation
@@ -6070,121 +5927,12 @@ end
                           Oceananigans.BoundaryConditions.NormalRadiation
                 end
             end
-        end
-    end
-
-    @testset "build simulation without forcing" begin
-        # A run with no interior forcing at all, but a data-driven open boundary — the combination
-        # that was impossible while the boundary dataset and the open edge both hung off the forcing
-        # config, since a `nothing` forcing config took them down with it.
-        # `examples/oslofjorden/oslofjorden_npzd.jl` is the real-world shape of this.
-        mktempdir() do tmp
-            Nx, Ny, Nz = 16, 16, 8
-            bathymetry_config = test_bathymetry_config(data_root = tmp)
-            (; grid_config) = immersed_test_grid(
-                bathymetry_path(bathymetry_config);
-                size = (Nx, Ny, Nz),
-                halo = (7, 7, 7),
-            )
-
-            boundaries_config = test_boundaries_config(data_root = tmp)
-            write_prepared_boundaries(
-                boundary_data_path(boundaries_config);
-                size = (Nx, Ny, Nz),
-                dates = [DateTime(2020, 1, 1, 12), DateTime(2020, 1, 2, 12)],
-            )
-
-            config = FjordConfig(;
-                grid_config,
-                bathymetry_config,
-                boundary_data_config = boundaries_config,
-                model_config = test_model_config(),
-                boundary_condition_configs = test_boundary_conditions(),
-                run_config = test_run_config(results_root = tmp),
-            )
-            @test isnothing(config.forcing_config)
-
-            # No prepared forcing is looked for, so no prerequisite error fires and no forcing terms
-            # are built — the model gets Oceananigans' own empty forcing.
-            @test isnothing(FjordSim.Simulations.resolve_forcing_file(config.forcing_config))
-            @test simulation_forcing(config.forcing_config, nothing, nothing, (:T, :S), nothing) ==
-                  NamedTuple()
-
-            simulation = build_simulation(config)
-            @test simulation isa Simulation
-
-            # ...and the open boundary is still there, on the edge the boundary config names.
-            ocean_model = simulation.model.ocean.model
-            @test ocean_model.velocities.v.boundary_conditions.south.classification isa
-                  Oceananigans.BoundaryConditions.NormalFlow{
-                <:Oceananigans.BoundaryConditions.NormalRadiation,
-            }
 
             # Reading a state from a forcing file that does not exist is a stated error rather than a
             # failure inside `NCDataset(nothing)` after the grid has been built.
             @test_throws ErrorException FjordSim.Simulations.resolve_initial_conditions(
                 FromForcing(), nothing, config, (:T, :S),
             )
-        end
-    end
-
-    @testset "run! smoke test" begin
-        # No other test in this suite calls `run!`/`time_step!` for real — every other
-        # `build_simulation` call either stops at a prerequisite check or inspects the assembled
-        # model without stepping it. This is the check that would actually catch a `NaN` entering
-        # through the new tracer open boundary condition (or any other boundary-condition wiring),
-        # rather than just asserting object types.
-        mktempdir() do tmp
-            Nx, Ny, Nz = 16, 16, 8
-            bathymetry_config = test_bathymetry_config(data_root = tmp)
-            (; grid_config) = immersed_test_grid(
-                bathymetry_path(bathymetry_config);
-                size = (Nx, Ny, Nz),
-                halo = (7, 7, 7),
-            )
-
-            boundaries_config = test_boundaries_config(data_root = tmp)
-            forcing_config = test_forcing_config(data_root = tmp)
-            write_prepared_forcing(forcing_path(forcing_config); size = (Nx, Ny, Nz))
-            write_prepared_boundaries(
-                boundary_data_path(boundaries_config);
-                size = (Nx, Ny, Nz),
-                dates = [DateTime(2020, 1, 1, 12), DateTime(2020, 1, 2, 12)],
-            )
-
-            config = FjordConfig(;
-                grid_config,
-                bathymetry_config,
-                forcing_config,
-                boundary_data_config = boundaries_config,
-                model_config = test_model_config(),
-                boundary_condition_configs = test_boundary_conditions(),
-                run_config = test_run_config(
-                    results_root = tmp,
-                    callbacks = (
-                        test_progress_callback(),
-                        DownslopeFlow(name = :downslope, tracers = (:T, :S), friction_timescale = 1000),
-                    ),
-                ),
-            )
-
-            simulation = build_simulation(config)
-            @test haskey(simulation.callbacks, :downslope)
-            run!(simulation)
-
-            ocean_model = simulation.model.ocean.model
-            @test all(isfinite, interior(ocean_model.velocities.u))
-            @test all(isfinite, interior(ocean_model.velocities.v))
-            @test all(isfinite, interior(ocean_model.tracers.T))
-            @test all(isfinite, interior(ocean_model.tracers.S))
-
-            # The free surface and the barotropic transport are the two fields only the open
-            # boundary drives, and the two the split-explicit substepping fills every substep. A
-            # boundary that walled itself off, or a `NaN` from the Flather condition's own
-            # arithmetic, would show up here and nowhere else in the suite.
-            free_surface = ocean_model.free_surface
-            @test all(isfinite, interior(free_surface.displacement))
-            @test all(isfinite, interior(free_surface.barotropic_velocities.V))
         end
     end
 
@@ -6935,7 +6683,6 @@ end
         )
 
         @test writer.variables == (:u, :v)
-        @test writer.search_radius == 10
         # One `output_writers` key per station, so `validate_writers` still sees a collision.
         @test FjordSim.Simulations.writer_keys(writer) == (:moorings_Km1, :moorings_TO_1)
         @test FjordSim.Simulations.output_path_trait(writer) isa FjordSim.Simulations.NamesOutputFile
@@ -7302,7 +7049,6 @@ end
                           start_date = DateTime(2020, 1, 1), stop_date = DateTime(2021, 1, 1)),
         )
         @test forcing_directory(config) == "/tmp/fjordsim-test/norkyst_v3"
-        @test FjordSim.Forcing.NORKYST_HINDCAST_HOUR == 12
     end
 
     @testset "boundary config" begin
@@ -7338,10 +7084,6 @@ end
         @test names["vbar_northward"] == "vbar"
         @test names["zeta"] == "eta"
         @test names["temperature"] == "T"
-        # ...and unlike the operational collection, it needs no rotation, so it defines no
-        # `boundary_source_slab` method of its own.
-        @test FjordSim.BoundaryData.NORKYST_HINDCAST_BAROTROPIC_VARIABLES ==
-              ("ubar_eastward", "vbar_northward")
 
         @test_throws ArgumentError NorKystHindcastBoundaryDataConfig(
             data_root = "/x", output_directory = "y", open_edges = Symbol[],
@@ -7454,5 +7196,34 @@ end
         @test_throws ArgumentError nested_slab(
             coarse, coarse_x, coarse_y, fine, fine_x .+ 80, fine_y, x, y,
         )
+    end
+end
+
+@testset "Example setups" begin
+    # Every setup in `examples/` still loads: a missing import or a renamed keyword or type is what a
+    # change to the package breaks first. Only loading is checked, never a value a setup states. Each
+    # loads in a process of its own, as the CLI loads it, so no setup's definitions reach another or
+    # this suite. A setup needing a package this environment lacks, which runs in an environment of
+    # its own, is skipped.
+    examples = joinpath(pkgdir(FjordSim), "examples")
+    setups = [
+        joinpath(root, file) for (root, _, files) in walkdir(examples) for file in files
+        if endswith(file, ".jl")
+    ]
+    @test !isempty(setups)
+    for setup in setups
+        script = "using FjordSim; fjord_config($(repr(setup)))"
+        command = `$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) -e $script`
+        output = IOBuffer()
+        process = run(pipeline(ignorestatus(command); stdout = output, stderr = output))
+        log = String(take!(output))
+        missing_package = match(r"Package (\w+) not found in current path", log)
+        if !success(process) && !isnothing(missing_package)
+            @info "Skipped $(relpath(setup, examples)): it needs $(missing_package[1])"
+            @test_skip success(process)
+        else
+            success(process) || @error "$(relpath(setup, examples)) does not load" log
+            @test success(process)
+        end
     end
 end

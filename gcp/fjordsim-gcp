@@ -3,11 +3,9 @@
 # Run FjordSim pipeline steps on shared GCE VMs, and move data between this machine and the bucket.
 #
 # The VMs are long-lived and shared — a GPU VM, and optionally N CPU-only preprocessing VMs — and
-# come up one of two ways. With launch jobs configured, Cloud Run jobs set up by an admin create or
-# start them, so the operator needs no Compute Engine rights (job mode). Without, `up` creates or
-# starts them itself (direct mode). Everything after that happens over SSH (OS Login, with sudo):
+# `up` creates or starts them. Everything after that happens over SSH (OS Login, with sudo):
 # `bootstrap` makes a VM able to run containers, `run` ships a script to it and detaches. There is no
-# per-run VM and no startup script. gcp/README.md, "The deployment model", has what each mode needs.
+# per-run VM and no startup script. gcp/README.md, "The deployment model", has what it needs.
 
 set -euo pipefail
 
@@ -21,13 +19,8 @@ _fjordsim_load_config "$here/config.env"
 PROJECT_ID="${PROJECT_ID:-}"
 BUCKET="${BUCKET:-}"
 IMAGE_URI="${IMAGE_URI:-}"
-JOB_REGION="${JOB_REGION:-}"
 VM_NAME="${VM_NAME:-}"
-LAUNCH_JOB_SPOT="${LAUNCH_JOB_SPOT:-}"
-LAUNCH_JOB_STANDARD="${LAUNCH_JOB_STANDARD:-}"
 PREP_VM_PREFIX="${PREP_VM_PREFIX:-}"
-LAUNCH_JOB_PREP="${LAUNCH_JOB_PREP:-}"
-STOP_JOB_PREP="${STOP_JOB_PREP:-}"
 ZONES="${ZONES:-}"
 SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-}"
 GPU_MACHINE_TYPE="${GPU_MACHINE_TYPE:-}"
@@ -51,23 +44,19 @@ Usage: gcp/fjordsim-gcp SUBCOMMAND [options] [--vm N|NAME]
                      PREP_VM_PREFIX-N, anything else an instance name. Default: VM_NAME, the GPU
                      VM — except for `logs`, which defaults to the VM the run was launched on.
 
-The VMs (job mode when a launch job is configured, direct mode otherwise; see gcp/README.md):
-  up [--standard]    Create the GPU VM, or start it if it is stopped, and wait. Spot by default,
-                     on-demand with --standard. Job mode executes the matching launch job; direct
-                     mode tries each zone in ZONES until one has capacity.
-  up --prep [N]      Create or start the CPU-only VMs PREP_VM_PREFIX-1 ... -N, and wait. Job mode:
-                     as many as the launch job's task count, which N overrides (needs
-                     run.jobs.runWithOverrides and run.jobs.get). Direct mode: N, or every
-                     existing preprocessing VM without it.
+The VMs (see gcp/README.md):
+  up                 Create the GPU VM, or start it if it is stopped, and wait. Tries each zone in
+                     ZONES until one has capacity.
+  up --prep [N]      Create or start the CPU-only VMs PREP_VM_PREFIX-1 ... -N, and wait. Without N,
+                     start every existing preprocessing VM.
   bootstrap          Install Docker on the VM — and on a GPU VM the NVIDIA driver and container
                      toolkit — and pull the image. Idempotent: a second call is a fast no-op.
   down               Shut the VM down from inside (sudo poweroff), which needs no
                      compute.instances.stop. The boot disk survives; `up` starts it again.
-  down --prep        Stop every preprocessing VM, whatever it is running: the stop job in job
-                     mode. Their disks survive, and are billed while stopped.
+  down --prep        Stop every preprocessing VM, whatever it is running. Their disks survive,
+                     and are billed while stopped.
   delete [--prep]    Delete the VM (or every preprocessing VM) and its disk, after a typed
-                     confirmation. Ends the disk's cost; the next `up` creates it afresh. Needs
-                     compute.instances.delete.
+                     confirmation. Ends the disk's cost; the next `up` creates it afresh.
   ssh [ARGS...]      SSH into the VM. Extra arguments go to `gcloud compute ssh`.
 
 Data movement (between this machine and the bucket):
@@ -111,7 +100,7 @@ EOF
 }
 
 # --- the VM --------------------------------------------------------------------------------------
-# A VM's zone is whichever its launcher found capacity in, so it is looked up, never configured.
+# A VM's zone is whichever of ZONES had capacity when it was created, so it is looked up, never configured.
 # Cached: every subcommand that touches the VM needs it, and it cannot change while one is running.
 # Call it once in the main shell before `$(vm_zone)`: there, a `die` would end only the subshell,
 # and the cache would never fill.
@@ -157,30 +146,10 @@ instance_zone() {
         --filter="name=$1" --format='value(zone.basename())' | head -1
 }
 
-# --- job mode ------------------------------------------------------------------------------------
-# An operator may be allowed to execute the preprocessing jobs without reading them or their
-# executions, so a job is launched `--async` and the VMs' own status stands in for `--wait`: until
-# one is RUNNING and none is starting (`up`), or none is left running (`down`).
-wait_prep_vms() {
-    local direction="$1" waited=0 states
-    while :; do
-        states="$(prep_vms 'value(status)' | sort -u | tr '\n' ' ')"
-        if [[ "$direction" == "up" ]]; then
-            [[ "$states" == *RUNNING* && ! "$states" =~ PROVISIONING|STAGING ]] && break
-        else
-            [[ ! "$states" =~ RUNNING|STOPPING ]] && break
-        fi
-        (( waited < 900 )) || die "the preprocessing VMs did not settle within 15 minutes: $states"
-        sleep 15
-        waited=$((waited + 15))
-    done
-    prep_vms
-}
-
-# --- direct mode ---------------------------------------------------------------------------------
+# --- creating and starting ----------------------------------------------------------------------
 # Create NAME in the first zone of ZONES with capacity, or start it where it already lives: a
 # stopped VM's disk pins it to its zone. `instances create` and `start` return once it is RUNNING.
-# KIND is gpu-spot, gpu-standard or prep.
+# KIND is gpu or prep.
 ensure_instance() {
     local name="$1" kind="$2" zone status
     zone="$(instance_zone "$name")"
@@ -189,7 +158,6 @@ ensure_instance() {
             --format='value(status)')"
         case "$status" in
             RUNNING|PROVISIONING|STAGING) echo "$name is $status in $zone" ;;
-            # A VM keeps the provisioning model it was created with: `delete` it to change that.
             *) echo "starting $name in $zone"
                gcloud compute instances start "$name" --project="$PROJECT_ID" --zone="$zone" ;;
         esac
@@ -214,8 +182,6 @@ ensure_instance() {
         # A GPU VM cannot live-migrate, so host maintenance has to stop it.
         args+=(--maintenance-policy=TERMINATE)
         [[ -n "$GPU_ACCELERATOR" ]] && args+=(--accelerator="$GPU_ACCELERATOR")
-        # STOP, not DELETE: a preempted VM keeps its disk, bootstrap included, and `up` restarts it.
-        [[ "$kind" == gpu-spot ]] && args+=(--provisioning-model=SPOT --instance-termination-action=STOP)
     fi
 
     local candidate
@@ -234,52 +200,27 @@ ensure_instance() {
 }
 
 cmd_up_prep() {
-    local count="${1:-}" tasks=()
+    local count="${1:-}"
     [[ -z "$count" || "$count" =~ ^[1-9][0-9]*$ ]] || die "up --prep takes the number of VMs, e.g. up --prep 3."
-    need PROJECT_ID
+    need PROJECT_ID; need PREP_VM_PREFIX
 
-    if [[ -n "$LAUNCH_JOB_PREP" ]]; then
-        need JOB_REGION
-        [[ -n "$count" ]] && tasks=(--tasks="$count")
-        echo "executing $LAUNCH_JOB_PREP ${count:+with $count tasks}"
-        gcloud run jobs execute "$LAUNCH_JOB_PREP" --project="$PROJECT_ID" --region="$JOB_REGION" \
-            "${tasks[@]}" --async
-        wait_prep_vms up
+    local names=() name i
+    if [[ -n "$count" ]]; then
+        for (( i = 1; i <= count; i++ )); do names+=("$PREP_VM_PREFIX-$i"); done
     else
-        need PREP_VM_PREFIX
-        local names=() name i
-        if [[ -n "$count" ]]; then
-            for (( i = 1; i <= count; i++ )); do names+=("$PREP_VM_PREFIX-$i"); done
-        else
-            mapfile -t names < <(prep_vms 'value(name)' | sort -V)
-            (( ${#names[@]} )) || die "no preprocessing VMs exist yet: give the number to create, e.g. up --prep 2."
-        fi
-        for name in "${names[@]}"; do ensure_instance "$name" prep; done
-        echo
-        prep_vms
+        mapfile -t names < <(prep_vms 'value(name)' | sort -V)
+        (( ${#names[@]} )) || die "no preprocessing VMs exist yet: give the number to create, e.g. up --prep 2."
     fi
+    for name in "${names[@]}"; do ensure_instance "$name" prep; done
+    echo
+    prep_vms
     echo "next:   gcp/fjordsim-gcp bootstrap --vm N, for each RUNNING N"
 }
 
 cmd_up() {
     [[ "${1:-}" == "--prep" ]] && { cmd_up_prep "${2:-}"; return; }
-    local standard=false
-    [[ "${1:-}" == "--standard" ]] && standard=true
-    need PROJECT_ID
-
-    if [[ -n "$LAUNCH_JOB_SPOT$LAUNCH_JOB_STANDARD" ]]; then
-        local job_variable=LAUNCH_JOB_SPOT
-        [[ "$standard" == "true" ]] && job_variable=LAUNCH_JOB_STANDARD
-        need JOB_REGION; need "$job_variable"
-        local job="${!job_variable}"
-        # A launcher that retries zones until one has GPU capacity can keep --wait blocked a long time.
-        echo "executing $job (this waits for capacity; it can take a while)"
-        gcloud run jobs execute "$job" --project="$PROJECT_ID" --region="$JOB_REGION" --wait
-    else
-        need VM_NAME
-        if [[ "$standard" == "true" ]]; then ensure_instance "$VM_NAME" gpu-standard
-        else ensure_instance "$VM_NAME" gpu-spot; fi
-    fi
+    need PROJECT_ID; need VM_NAME
+    ensure_instance "$VM_NAME" gpu
 
     VM_ZONE=""
     vm_zone >/dev/null
@@ -292,19 +233,12 @@ cmd_up() {
 cmd_down() {
     if [[ "${1:-}" == "--prep" ]]; then
         need PROJECT_ID
-        if [[ -n "$STOP_JOB_PREP" ]]; then
-            need JOB_REGION
-            echo "executing $STOP_JOB_PREP"
-            gcloud run jobs execute "$STOP_JOB_PREP" --project="$PROJECT_ID" --region="$JOB_REGION" --async
-            wait_prep_vms down
-        else
-            local name zone
-            while read -r name zone; do
-                echo "stopping $name in $zone"
-                gcloud compute instances stop "$name" --project="$PROJECT_ID" --zone="$zone"
-            done < <(prep_vms 'value(name,zone.basename())' | sort -V)
-            prep_vms
-        fi
+        local name zone
+        while read -r name zone; do
+            echo "stopping $name in $zone"
+            gcloud compute instances stop "$name" --project="$PROJECT_ID" --zone="$zone"
+        done < <(prep_vms 'value(name,zone.basename())' | sort -V)
+        prep_vms
         return
     fi
     # The guest powers itself off over OS Login sudo, which needs no compute.instances.stop. That
@@ -570,8 +504,8 @@ case "$cmd" in
             run_vm="$(gcloud storage cat "$BUCKET/runs/$run_id/vm" 2>/dev/null || true)"
             [[ -n "$run_vm" ]] && VM_NAME="$run_vm"
         fi
-        # The VM is deleted outright on preemption, taking the live log with it; the bucket copy is
-        # written by the run's exit trap and is all that is left.
+        # A VM that is down — stopped, powered off or deleted — has no live log to tail; the bucket
+        # copy is written by the run's exit trap.
         if vm_exists && vm_zone >/dev/null && [[ "$(vm_status)" == "RUNNING" ]]; then
             vm_ssh --command "tail -f ~/fjordsim-$run_id.log"
         else

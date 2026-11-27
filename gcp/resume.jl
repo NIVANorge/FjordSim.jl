@@ -1,7 +1,7 @@
 # Resume a simulation from its newest checkpoint: `julia --project gcp/resume.jl <config.jl>`.
 #
 # `pickup` is a `RunConfig` field rather than a command-line option, so resuming after a
-# Spot preemption would otherwise mean editing the setup. `FjordConfig` and `RunConfig` are
+# interruption would otherwise mean editing the setup. `FjordConfig` and `RunConfig` are
 # both mutable, so flipping it here needs no change to the package and leaves the setup honest
 # about how it starts by default.
 #

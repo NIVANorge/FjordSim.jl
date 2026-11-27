@@ -1,5 +1,7 @@
 # FjordSim.jl
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24538068.svg)](https://doi.org/10.5281/zenodo.24538068)
+
 A package for regional ocean and lake simulations built on top of
 [Oceananigans](https://github.com/CliMA/Oceananigans.jl) and
 [NumericalEarth](https://github.com/NumericalEarth/NumericalEarth.jl).
@@ -26,9 +28,9 @@ piece of it is in one place, compact and easy to read.
 
 ## Examples
 
-[`examples/oslofjorden/oslofjorden.jl`](examples/oslofjorden/oslofjorden.jl): October 2024 to October 2026.
-The animation below is an earlier setup, April 2014 to December 2015:
-[`examples/oslofjorden_validation.jl` at 49e1eaa](https://github.com/NIVANorge/FjordSim.jl/blob/49e1eaad897aa4cd741404a54d918b8a8baf40d7/examples/oslofjorden_validation.jl).
+[`examples/oslofjorden/oslofjorden.jl`](examples/oslofjorden/oslofjorden.jl): October 2024 to
+October 2026. Its comparison with observations is in the
+[Oslofjord validation report](https://limash.github.io/OslofjordValidationReport/).
 
 ![Oslofjorden surface temperature, salinity and currents](artifacts/oslofjorden_surface.gif)
 
@@ -71,8 +73,7 @@ or set the destination in a config file.
 [`examples/moro/moro.jl`](examples/moro/moro.jl) is the simplest complete setup: Geonorge bathymetry
 on a 500 m grid, an initial state from one NorKyst-800m daily mean, NVE rivers, hourly NorKyst-800m
 open-boundary data along the western and northern edges, and NORA3 atmosphere, over 2023 with T and
-S only. It names no forcing, so `download_forcing` and `prepare_forcing` report that and do nothing.
-Please note: It may take several hours to download the data.
+S only. Please note: It may take several hours to download the data.
 
 `add_rivers` also needs a free NVE HydAPI key — sign up at https://hydapi.nve.no/Users and set it
 as `NVE_API_KEY` in your environment before running that step.
@@ -116,6 +117,24 @@ point for the REPL and the debugger. Snapshots and a per-launch log land in
 What to re-run after changing the run window or the grid, how to archive a run before a fresh
 rerun, and how to resume are in [`docs/running.md`](docs/running.md).
 
+## Working with AI coding agents
+
+The repository is prepared for AI coding agents (Claude Code, Codex, GitHub Copilot, Cursor) to
+write new setups, add data sources and run the pipeline. Ask in plain words, for example
+"set up a simulation of Hardangerfjorden with the same sources as Oslofjorden" or
+"add a forcing source that reads my model's NetCDF output".
+
+- `CLAUDE.md` (also linked as `AGENTS.md`) gives every agent the commands, the hard rules and the
+  conventions, and points it to the doc for each task.
+- Two skills hold step-by-step checklists: `new-setup` for writing a setup and `run-simulation` for
+  running its steps. They live in `.claude/skills/` (also linked as `.agents/skills/`), and an agent
+  loads one when a request matches it; in Claude Code, `/new-setup` or `/run-simulation` loads it
+  explicitly.
+- [`docs/adding-a-source.md`](docs/adding-a-source.md) and [`docs/setups.md`](docs/setups.md) describe
+  how a new grid, bathymetry, forcing, river, boundary, atmosphere or observation source and a new
+  setup are written: a new source subtypes a config supertype and overloads its hooks, so it never
+  touches the generic pipeline.
+
 ## What a run is made of
 
 A run reads prepared files only, each written by its own step onto — or along — the simulation grid.
@@ -138,60 +157,6 @@ run does without that component. So a setup names what it wants and skips the re
 | Observations | `observation_configs` | `download_observations`, `validate_simulation` | scored against Kartverket's tide gauges alone, at the stations the tide-gauge writers record |
 | Validation | `validation_config` | `validate_simulation` | each station scored from its station writer alone: no snapshot columns, domain extremes or depth-band tables |
 
-Scoring against CTD casts from Vannmiljø needs a `VANNMILJO_API_KEY`, issued by
-Miljødirektoratet on request, for `download_observations`. Without the key, or with no casts in the domain,
-`validate_simulation` still runs: with a `validation_config` it writes the domain statistics from
-the snapshots (`domain_extremes.csv` and `.png`) and the station map, and warns that nothing was
-scored. Tables go to `<results_root>/validation/data/` and figures to `validation/plots/`.
-
-The model, its biogeochemistry, its boundary conditions and the run are separate components, side
-by side with the data: `model_config` says what is built, `run_config` how it is run.
-
-1. **Bathymetry** — the domain's depth and land/sea mask. `prepare_bathymetry` regrids a bathymetry
-   source onto the simulation grid (built from the grid config's bounds and resolution) and writes the
-   result as a NetCDF file. That file is what actually defines the model's `ImmersedBoundaryGrid`. The
-   built-in source is the public [Geonorge](https://www.geonorge.no/) Sjøkart Dybdedata dataset.
-
-2. **Initial state** — one record of a larger-scale ocean model at its config's `start_date`, for a
-   realistic start without the whole-window download the forcing (below) needs.
-   `download_initial_state` fetches a single day (built in: the NorKyst-800m daily mean of the day
-   `start_date` falls in) and `prepare_initial_state` regrids it onto the simulation grid;
-   `FromInitialState()` initial conditions read it. The file records the `start_date` it was prepared
-   for, and a run starting at another one refuses it.
-
-3. **Rivers** — `add_rivers` writes each river's daily discharge and temperature on the surface
-   columns it enters through (built in: NVE's HydAPI), which the run adds as a volume source. It is its
-   own config and file, independent of the forcing: it needs only the processed bathymetry and the
-   river config's own period, `start_date` to `stop_date`, which its daily time axis spans.
-
-4. **Open-boundary data** — the exterior state along the open lateral edges, which is what makes them
-   open. `prepare_boundary_data` regrids the *hourly* NorKyst collection onto the boundary rows,
-   including surface elevation and depth-averaged velocities, so the tide survives. The boundary
-   condition itself is Flather on the transport plus Orlanski radiation with inflow nudging on
-   everything else. Any subset of the four edges can be open — a fjord names one, a region in the
-   open ocean names all four, and all of them share one prepared file.
-
-5. **Atmosphere** — the surface forcing a run needs but a regional ocean model does not carry.
-   `prepare_atmosphere` regrids a reanalysis product (built in: MET Norway's
-   [NORA3](https://thredds.met.no/thredds/projects/nora3.html)) onto its own regular longitude/latitude
-   grid, independent of the ocean grid since NumericalEarth interpolates between them, producing the
-   eight variables a `PrescribedAtmosphere`/`PrescribedRadiation` pair needs.
-
-6. **Forcing** — interior fields from a larger-scale ocean model. `prepare_forcing` regrids them
-   (built in: NorKyst-800m daily means of temperature, salinity and velocity) onto the simulation
-   grid, each with a rate field `λ` beside it. The run adds every variable to the model as a forcing
-   term: where `|λ| < 1` it relaxes the model field towards the file's value at rate `λ` (s⁻¹) — the
-   interior nudging ROMS does towards its climatology file — and where `|λ| > 1` it reads the value as
-   a tracer flux into the cell, a source or sink. The built-in `prepare_forcing` writes `λ = 0`
-   everywhere, so today these terms are zero and the file serves as the `FromForcing` initial state
-   — the ocean starts from a realistic state rather than a uniform water column.
-
-The initial state, rivers, open-boundary data and forcing go onto the bathymetry's grid, so their
-steps need the processed bathymetry: that is where their land mask comes from. The atmosphere is
-independent. `FromForcing` initial conditions need a prepared forcing file and `FromInitialState` a
-prepared initial state; a setup with neither starts from constants, functions, or `FromResults` from
-an earlier run.
-
 ### A new fjord
 
 No setup is part of the package: every one is a standalone `.jl` file whose last expression is its
@@ -201,24 +166,6 @@ on another with `base = include("oslofjorden.jl")`, as the variants in `examples
 ```bash
 julia --project -m FjordSim run_simulation --config examples/oslofjorden/oslofjorden_npzd.jl
 ```
-
-## Working with AI coding agents
-
-The repository is prepared for AI coding agents (Claude Code, Codex, GitHub Copilot, Cursor) to
-write new setups, add data sources and run the pipeline. Ask in plain words, for example
-"set up a simulation of Hardangerfjorden with the same sources as Oslofjorden" or
-"add a forcing source that reads my model's NetCDF output".
-
-- `CLAUDE.md` (also linked as `AGENTS.md`) gives every agent the commands, the hard rules and the
-  conventions, and points it to the doc for each task.
-- Two skills hold step-by-step checklists: `new-setup` for writing a setup and `run-simulation` for
-  running its steps. They live in `.claude/skills/` (also linked as `.agents/skills/`), and an agent
-  loads one when a request matches it; in Claude Code, `/new-setup` or `/run-simulation` loads it
-  explicitly.
-- [`docs/adding-a-source.md`](docs/adding-a-source.md) and [`docs/setups.md`](docs/setups.md) describe
-  how a new grid, bathymetry, forcing, river, boundary, atmosphere or observation source and a new
-  setup are written: a new source subtypes a config supertype and overloads its hooks, so it never
-  touches the generic pipeline.
 
 ## Some `run_simulation` details
 
@@ -232,7 +179,6 @@ write new setups, add data sources and run the pipeline. Ask in plain words, for
 | `loops` | how many times to repeat that window, carrying the ocean state over |
 | `initial_conditions` | where the first state comes from |
 | `pickup` | resume from the newest checkpoint instead of starting fresh |
-
 
 ### Checkpointing
 

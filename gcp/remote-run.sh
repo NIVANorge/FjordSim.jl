@@ -5,7 +5,7 @@
 # leaves a status marker and a copy of its own log in the bucket.
 #
 # It does not delete the VM at the end: the workflow never manages instances, and the VM is
-# long-lived and shared by every run. Use `fjordsim-gcp down` when you are finished with it.
+# long-lived and shared by every run. Use `fjordsim-gcp down --vm` when you are finished with it.
 set -euo pipefail
 
 readonly BUCKET="${BUCKET}"
@@ -20,6 +20,7 @@ readonly STAGE_ALL="${STAGE_ALL}"
 readonly EXTRA_FJORDS="${EXTRA_FJORDS}"
 readonly DEBUG="${DEBUG}"
 readonly CPU="${CPU}"
+readonly VM_ARG="${VM_ARG}"
 
 readonly STAGE=/mnt/stage
 readonly DATA="$STAGE/data"
@@ -146,7 +147,7 @@ finish() {
     fi
 
     echo "=== $RUN_ID finished (exit=$code) on $(hostname) ==="
-    echo "the VM is left running; stop it with: gcp/fjordsim-gcp down --vm $(hostname)"
+    echo "the VM is left running; stop it with: gcp/fjordsim-gcp down --vm $VM_ARG"
 }
 trap finish EXIT
 

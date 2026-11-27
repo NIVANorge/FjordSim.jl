@@ -1,8 +1,8 @@
 # Running FjordSim on GCP
 
-`run_simulation` needs a GPU and runs on the GPU VM. Data preparation — every `download_*` and
+`run_simulation` needs a GPU and runs on a GPU VM. Data preparation — every `download_*` and
 `prepare_*` step and `add_rivers` — runs on the CPU-only preprocessing VMs, not locally and not on
-the GPU VM, which would bill a GPU the prepare steps never use. `download_atmosphere` alone is close
+a GPU VM, which would bill a GPU the prepare steps never use. `download_atmosphere` alone is close
 to 10000 OPeNDAP reads per simulated year, and the Geonorge bathymetry source is a 4.5 GB FileGDB.
 
 This directory runs any pipeline step of any setup on shared GCE VMs — a GPU VM for the
@@ -15,10 +15,10 @@ image: which setup and which steps are arguments to one launch.
 `fjordsim-gcp` creates, starts, stops and deletes the VMs itself with `gcloud compute instances`,
 and everything after `up` goes over SSH with sudo:
 
-- VMs are **long-lived and shared**, not one per run: one GPU VM, `VM_NAME`, and optionally the
-  preprocessing VMs `PREP_VM_PREFIX-1` ... `-N`. Every subcommand that acts on a VM takes
-  `--vm N|NAME` to pick one; the default is the GPU VM. Any other name is another GPU VM, for runs in
-  parallel or on another GPU type: `up --vm NAME [--machine-type T] [--accelerator A]` creates it.
+- VMs are **long-lived and shared**, not one per run: a GPU VM per kind of GPU in `GPU_KINDS`,
+  `GPU_VM_PREFIX-KIND` (`fjordsim-gpu-l4`), and optionally the preprocessing VMs
+  `PREP_VM_PREFIX-1` ... `-N`. Every subcommand that acts on a VM needs `--vm KIND|N` — a GPU kind
+  such as `l4` or `a100`, or a preprocessing VM's number — so nothing runs on a VM by default.
 - There is **no startup script** — `run` ships a script over `scp` and detaches it with `nohup`.
 - Nothing self-deletes. `down` shuts a VM down *from inside* (`sudo poweroff`); `delete` removes a
   VM and its disk. Both act on the one VM `--vm` names, or with `--prep` on every preprocessing VM.
@@ -31,7 +31,7 @@ gets Ubuntu 22.04, a `pd-balanced` boot disk, OS Login and the `cloud-platform` 
 
 | VM | Created with |
 |---|---|
-| GPU, `up [--vm NAME]` | `GPU_MACHINE_TYPE`, `GPU_ACCELERATOR` if set, `GPU_DISK_SIZE`; `--machine-type` and `--accelerator` replace the first two for a VM being created |
+| GPU, `up --vm KIND` | the kind's machine type in `GPU_KINDS`, `GPU_DISK_SIZE` |
 | preprocessing, `up --prep N` | `PREP_MACHINE_TYPE`, `PREP_DISK_SIZE`; `-1` ... `-N`. Without `N`, `up --prep` starts every existing one. |
 
 All are on-demand (standard) VMs. Size the GPU disk for the data directory plus the output written
@@ -93,16 +93,17 @@ All of them facts about the deployment:
 | `PROJECT_ID` | the project the VMs live in |
 | `BUCKET` | `gs://…` — staged inputs, results and uploaded configs |
 | `IMAGE_URI` | the full image URI; everything else about the registry follows from it |
-| `VM_NAME` | the GPU instance |
+| `GPU_VM_PREFIX` | the GPU VMs are `GPU_VM_PREFIX-KIND`; `--vm KIND` names one |
+| `GPU_KINDS` | the GPU kinds and their machine types, each with its GPU built in: `"l4=g2-standard-8 a100=a2-highgpu-1g"` |
 | `PREP_VM_PREFIX` | the preprocessing VMs are `PREP_VM_PREFIX-1` ... `-N`; `--vm N` names the Nth. Empty without them. |
-| `ZONES`, `GPU_MACHINE_TYPE`, `GPU_ACCELERATOR`, `GPU_DISK_SIZE`, `PREP_MACHINE_TYPE`, `PREP_DISK_SIZE`, `SERVICE_ACCOUNT` | what `up` creates the VMs with ("The deployment model") |
+| `ZONES`, `GPU_DISK_SIZE`, `PREP_MACHINE_TYPE`, `PREP_DISK_SIZE`, `SERVICE_ACCOUNT` | what `up` creates the VMs with ("The deployment model") |
 
 `IMAGE_URI` is written out in full, so the repository may be in any project or region.
 
 Every variable is also overridable per invocation, so a one-off needs no edit at all:
 
 ```bash
-BUCKET=gs://other-bucket gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu
+BUCKET=gs://other-bucket gcp/fjordsim-gcp run --vm l4 --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu
 ```
 
 ### 2. Build and push the image
@@ -120,13 +121,13 @@ being billed for a GPU that is doing nothing.
 ## The loop
 
 ```bash
-gcp/fjordsim-gcp up                                  # create or start the VM
-gcp/fjordsim-gcp bootstrap                           # driver, Docker, toolkit, image pull
-gcp/fjordsim-gcp run --config examples/drammensfjorden/drammensfjorden.jl --steps run_simulation --gpu
+gcp/fjordsim-gcp up --vm l4                          # create or start the L4 GPU VM
+gcp/fjordsim-gcp bootstrap --vm l4                   # driver, Docker, toolkit, image pull
+gcp/fjordsim-gcp run --vm l4 --config examples/drammensfjorden/drammensfjorden.jl --steps run_simulation --gpu
 gcp/fjordsim-gcp logs <run-id>
 gcp/fjordsim-gcp pull-results drammensfjorden
-gcp/fjordsim-gcp down                                # stop billing; the disk survives
-gcp/fjordsim-gcp delete                              # when done for good: the disk goes too
+gcp/fjordsim-gcp down --vm l4                        # stop billing; the disk survives
+gcp/fjordsim-gcp delete --vm l4                      # when done for good: the disk goes too
 ```
 
 `up` is idempotent: it creates the VM if it is gone, starts it if it is stopped, and exits cleanly
@@ -140,7 +141,7 @@ then a reboot it drives itself), Docker and the container toolkit; on a second c
 
 ### Prepare on the preprocessing VMs
 
-Always pass `--vm N`: without it `run` goes to the GPU VM. The VMs are cheaper than the GPU VM and
+`--vm N` picks preprocessing VM N. The VMs are cheaper than a GPU VM and
 there can be several, so the slow downloads of one setup run side by side, each on its own VM:
 
 ```bash
@@ -209,7 +210,7 @@ fetched by the VM, so a config may `include` a sibling — as `examples/oslofjor
 fjord — the basename is what roots the staged directories.
 
 ```bash
-gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden_npzd.jl --steps run_simulation --gpu
+gcp/fjordsim-gcp run --vm l4 --config examples/oslofjorden/oslofjorden_npzd.jl --steps run_simulation --gpu
 ```
 
 ### A setup with its own environment
@@ -242,14 +243,14 @@ which is what has CUDA as a direct dependency.
 
 ### Resuming after an interruption
 
-Host maintenance can stop the GPU VM in the middle of a long run. Recovery is `up`, `bootstrap` (a
+Host maintenance can stop a GPU VM in the middle of a long run. Recovery is `up`, `bootstrap` (a
 no-op, since the disk survived), then the same run id with `--resume`:
 
 ```bash
-gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020
+gcp/fjordsim-gcp run --vm l4 --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020
 # after an interruption:
-gcp/fjordsim-gcp up && gcp/fjordsim-gcp bootstrap
-gcp/fjordsim-gcp run --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020 --resume
+gcp/fjordsim-gcp up --vm l4 && gcp/fjordsim-gcp bootstrap --vm l4
+gcp/fjordsim-gcp run --vm l4 --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020 --resume
 ```
 
 `--resume` stages the newest checkpoint in `results/<fjord>/` back down and sets `pickup = true`
@@ -269,7 +270,7 @@ finishes"). A fresh run starts on the VM from an empty results directory.
 ```bash
 gcp/fjordsim-gcp status            # every run marker in the bucket
 gcp/fjordsim-gcp logs oslo-2020    # tail on the VM, bucket copy once it is gone
-gcp/fjordsim-gcp ssh               # the VM is a normal box; docker ps, nvidia-smi, etc.
+gcp/fjordsim-gcp ssh --vm l4      # the VM is a normal box; docker ps, nvidia-smi, etc.
 ```
 
 Results sync up every 10 minutes while the run is in flight, so `pull-results` mid-run gives you

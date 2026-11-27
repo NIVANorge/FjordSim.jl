@@ -18,7 +18,7 @@
 # its own environment"), with `roho`'s data staged beside its own. The environment also carries YAML,
 # so one image runs NivaEcosmo's `fjordsim_model/moro.jl` too.
 #
-#   gcp/fjordsim-gcp run --config examples/roho/roho_ecosmo.jl --stage roho --steps ...
+#   gcp/fjordsim-gcp run --vm <KIND|N> --config examples/roho/roho_ecosmo.jl --stage roho --steps ...
 #
 # # Where the tracer values come from
 #

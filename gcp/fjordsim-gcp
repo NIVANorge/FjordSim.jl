@@ -19,12 +19,11 @@ _fjordsim_load_config "$here/config.env"
 PROJECT_ID="${PROJECT_ID:-}"
 BUCKET="${BUCKET:-}"
 IMAGE_URI="${IMAGE_URI:-}"
-VM_NAME="${VM_NAME:-}"
+GPU_VM_PREFIX="${GPU_VM_PREFIX:-}"
+GPU_KINDS="${GPU_KINDS:-}"
 PREP_VM_PREFIX="${PREP_VM_PREFIX:-}"
 ZONES="${ZONES:-}"
 SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-}"
-GPU_MACHINE_TYPE="${GPU_MACHINE_TYPE:-}"
-GPU_ACCELERATOR="${GPU_ACCELERATOR:-}"
 GPU_DISK_SIZE="${GPU_DISK_SIZE:-}"
 PREP_MACHINE_TYPE="${PREP_MACHINE_TYPE:-}"
 PREP_DISK_SIZE="${PREP_DISK_SIZE:-}"
@@ -38,20 +37,16 @@ need() { [[ -n "${!1:-}" ]] || die "$1 is not set. Copy gcp/config.env.example t
 
 usage() {
     cat <<'EOF'
-Usage: gcp/fjordsim-gcp SUBCOMMAND [options] [--vm N|NAME]
+Usage: gcp/fjordsim-gcp SUBCOMMAND [options] [--vm KIND|N]
 
-  --vm N|NAME        The VM that up, bootstrap, down, delete, ssh, run and logs act on: N is
-                     preprocessing VM PREP_VM_PREFIX-N, anything else a GPU VM of that name.
-                     Default: VM_NAME, the GPU VM — except for `logs`, which defaults to the VM the
-                     run was launched on.
+  --vm KIND|N        The VM that up, bootstrap, down, delete, ssh, run and logs act on, and every
+                     one of them but `logs` needs it: KIND is a GPU kind of GPU_KINDS (e.g. l4,
+                     a100), the VM GPU_VM_PREFIX-KIND; N is preprocessing VM PREP_VM_PREFIX-N.
+                     `logs` defaults to the VM the run was launched on.
 
 The VMs (see gcp/README.md):
-  up [--machine-type T] [--accelerator A]
-                     Create the GPU VM, or start it if it is stopped, and wait. Tries each zone in
-                     ZONES until one has capacity. With --vm NAME, another GPU VM: several can run
-                     at once. --machine-type replaces GPU_MACHINE_TYPE, and GPU_ACCELERATOR with it
-                     unless --accelerator is given too, for a VM being created, e.g.
-                     `up --vm fjordsim-gpu-a100 --machine-type a2-highgpu-1g`.
+  up                 Create the VM --vm names, or start it if it is stopped, and wait. Tries each
+                     zone in ZONES until one has capacity. A GPU VM gets its kind's machine type.
   up --prep [N]      Create or start the CPU-only VMs PREP_VM_PREFIX-1 ... -N, and wait. Without N,
                      start every existing preprocessing VM.
   bootstrap          Install Docker on the VM — and on a GPU VM the NVIDIA driver and container
@@ -61,9 +56,9 @@ The VMs (see gcp/README.md):
                      `down --vm 2` stops preprocessing VM 2 alone.
   down --prep        Stop every preprocessing VM, whatever it is running. Their disks survive,
                      and are billed while stopped.
-  delete [--prep]    Delete the VM (or with --prep every preprocessing VM) and its disk, after a
-                     typed confirmation. Ends the disk's cost; the next `up` creates it afresh.
-                     `delete --vm 2` deletes preprocessing VM 2 alone.
+  delete [--prep]    Delete the VM --vm names (or with --prep every preprocessing VM) and its
+                     disk, after a typed confirmation. Ends the disk's cost; the next `up` creates
+                     it afresh. `delete --vm 2` deletes preprocessing VM 2 alone.
   ssh [ARGS...]      SSH into the VM. Extra arguments go to `gcloud compute ssh`.
 
 Data movement (between this machine and the bucket):
@@ -114,16 +109,16 @@ EOF
 VM_ZONE=""
 vm_zone() {
     if [[ -z "$VM_ZONE" ]]; then
-        need PROJECT_ID; need VM_NAME
+        need PROJECT_ID; need_vm
         VM_ZONE="$(gcloud compute instances list --project="$PROJECT_ID" \
             --filter="name=$VM_NAME" --format='value(zone)' | head -1)"
-        [[ -n "$VM_ZONE" ]] || die "$VM_NAME does not exist. Run: gcp/fjordsim-gcp up"
+        [[ -n "$VM_ZONE" ]] || die "$VM_NAME does not exist. Run: gcp/fjordsim-gcp up --vm $VM_ARG"
     fi
     printf '%s\n' "$VM_ZONE"
 }
 
 vm_exists() {
-    need PROJECT_ID; need VM_NAME
+    need PROJECT_ID; need_vm
     [[ -n "$(gcloud compute instances list --project="$PROJECT_ID" \
         --filter="name=$VM_NAME" --format='value(name)' | head -1)" ]]
 }
@@ -140,6 +135,27 @@ vm_ssh() {
 # Ship a local file to the VM's home directory.
 vm_push() {
     gcloud compute scp "$1" "$VM_NAME:$2" --project="$PROJECT_ID" --zone="$(vm_zone)" --quiet
+}
+
+# The machine type of a GPU kind in GPU_KINDS ("l4=g2-standard-8 a100=a2-highgpu-1g"), or nothing.
+gpu_machine_type() {
+    local pair
+    for pair in $GPU_KINDS; do
+        [[ "${pair%%=*}" == "$1" ]] && { printf '%s\n' "${pair#*=}"; return 0; }
+    done
+    return 0
+}
+
+gpu_kind_names() {
+    local pair names=()
+    for pair in $GPU_KINDS; do names+=("${pair%%=*}"); done
+    printf '%s' "${names[*]}"
+}
+
+# Every subcommand that acts on a VM is told which one: there is no default VM.
+need_vm() {
+    [[ -n "$VM_NAME" ]] ||
+        die "name the VM with --vm: a GPU kind ($(gpu_kind_names)) or a preprocessing VM number."
 }
 
 # A preprocessing VM is PREP_VM_PREFIX-N; any other name is a GPU VM.
@@ -189,11 +205,11 @@ ensure_instance() {
         need PREP_MACHINE_TYPE; need PREP_DISK_SIZE
         args+=(--machine-type="$PREP_MACHINE_TYPE" --boot-disk-size="${PREP_DISK_SIZE}GB")
     else
-        need GPU_MACHINE_TYPE; need GPU_DISK_SIZE
+        need GPU_DISK_SIZE
+        [[ -n "$GPU_MACHINE_TYPE" ]] || die "$name is no GPU kind of GPU_KINDS ($(gpu_kind_names))."
         args+=(--machine-type="$GPU_MACHINE_TYPE" --boot-disk-size="${GPU_DISK_SIZE}GB")
         # A GPU VM cannot live-migrate, so host maintenance has to stop it.
         args+=(--maintenance-policy=TERMINATE)
-        [[ -n "$GPU_ACCELERATOR" ]] && args+=(--accelerator="$GPU_ACCELERATOR")
     fi
 
     local candidate
@@ -231,36 +247,16 @@ cmd_up_prep() {
 
 cmd_up() {
     [[ "${1:-}" == "--prep" ]] && { cmd_up_prep "${2:-}"; return; }
-    need PROJECT_ID; need VM_NAME
-    local machine_type="" accelerator=""
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --machine-type) machine_type="${2:?--machine-type takes a machine type}"; shift 2 ;;
-            --accelerator)  accelerator="${2:?--accelerator takes type=...,count=N}"; shift 2 ;;
-            *) die "up takes --prep [N], --machine-type T or --accelerator A, not $1." ;;
-        esac
-    done
-    # A machine type of another family comes with its own GPUs, or needs others than config.env's.
-    if [[ -n "$machine_type" ]]; then GPU_MACHINE_TYPE="$machine_type"; GPU_ACCELERATOR="$accelerator"; fi
-    if [[ -n "$accelerator" ]]; then GPU_ACCELERATOR="$accelerator"; fi
-
-    local kind=gpu
-    if is_prep_vm "$VM_NAME"; then
-        [[ -z "$machine_type$accelerator" ]] ||
-            die "--machine-type and --accelerator are for a GPU VM; $VM_NAME is a preprocessing VM."
-        kind=prep
-    fi
-    if [[ -n "$machine_type$accelerator" && -n "$(instance_zone "$VM_NAME")" ]]; then
-        echo "$VM_NAME exists: --machine-type and --accelerator apply only when a VM is created"
-    fi
-    ensure_instance "$VM_NAME" "$kind"
+    [[ $# -eq 0 ]] || die "up takes --prep [N] or --vm KIND|N, not $1."
+    need PROJECT_ID; need_vm
+    ensure_instance "$VM_NAME" "$(is_prep_vm "$VM_NAME" && echo prep || echo gpu)"
 
     VM_ZONE=""
     vm_zone >/dev/null
     echo
     echo "vm:     $VM_NAME  (zone $(vm_zone))"
     echo "status: $(vm_status)"
-    echo "next:   gcp/fjordsim-gcp bootstrap$($vm_given && echo " --vm $VM_NAME")"
+    echo "next:   gcp/fjordsim-gcp bootstrap --vm $VM_ARG"
 }
 
 cmd_down() {
@@ -395,6 +391,8 @@ cmd_run() {
     done
 
     [[ -n "$config_ref" ]] || die "--config is required."
+    need_vm
+    $use_gpu && is_prep_vm "$VM_NAME" && die "--gpu needs a GPU VM; $VM_NAME is a preprocessing VM."
     [[ -n "$steps" ]] || die "--steps is required."
     need PROJECT_ID; need BUCKET; need IMAGE_URI
 
@@ -442,8 +440,8 @@ cmd_run() {
     script="$(BUCKET="$BUCKET" FJORD="$fjord" RUN_ID="$run_id" STEPS="$steps" \
         CONFIG_OBJECT="$config_object" IMAGE_URI="$IMAGE_URI" \
         USE_GPU="$use_gpu" RESUME="$resume" STAGE_ALL="$stage_all" EXTRA_FJORDS="$extra_fjords" \
-        DEBUG="$debug" CPU="$cpu" \
-        envsubst '$BUCKET $FJORD $RUN_ID $STEPS $CONFIG_OBJECT $IMAGE_URI $USE_GPU $RESUME $STAGE_ALL $EXTRA_FJORDS $DEBUG $CPU' \
+        DEBUG="$debug" CPU="$cpu" VM_ARG="$VM_ARG" \
+        envsubst '$BUCKET $FJORD $RUN_ID $STEPS $CONFIG_OBJECT $IMAGE_URI $USE_GPU $RESUME $STAGE_ALL $EXTRA_FJORDS $DEBUG $CPU $VM_ARG' \
         < "$here/remote-run.sh")"
 
     if [[ "$dry" == "true" ]]; then
@@ -458,7 +456,7 @@ cmd_run() {
     fi
 
     vm_zone >/dev/null
-    [[ "$(vm_status)" == "RUNNING" ]] || die "$VM_NAME is not RUNNING. Start it with: gcp/fjordsim-gcp up"
+    [[ "$(vm_status)" == "RUNNING" ]] || die "$VM_NAME is not RUNNING. Start it with: gcp/fjordsim-gcp up --vm $VM_ARG"
 
     echo "uploading $(dirname "$config_ref")/*.jl -> $(dirname "$config_object")/"
     gcloud storage cp "$(dirname "$config_ref")"/*.jl "$(dirname "$config_object")/"
@@ -489,12 +487,21 @@ tmp="$(mktemp -d -t fjordsim-gcp.XXXXXX)"
 trap 'rm -rf "$tmp"' EXIT
 
 # `--vm` may stand anywhere on the line; take it out before the subcommands parse the rest.
+VM_NAME="" VM_ARG="" GPU_MACHINE_TYPE=""
 vm_given=false
 args=()
 while [[ $# -gt 0 ]]; do
     if [[ "$1" == "--vm" ]]; then
-        [[ -n "${2:-}" ]] || die "--vm takes a preprocessing VM number or an instance name."
-        if [[ "$2" =~ ^[0-9]+$ ]]; then need PREP_VM_PREFIX; VM_NAME="$PREP_VM_PREFIX-$2"; else VM_NAME="$2"; fi
+        VM_ARG="${2:-}"
+        if [[ "$VM_ARG" =~ ^[0-9]+$ ]]; then
+            need PREP_VM_PREFIX; VM_NAME="$PREP_VM_PREFIX-$VM_ARG"
+        else
+            need GPU_VM_PREFIX
+            GPU_MACHINE_TYPE="$(gpu_machine_type "$VM_ARG")"
+            [[ -n "$GPU_MACHINE_TYPE" ]] ||
+                die "--vm takes a GPU kind ($(gpu_kind_names)) or a preprocessing VM number, not '$VM_ARG'."
+            VM_NAME="$GPU_VM_PREFIX-$VM_ARG"
+        fi
         vm_given=true
         shift 2
     else
@@ -546,7 +553,7 @@ case "$cmd" in
             gcloud storage cat "$BUCKET/runs/$run_id/run.log"
         fi
         ;;
-    ssh)          vm_zone >/dev/null; exec gcloud compute ssh "$VM_NAME" --project="$PROJECT_ID" --zone="$(vm_zone)" "$@" ;;
+    ssh)          need_vm; vm_zone >/dev/null; exec gcloud compute ssh "$VM_NAME" --project="$PROJECT_ID" --zone="$(vm_zone)" "$@" ;;
     ""|-h|--help) usage ;;
     *)            usage; exit 1 ;;
 esac

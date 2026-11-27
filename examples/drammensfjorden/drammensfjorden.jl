@@ -30,7 +30,7 @@ using Oceananigans:
     WENO,
     WENOVectorInvariant
 using Oceananigans.TurbulenceClosures: HorizontalScalarBiharmonicDiffusivity
-using Oceananigans.Units: hour, hours, minutes, second
+using Oceananigans.Units: days, hour, hours, minutes, second
 using Dates: DateTime
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using NumericalEarth: FreezingLimitedOceanTemperature

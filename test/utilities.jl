@@ -16,10 +16,8 @@ using Oceananigans.TurbulenceClosures: HorizontalScalarBiharmonicDiffusivity
 using Oceananigans.Units: day, days, hour, minute, minutes, second
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
 using NumericalEarth: FreezingLimitedOceanTemperature
-using FjordSim.Configs: AbstractAtmosphereConfig, AbstractBathymetryConfig,
-    AbstractBoundaryConditionConfig, AbstractCallbackConfig, AbstractFjordConfig,
-    AbstractModelConfig, AbstractForcingConfig, AbstractFreeSurfaceConfig,
-    AbstractGridConfig, AbstractRiverConfig, AbstractRunConfig, AbstractTimeSteppingConfig,
+using FjordSim.Configs: AbstractAtmosphereConfig, AbstractBathymetryConfig, AbstractFjordConfig,
+    AbstractForcingConfig, AbstractGridConfig, AbstractRiverConfig, AbstractRunConfig,
     AbstractWriterConfig
 
 # Alternative config types
@@ -74,15 +72,9 @@ FjordSim.Configs.results_root(config::MinimalRun) = config.root
 FjordSim.Configs.start_date(config::MinimalRun) = config.first_date
 FjordSim.Configs.stop_date(config::MinimalRun) = config.last_date
 
-# The supertypes `RunConfig` nests, plus the free surface one level further down, each with
-# no hook overloaded, so the "Config extensibility" testset can assert that a missing hook surfaces
-# as a `MethodError` naming it.
-struct MinimalModel <: AbstractModelConfig end
-struct MinimalFreeSurface <: AbstractFreeSurfaceConfig end
-struct MinimalBoundary <: AbstractBoundaryConditionConfig end
+# A writer with no trait overloaded, so the "Config extensibility" testset can check every writer
+# trait's default.
 struct MinimalWriter <: AbstractWriterConfig end
-struct MinimalCallback <: AbstractCallbackConfig end
-struct MinimalTimeStepping <: AbstractTimeSteppingConfig end
 
 # A setup type of its own that delegates every component to a wrapped `FjordConfig`, so the
 # "Config extensibility" testset can check that every step reaches its components through the
@@ -679,36 +671,6 @@ function write_hourly_source_stub(
                 variable[:, :, index] = fill(value(name, 1, index), NX, NY)
             end
         end
-    end
-
-    return filepath
-end
-
-"""
-    write_nora3_stub(filepath; dates = [0.0, 3600.0], size = (2, 2), temperature = 273.15,
-                     FT = Float64)
-
-The smallest file `MultiYearNORA3` will open. The `lon`/`lat`/`time` dimension names are the prepared
-file's contract, fixed by `NORA3FieldTimeSeries` reading its axes by them.
-
-`dates` is written as given, which is the one thing callers differ on: a `Vector{Float64}` gives the
-raw seconds axis a bare `MultiYearNORA3` accepts, a `Vector{DateTime}` the CF-encoded one a
-`Metadatum` needs — `DataWrangling.Metadata` yields a `NORA3Metadatum` only when its date decodes, so
-a raw axis would send `size` to the vector method and pass for the wrong reason.
-"""
-function write_nora3_stub(
-    filepath;
-    dates = [0.0, 3600.0],
-    size = (2, 2),
-    temperature = 273.15,
-    FT = Float64,
-)
-    NCDataset(filepath, "c") do ds
-        defDim(ds, "lon", size[1])
-        defDim(ds, "lat", size[2])
-        defDim(ds, "time", length(dates))
-        defVar(ds, "time", dates, ("time",))
-        defVar(ds, "air_temperature_2m", FT, ("lon", "lat", "time"))[:, :, :] .= temperature
     end
 
     return filepath

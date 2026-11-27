@@ -195,8 +195,8 @@ forcings.
   `julia --project test/runtests.jl` needs about 5 GB.
 - **Tests are general, never setup-specific.** Never assert a value a setup states — a grid size, a
   box, a year, a `start_date`, a station list, which dataset it picks. Those are the setup author's
-  to change, and a test that pins them turns every scientific choice into a test failure. The suite
-  never loads a file from `examples/`.
+  to change, and a test that pins them turns every scientific choice into a test failure. The one
+  test reading `examples/` is "Example setups", which checks only that each setup still loads.
 - Build fixtures from `test/utilities.jl` (`test_run_config`, `immersed_test_grid`, ...).
   A config file a test writes is evaluated in `Main`, so it can call those fixtures too.
 - **Do not test plotting.** No test asserts that a figure was drawn or how it looks.

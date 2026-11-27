@@ -199,6 +199,7 @@ FjordConfig(
                 name               = :surface,
                 output_file        = "snapshots_surface.jld2",
                 variables          = (:η, :T, :u, :v),
+                depth              = 0,
                 interval           = 1hour,
                 split_times        = monthly_splits,
                 overwrite_existing = true,

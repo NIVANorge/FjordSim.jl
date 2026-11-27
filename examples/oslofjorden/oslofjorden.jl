@@ -20,25 +20,13 @@ include("oslofjorden_hooks.jl")
 
 # --- Stations ---------------------------------------------------------------------------------
 #
-# Each group states where its positions come from: a published table is exact, prose or a map is not.
+# Each group states where its positions come from.
 
 # Kartverket's permanent tide gauges, from its station register. Exact.
 const OSLOFJORD_TIDE_GAUGES = [
     Station(name = "Viker",      longitude = 10.949769, latitude = 59.036046),
     Station(name = "Oscarsborg", longitude = 10.604861, latitude = 59.678073),
     Station(name = "Oslo",       longitude = 10.734510, latitude = 59.908559),
-]
-
-# The ADCP moorings of September-November 2014, METreport 11/2017 Table 1, with its depths. Exact.
-const OSLOFJORD_MOORINGS = [
-    Station(name = "Km1", longitude = 10.627372, latitude = 59.582064),  # Filtvedt,       153 m
-    Station(name = "Kn2", longitude = 10.646087, latitude = 59.581803),  # Brenntangen,     54 m
-    Station(name = "Ri1", longitude = 10.497661, latitude = 59.350124),  # Småskjær,        20 m
-    Station(name = "Rl1", longitude = 10.581023, latitude = 59.343452),  # Laksetrappa,     75 m
-    Station(name = "Rm1", longitude = 10.626822, latitude = 59.352375),  # Botnegrunnen,    96 m
-    Station(name = "Rn1", longitude = 10.653576, latitude = 59.363182),  # Evje,            64 m
-    # ExxonMobil's ADCP at the Slagen refinery, from the report's prose. APPROXIMATE.
-    Station(name = "Slagen", longitude = 10.517, latitude = 59.383),
 ]
 
 # NIVA's Ytre Oslofjord stations, METreport 11/2017 Table 2. Exact. AquaMonitor puts OF-1 5 km west,
@@ -173,15 +161,6 @@ const IMR_STATIONS = [
 
 const NIVA_CTD_STATIONS =
     vcat(OSLOFJORD_CTD_STATIONS, OSLOFJORD_PROGRAMME_STATIONS, INNER_OSLOFJORD_STATIONS)
-const OSLOFJORD_HYDROGRAPHY_STATIONS = vcat(NIVA_CTD_STATIONS, IMR_STATIONS)
-
-# Fixed-point temperature sites, METreport 11/2017 §3.4, placed from its prose and maps. APPROXIMATE.
-const OSLOFJORD_TEMPERATURE_STATIONS = [
-    Station(name = "Åsgårdstrand", longitude = 10.470, latitude = 59.322),  # Scanmar, 1 m
-    Station(name = "Sjøstrand",    longitude = 10.471, latitude = 59.811),
-    Station(name = "Hvalstrand",   longitude = 10.483, latitude = 59.837),
-    Station(name = "Storøyodden",  longitude = 10.630, latitude = 59.894),
-]
 
 # The NIVA stations whose casts start the water below the Drøbak and Svelvik sills
 # (`CastCorrectedInitialState`), at AquaMonitor's positions. Exact.
@@ -459,38 +438,23 @@ FjordConfig(
                 split_times        = monthly_splits,
                 overwrite_existing = true,
             ),
-            # JLD2, as η cannot go in a NetCDF writer (`FieldSnapshotWriter`).
+            # The 3.7-5.5 m level, where the FerryBox's intake draws. JLD2, as η cannot go in a
+            # NetCDF writer (`FieldSnapshotWriter`).
             SurfaceSnapshotWriter(
                 name               = :surface,
                 output_file        = "snapshots_surface.jld2",
                 variables          = (:η, :T, :S, :u, :v),
+                depth              = 4,
                 interval           = 1hour,
                 split_times        = monthly_splits,
                 overwrite_existing = true,
             ),
-            # Ten minutes resolves the shortest constituents for the harmonic analysis.
+            # Hourly gives the shortest constituent analysed, MS4 (6.1 h), six samples a period.
             FieldStationWriter(
                 name               = :tidegauge,
                 output_file        = "stations_tidegauge.jld2",
                 variables          = (:η,),
                 stations           = OSLOFJORD_TIDE_GAUGES,
-                interval           = 10minutes,
-                overwrite_existing = true,
-            ),
-            StationWriter(
-                name               = :moorings,
-                output_file        = "stations_moorings.nc",
-                variables          = (:u, :v),
-                stations           = OSLOFJORD_MOORINGS,
-                interval           = 1hour,
-                overwrite_existing = true,
-            ),
-            # `e` for the vertical mixing.
-            StationWriter(
-                name               = :hydrography,
-                output_file        = "stations_hydrography.nc",
-                variables          = (:T, :S, :e),
-                stations           = OSLOFJORD_HYDROGRAPHY_STATIONS,
                 interval           = 1hour,
                 overwrite_existing = true,
             ),
@@ -499,15 +463,6 @@ FjordConfig(
                 output_file        = "stations_section.nc",
                 variables          = (:T, :S, :e, :u, :v),
                 stations           = DRAMMENSFJORD_SECTION,
-                interval           = 1hour,
-                overwrite_existing = true,
-            ),
-            # The whole column, for the surface layer's diurnal cycle.
-            StationWriter(
-                name               = :surface_temperature,
-                output_file        = "stations_temperature.nc",
-                variables          = (:T,),
-                stations           = OSLOFJORD_TEMPERATURE_STATIONS,
                 interval           = 1hour,
                 overwrite_existing = true,
             ),

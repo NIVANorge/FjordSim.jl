@@ -12,8 +12,8 @@
 - NORA3 atmosphere with snowfall;
 - water held at or above freezing, with no ice.
 
-It writes what `validate_simulation` scores it with: tide gauges, CTD stations, current moorings,
-a section along the Drammensfjord and fixed-point temperature sites. `oslofjorden_npzd.jl` adds an
+It writes daily 3D snapshots, an hourly 4 m level, hourly sea level at the three tide gauges and an
+hourly section along the Drammensfjord. `oslofjorden_npzd.jl` adds an
 NPZD model to it. Problems with the simulation are in [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md).
 
 ## Preparing and running it
@@ -58,10 +58,10 @@ are out of reach whatever is tuned.
 `validate_simulation` fetches Kartverket's water level at the `:tidegauge` writer's stations itself.
 The NIVA and IMR casts come from Vannmiljø, fetched by `download_observations`, one source per
 contractor so each cast is scored once; each station takes the Vannmiljø location nearest it. The
-current moorings and the temperature sites are held by their owners and need a `CsvObservations`
-over an export. The Drammensfjord section is not an observation programme: it shows the basin's
-vertical mixing and its renewal over the sill. Its stations are every second cell of the deepest
-path through the 193 m grid, found by Dijkstra over wet cells with a step cost of distance / depth².
+casts are scored from the daily 3D snapshots. The Drammensfjord section is not an observation
+programme: it shows the basin's vertical mixing and its renewal over the sill. Its stations are
+every second cell of the deepest path through the 193 m grid, found by Dijkstra over wet cells with
+a step cost of distance / depth².
 
 ## Why the values are what they are
 
@@ -175,11 +175,12 @@ of the gauged ones. `maximum_inflow_velocity` (1 mm/s) is a vertical Courant num
 
 ### Output
 
-The daily 3D snapshots are 225 MB a record, 164 GB over the run; three-hourly would be 1.3 TB. The
-hourly surface file is 100 GB. The tide gauges are written every 10 minutes so the harmonic analysis
-resolves constituents down to MS4 (6.1 h). The moorings and CTD stations are hourly: the tide and a
-deep-water renewal both need it. The temperature sites write the whole column, since METreport
-11/2017 puts its beach discrepancy down to the surface layer's diurnal cycle.
+The daily 3D snapshots are 225 MB a record, 164 GB over the run; three-hourly would be 1.3 TB. They
+are what the casts are scored on. The hourly 4 m level, about 100 GB, is the level the FerryBox
+measures, and the surface and current maps are drawn from it. The tide gauges are hourly, six
+samples in a period of MS4 (6.1 h), the shortest constituent analysed. The Drammensfjord section
+is hourly for the tidal exchange over the Svelvik sill. There is no `StationWriter`: each of its
+stations is an output writer of its own, written every interval, and the casts need no hourly series.
 
 ## Data the setup uses
 
@@ -195,11 +196,8 @@ reads 0 m³/s from 6 May 2026 to the end and Mossevassdraget (Moss dam) from 7 M
 
 - IMR's Missingene is 110 m deep within a cell of the station against casts to 350 m, Tisler-5 31 m
   against 120 m (120 m water is a cell away), and Færder lies inside the southern boundary sponge.
-- Holmenfjorden (Cj1): the station writer places it in a column 7.9 m deep, 221 m from the station,
-  against casts to 62 m; 54 m water lies 437 m away.
-- The Slagen ADCP and the fixed-point temperature sites are placed from prose and maps, so their
-  positions are approximate. The temperature sites are a check on the surface heat budget, not a
-  skill target.
+- Holmenfjorden (Cj1): the model column nearest it is 7.9 m deep, 221 m from the station, against
+  casts to 62 m; 54 m water lies 437 m away.
 - Vannmiljø places Ø-1 and Cj1 about 600 m from the positions in the setup.
 
 ### Biogeochemistry

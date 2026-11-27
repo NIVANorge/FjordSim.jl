@@ -6937,6 +6937,7 @@ end
             name = :surface,
             output_file = "surface.jld2",
             variables = (:η, :T, :u),
+            depth = 0,
             interval = 1.0,
             split_times = [1.5],
             overwrite_existing = true,
@@ -6944,9 +6945,20 @@ end
         @test writer.split_times == [1.5]
         @test FjordSim.Simulations.output_path_trait(writer) isa FjordSim.Simulations.NamesOutputFile
         @test_throws ArgumentError SurfaceSnapshotWriter(
-            name = :surface, output_file = "s.jld2", variables = (),
+            name = :surface, output_file = "s.jld2", variables = (), depth = 0,
             interval = 1.0, split_times = Float64[], overwrite_existing = true,
         )
+        @test_throws ArgumentError SurfaceSnapshotWriter(
+            name = :surface, output_file = "s.jld2", variables = (:T,), depth = -1,
+            interval = 1.0, split_times = Float64[], overwrite_existing = true,
+        )
+
+        # The level whose faces enclose the depth; 0 is the top level.
+        level_containing = FjordSim.Simulations.level_containing
+        faces = Array(Oceananigans.Grids.znodes(grid, Face()))
+        @test level_containing(grid, 0) == 3
+        @test level_containing(grid, -(faces[2] + faces[3]) / 2) == 2
+        @test_throws ArgumentError level_containing(grid, 1 - first(faces))
 
         model = HydrostaticFreeSurfaceModel(
             grid;

@@ -833,11 +833,11 @@ function FieldSnapshotWriter(; name, output_file, variables, interval, overwrite
 end
 
 """
-    SurfaceSnapshotWriter(; name, output_file, variables, interval, split_times, overwrite_existing)
+    SurfaceSnapshotWriter(; name, output_file, variables, depth, interval, split_times, overwrite_existing)
 
-`FieldSnapshotWriter` for the top level only: each 3D field of `variables` is written as its top
-level, `(Nx, Ny, 1)` or `(Nx + 1, Ny, 1)` for `u`, and a z-reduced one such as `η` whole. Hourly
-surface fields cost 1/Nz of the whole ones.
+`FieldSnapshotWriter` for one level only: each 3D field of `variables` is written as the level that
+contains `depth` (in m, positive down; 0 is the top level), `(Nx, Ny, 1)` or `(Nx + 1, Ny, 1)` for
+`u`, and a z-reduced one such as `η` whole. Hourly fields of one level cost 1/Nz of the whole ones.
 
 A new file part, `<name>_part<n>.jld2`, starts at each of `split_times`, in seconds of model time.
 The layout is `FieldSnapshotWriter`'s.
@@ -846,6 +846,7 @@ struct SurfaceSnapshotWriter{V<:Tuple{Vararg{Symbol}}} <: AbstractWriterConfig
     name::Symbol
     output_file::String
     variables::V
+    depth::Float64
     interval::Float64
     split_times::Vector{Float64}
     overwrite_existing::Bool
@@ -855,12 +856,16 @@ function SurfaceSnapshotWriter(;
     name,
     output_file,
     variables,
+    depth,
     interval,
     split_times,
     overwrite_existing,
 )
     interval > 0 || throw(
         ArgumentError("A surface snapshot writer's `interval` must be positive, got $interval."),
+    )
+    depth >= 0 || throw(
+        ArgumentError("A surface snapshot writer's `depth` is positive down, got $depth."),
     )
     isempty(variables) &&
         throw(ArgumentError("Surface snapshot writer :$name names no `variables` to write."))
@@ -869,6 +874,7 @@ function SurfaceSnapshotWriter(;
         Symbol(name),
         String(output_file),
         Tuple(Symbol(variable) for variable in variables),
+        Float64(depth),
         Float64(interval),
         Float64.(split_times),
         Bool(overwrite_existing),
@@ -2041,9 +2047,22 @@ function attach_writer!(
     return simulation
 end
 
-# A view of the top level shares the model's memory. A field one level deep — `η`, which
+# A view of level `k` shares the model's memory. A field one level deep — `η`, which
 # `SplitExplicitFreeSurface` keeps on the top face alone — is already its own surface.
-top_level(field) = size(field, 3) == 1 ? field : view(field, :, :, size(field, 3))
+one_level(field, k) = size(field, 3) == 1 ? field : view(field, :, :, k)
+
+"""
+    level_containing(grid, depth)
+
+The index of the level whose faces enclose `depth` (m, positive down); the top level for 0.
+"""
+function level_containing(grid, depth)
+    faces = Array(znodes(grid, Face()))
+    -depth >= first(faces) || throw(
+        ArgumentError("Depth $depth m is below the grid's deepest face, $(-first(faces)) m."),
+    )
+    return min(searchsortedlast(faces, -depth), length(faces) - 1)
+end
 
 """
     attach_writer!(simulation, writer::SeaIceSnapshotWriter, config, loop)
@@ -2089,8 +2108,8 @@ sea_ice_simulation_of(sea_ice, writer) = throw(
 """
     attach_writer!(simulation, writer::SurfaceSnapshotWriter, config, loop)
 
-`FieldSnapshotWriter`'s attach, writing each output's top level and splitting the file at
-`writer.split_times`. A fresh splitting schedule each loop, since the clock restarts at zero.
+`FieldSnapshotWriter`'s attach, writing each output's level at `writer.depth` and splitting the file
+at `writer.split_times`. A fresh splitting schedule each loop, since the clock restarts at zero.
 """
 function attach_writer!(
     simulation,
@@ -2106,9 +2125,10 @@ function attach_writer!(
     filepath = loop_output_path(writer, config, loop)
     mkpath(dirname(filepath))
 
+    k = level_containing(ocean_sim.model.grid, writer.depth)
     ocean_sim.output_writers[writer.name] = JLD2Writer(
         ocean_sim.model,
-        map(top_level, snapshot_outputs(writer, ocean_sim.model));
+        map(field -> one_level(field, k), snapshot_outputs(writer, ocean_sim.model));
         filename = filepath,
         schedule = TimeInterval(writer.interval),
         file_splitting = SpecifiedTimes(writer.split_times),

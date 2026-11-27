@@ -312,6 +312,7 @@ FjordConfig(
                 name               = :surface,
                 output_file        = "snapshots_surface.jld2",
                 variables          = (:η, :T, :S, :u, :v),
+                depth              = 0,
                 interval           = 1hour,
                 split_times        = [(DateTime(2024, 1, 1) + Month(month) - DateTime(2024, 1, 1)) /
                                       Second(1) for month in 1:20],

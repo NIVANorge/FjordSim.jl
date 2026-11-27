@@ -7204,11 +7204,11 @@ end
     # change to the package breaks first. Only loading is checked, never a value a setup states. Each
     # loads in a process of its own, as the CLI loads it, so no setup's definitions reach another or
     # this suite. A setup needing a package this environment lacks, which runs in an environment of
-    # its own, is skipped.
+    # its own, is skipped, and so is a setup's `_hooks.jl` file, which only its setup includes.
     examples = joinpath(pkgdir(FjordSim), "examples")
     setups = [
         joinpath(root, file) for (root, _, files) in walkdir(examples) for file in files
-        if endswith(file, ".jl")
+        if endswith(file, ".jl") && !endswith(file, "_hooks.jl")
     ]
     @test !isempty(setups)
     for setup in setups

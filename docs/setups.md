@@ -43,6 +43,10 @@ Two ways to write one:
   assign the variant's own after the `include`. `gcp/fjordsim-gcp` uploads every `.jl` file beside
   the config, so the include works on the VM as well.
 
+A setup's own config types and hooks — a wrapper that corrects a prepared file, say — go in
+`<setup>_hooks.jl` beside it, which the setup `include`s (`examples/oslofjorden/oslofjorden_hooks.jl`).
+The suffix is what tells the "Example setups" test that the file is not a setup to load.
+
 Name the file after the fjord, lowercase, the same name `fjord_data_root` gets: `gcp/fjordsim-gcp`
 takes the basename as the fjord whose data and results directories it stages.
 

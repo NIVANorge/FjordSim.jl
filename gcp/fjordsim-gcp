@@ -37,16 +37,18 @@ need() { [[ -n "${!1:-}" ]] || die "$1 is not set. Copy gcp/config.env.example t
 
 usage() {
     cat <<'EOF'
-Usage: gcp/fjordsim-gcp SUBCOMMAND [options] [--vm KIND|N]
+Usage: gcp/fjordsim-gcp SUBCOMMAND [options] [--vm KIND-N|N|NAME]
 
-  --vm KIND|N        The VM that up, bootstrap, down, delete, ssh, run and logs act on, and every
-                     one of them but `logs` needs it: KIND is a GPU kind of GPU_KINDS (e.g. l4,
-                     a100), the VM GPU_VM_PREFIX-KIND; N is preprocessing VM PREP_VM_PREFIX-N.
-                     `logs` defaults to the VM the run was launched on.
+  --vm KIND-N|N|NAME The VM that up, bootstrap, down, delete, ssh, run and logs act on, and every
+                     one of them but `logs` needs it: KIND-N is GPU VM number N of a kind of
+                     GPU_KINDS, GPU_VM_PREFIX-KIND-N (`l4-1`, `l4-2`, `a100-1`); N is preprocessing
+                     VM PREP_VM_PREFIX-N; anything else an existing VM's full name. `logs` defaults
+                     to the VM the run was launched on.
 
 The VMs (see gcp/README.md):
   up                 Create the VM --vm names, or start it if it is stopped, and wait. Tries each
-                     zone in ZONES until one has capacity. A GPU VM gets its kind's machine type.
+                     zone in ZONES until one has capacity. A GPU VM gets its kind's machine type;
+                     a VM named in full is only started, never created.
   up --prep [N]      Create or start the CPU-only VMs PREP_VM_PREFIX-1 ... -N, and wait. Without N,
                      start every existing preprocessing VM.
   bootstrap          Install Docker on the VM — and on a GPU VM the NVIDIA driver and container
@@ -155,7 +157,7 @@ gpu_kind_names() {
 # Every subcommand that acts on a VM is told which one: there is no default VM.
 need_vm() {
     [[ -n "$VM_NAME" ]] ||
-        die "name the VM with --vm: a GPU kind ($(gpu_kind_names)) or a preprocessing VM number."
+        die "name the VM with --vm: KIND-N for a GPU VM (l4-1; kinds: $(gpu_kind_names)) or N for a preprocessing VM."
 }
 
 # A preprocessing VM is PREP_VM_PREFIX-N; any other name is a GPU VM.
@@ -206,7 +208,8 @@ ensure_instance() {
         args+=(--machine-type="$PREP_MACHINE_TYPE" --boot-disk-size="${PREP_DISK_SIZE}GB")
     else
         need GPU_DISK_SIZE
-        [[ -n "$GPU_MACHINE_TYPE" ]] || die "$name is no GPU kind of GPU_KINDS ($(gpu_kind_names))."
+        [[ -n "$GPU_MACHINE_TYPE" ]] ||
+            die "$name does not exist, and only --vm KIND-N creates a GPU VM (kinds: $(gpu_kind_names))."
         args+=(--machine-type="$GPU_MACHINE_TYPE" --boot-disk-size="${GPU_DISK_SIZE}GB")
         # A GPU VM cannot live-migrate, so host maintenance has to stop it.
         args+=(--maintenance-policy=TERMINATE)
@@ -247,7 +250,7 @@ cmd_up_prep() {
 
 cmd_up() {
     [[ "${1:-}" == "--prep" ]] && { cmd_up_prep "${2:-}"; return; }
-    [[ $# -eq 0 ]] || die "up takes --prep [N] or --vm KIND|N, not $1."
+    [[ $# -eq 0 ]] || die "up takes --prep [N] or --vm KIND-N|N, not $1."
     need PROJECT_ID; need_vm
     ensure_instance "$VM_NAME" "$(is_prep_vm "$VM_NAME" && echo prep || echo gpu)"
 
@@ -493,14 +496,19 @@ args=()
 while [[ $# -gt 0 ]]; do
     if [[ "$1" == "--vm" ]]; then
         VM_ARG="${2:-}"
+        [[ -n "$VM_ARG" ]] || die "--vm takes a GPU kind and number (l4-1), a preprocessing VM number or a VM's name."
         if [[ "$VM_ARG" =~ ^[0-9]+$ ]]; then
             need PREP_VM_PREFIX; VM_NAME="$PREP_VM_PREFIX-$VM_ARG"
-        else
+        elif [[ "$VM_ARG" =~ ^([a-z0-9]+)-([0-9]+)$ ]]; then
             need GPU_VM_PREFIX
-            GPU_MACHINE_TYPE="$(gpu_machine_type "$VM_ARG")"
+            GPU_MACHINE_TYPE="$(gpu_machine_type "${BASH_REMATCH[1]}")"
             [[ -n "$GPU_MACHINE_TYPE" ]] ||
-                die "--vm takes a GPU kind ($(gpu_kind_names)) or a preprocessing VM number, not '$VM_ARG'."
+                die "${BASH_REMATCH[1]} is no GPU kind of GPU_KINDS ($(gpu_kind_names))."
             VM_NAME="$GPU_VM_PREFIX-$VM_ARG"
+        elif [[ -n "$(gpu_machine_type "$VM_ARG")" ]]; then
+            die "give the GPU VM a number too: --vm $VM_ARG-1, $VM_ARG-2, ..."
+        else
+            VM_NAME="$VM_ARG"
         fi
         vm_given=true
         shift 2

@@ -21,12 +21,12 @@ relevant one first; this is the order to work through.
      finished; if it was not, archive it first (`gcp/README.md`, "When a run finishes"); confirm with
      the user before deleting anything in the bucket.
 4. **Run.** Check the VM is up, then
-   `gcp/fjordsim-gcp run --vm <KIND|N> --config <setup.jl> --steps <a,b,...> [--gpu] [--resume] [--run-id <id>]`.
+   `gcp/fjordsim-gcp run --vm <KIND-N|N> --config <setup.jl> --steps <a,b,...> [--gpu] [--resume] [--run-id <id>]`.
    Use `--dry-run` first when unsure what a launch will do. `add_rivers` needs `NVE_API_KEY`.
    - Data preparation (`download_*`, `prepare_*`, `add_rivers`) runs on the CPU-only preprocessing
      VMs with `--vm N`, one job per VM, in parallel — never locally or on a GPU VM
      (`gcp/README.md`, "Prepare on the preprocessing VMs").
-   - `run_simulation` runs on a GPU VM, `--vm l4` (or another kind of `GPU_KINDS`), with `--gpu`.
+   - `run_simulation` runs on a GPU VM, `--vm l4-1` (a kind of `GPU_KINDS` and a number), with `--gpu`.
    - When a VM goes idle, say whether anything still needs it and ask the user whether to stop
      (`down --vm`), delete (`delete --vm`) or keep it.
 5. **Watch it.** `gcp/fjordsim-gcp status`, `gcp/fjordsim-gcp logs <run-id>`; stop any monitoring

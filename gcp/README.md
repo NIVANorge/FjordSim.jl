@@ -15,10 +15,11 @@ image: which setup and which steps are arguments to one launch.
 `fjordsim-gcp` creates, starts, stops and deletes the VMs itself with `gcloud compute instances`,
 and everything after `up` goes over SSH with sudo:
 
-- VMs are **long-lived and shared**, not one per run: a GPU VM per kind of GPU in `GPU_KINDS`,
-  `GPU_VM_PREFIX-KIND` (`fjordsim-gpu-l4`), and optionally the preprocessing VMs
-  `PREP_VM_PREFIX-1` ... `-N`. Every subcommand that acts on a VM needs `--vm KIND|N` — a GPU kind
-  such as `l4` or `a100`, or a preprocessing VM's number — so nothing runs on a VM by default.
+- VMs are **long-lived and shared**, not one per run: GPU VMs `GPU_VM_PREFIX-KIND-N`, numbered per
+  kind of GPU in `GPU_KINDS` (`fjordsim-gpu-l4-1`, `fjordsim-gpu-l4-2`, `fjordsim-gpu-a100-1`), and
+  optionally the preprocessing VMs `PREP_VM_PREFIX-1` ... `-N`. Every subcommand that acts on a VM
+  needs `--vm` — `KIND-N` for a GPU VM (`--vm l4-1`), `N` for a preprocessing VM, or an existing VM's
+  full name — so nothing runs on a VM by default. Only `KIND-N` and `--prep` create a VM.
 - There is **no startup script** — `run` ships a script over `scp` and detaches it with `nohup`.
 - Nothing self-deletes. `down` shuts a VM down *from inside* (`sudo poweroff`); `delete` removes a
   VM and its disk. Both act on the one VM `--vm` names, or with `--prep` on every preprocessing VM.
@@ -31,7 +32,7 @@ gets Ubuntu 22.04, a `pd-balanced` boot disk, OS Login and the `cloud-platform` 
 
 | VM | Created with |
 |---|---|
-| GPU, `up --vm KIND` | the kind's machine type in `GPU_KINDS`, `GPU_DISK_SIZE` |
+| GPU, `up --vm KIND-N` | the kind's machine type in `GPU_KINDS`, `GPU_DISK_SIZE` |
 | preprocessing, `up --prep N` | `PREP_MACHINE_TYPE`, `PREP_DISK_SIZE`; `-1` ... `-N`. Without `N`, `up --prep` starts every existing one. |
 
 All are on-demand (standard) VMs. Size the GPU disk for the data directory plus the output written
@@ -93,7 +94,7 @@ All of them facts about the deployment:
 | `PROJECT_ID` | the project the VMs live in |
 | `BUCKET` | `gs://…` — staged inputs, results and uploaded configs |
 | `IMAGE_URI` | the full image URI; everything else about the registry follows from it |
-| `GPU_VM_PREFIX` | the GPU VMs are `GPU_VM_PREFIX-KIND`; `--vm KIND` names one |
+| `GPU_VM_PREFIX` | the GPU VMs are `GPU_VM_PREFIX-KIND-N`; `--vm KIND-N` names one |
 | `GPU_KINDS` | the GPU kinds and their machine types, each with its GPU built in: `"l4=g2-standard-8 a100=a2-highgpu-1g"` |
 | `PREP_VM_PREFIX` | the preprocessing VMs are `PREP_VM_PREFIX-1` ... `-N`; `--vm N` names the Nth. Empty without them. |
 | `ZONES`, `GPU_DISK_SIZE`, `PREP_MACHINE_TYPE`, `PREP_DISK_SIZE`, `SERVICE_ACCOUNT` | what `up` creates the VMs with ("The deployment model") |
@@ -103,7 +104,7 @@ All of them facts about the deployment:
 Every variable is also overridable per invocation, so a one-off needs no edit at all:
 
 ```bash
-BUCKET=gs://other-bucket gcp/fjordsim-gcp run --vm l4 --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu
+BUCKET=gs://other-bucket gcp/fjordsim-gcp run --vm l4-1 --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu
 ```
 
 ### 2. Build and push the image
@@ -121,13 +122,13 @@ being billed for a GPU that is doing nothing.
 ## The loop
 
 ```bash
-gcp/fjordsim-gcp up --vm l4                          # create or start the L4 GPU VM
-gcp/fjordsim-gcp bootstrap --vm l4                   # driver, Docker, toolkit, image pull
-gcp/fjordsim-gcp run --vm l4 --config examples/drammensfjorden/drammensfjorden.jl --steps run_simulation --gpu
+gcp/fjordsim-gcp up --vm l4-1                          # create or start the L4 GPU VM
+gcp/fjordsim-gcp bootstrap --vm l4-1                   # driver, Docker, toolkit, image pull
+gcp/fjordsim-gcp run --vm l4-1 --config examples/drammensfjorden/drammensfjorden.jl --steps run_simulation --gpu
 gcp/fjordsim-gcp logs <run-id>
 gcp/fjordsim-gcp pull-results drammensfjorden
-gcp/fjordsim-gcp down --vm l4                        # stop billing; the disk survives
-gcp/fjordsim-gcp delete --vm l4                      # when done for good: the disk goes too
+gcp/fjordsim-gcp down --vm l4-1                        # stop billing; the disk survives
+gcp/fjordsim-gcp delete --vm l4-1                      # when done for good: the disk goes too
 ```
 
 `up` is idempotent: it creates the VM if it is gone, starts it if it is stopped, and exits cleanly
@@ -210,7 +211,7 @@ fetched by the VM, so a config may `include` a sibling — as `examples/oslofjor
 fjord — the basename is what roots the staged directories.
 
 ```bash
-gcp/fjordsim-gcp run --vm l4 --config examples/oslofjorden/oslofjorden_npzd.jl --steps run_simulation --gpu
+gcp/fjordsim-gcp run --vm l4-1 --config examples/oslofjorden/oslofjorden_npzd.jl --steps run_simulation --gpu
 ```
 
 ### A setup with its own environment
@@ -247,10 +248,10 @@ Host maintenance can stop a GPU VM in the middle of a long run. Recovery is `up`
 no-op, since the disk survived), then the same run id with `--resume`:
 
 ```bash
-gcp/fjordsim-gcp run --vm l4 --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020
+gcp/fjordsim-gcp run --vm l4-1 --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020
 # after an interruption:
-gcp/fjordsim-gcp up --vm l4 && gcp/fjordsim-gcp bootstrap --vm l4
-gcp/fjordsim-gcp run --vm l4 --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020 --resume
+gcp/fjordsim-gcp up --vm l4-1 && gcp/fjordsim-gcp bootstrap --vm l4-1
+gcp/fjordsim-gcp run --vm l4-1 --config examples/oslofjorden/oslofjorden.jl --steps run_simulation --gpu --run-id oslo-2020 --resume
 ```
 
 `--resume` stages the newest checkpoint in `results/<fjord>/` back down and sets `pickup = true`
@@ -270,7 +271,7 @@ finishes"). A fresh run starts on the VM from an empty results directory.
 ```bash
 gcp/fjordsim-gcp status            # every run marker in the bucket
 gcp/fjordsim-gcp logs oslo-2020    # tail on the VM, bucket copy once it is gone
-gcp/fjordsim-gcp ssh --vm l4      # the VM is a normal box; docker ps, nvidia-smi, etc.
+gcp/fjordsim-gcp ssh --vm l4-1      # the VM is a normal box; docker ps, nvidia-smi, etc.
 ```
 
 Results sync up every 10 minutes while the run is in flight, so `pull-results` mid-run gives you

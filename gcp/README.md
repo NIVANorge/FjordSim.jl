@@ -17,10 +17,11 @@ and everything after `up` goes over SSH with sudo:
 
 - VMs are **long-lived and shared**, not one per run: one GPU VM, `VM_NAME`, and optionally the
   preprocessing VMs `PREP_VM_PREFIX-1` ... `-N`. Every subcommand that acts on a VM takes
-  `--vm N|NAME` to pick one; the default is the GPU VM.
+  `--vm N|NAME` to pick one; the default is the GPU VM. Any other name is another GPU VM, for runs in
+  parallel or on another GPU type: `up --vm NAME [--machine-type T] [--accelerator A]` creates it.
 - There is **no startup script** — `run` ships a script over `scp` and detaches it with `nohup`.
-- Nothing self-deletes. `down` shuts a VM down *from inside* (`sudo poweroff`); `down --prep` stops
-  every preprocessing VM; `delete` removes a VM and its disk.
+- Nothing self-deletes. `down` shuts a VM down *from inside* (`sudo poweroff`); `delete` removes a
+  VM and its disk. Both act on the one VM `--vm` names, or with `--prep` on every preprocessing VM.
 
 `up` creates a missing VM from `config.env`, trying each zone in `ZONES` once, in order, and moving
 on only when a zone has no capacity or no such machine type; it fails if none has. A stopped VM is
@@ -30,7 +31,7 @@ gets Ubuntu 22.04, a `pd-balanced` boot disk, OS Login and the `cloud-platform` 
 
 | VM | Created with |
 |---|---|
-| GPU, `up` | `GPU_MACHINE_TYPE`, `GPU_ACCELERATOR` if set, `GPU_DISK_SIZE` |
+| GPU, `up [--vm NAME]` | `GPU_MACHINE_TYPE`, `GPU_ACCELERATOR` if set, `GPU_DISK_SIZE`; `--machine-type` and `--accelerator` replace the first two for a VM being created |
 | preprocessing, `up --prep N` | `PREP_MACHINE_TYPE`, `PREP_DISK_SIZE`; `-1` ... `-N`. Without `N`, `up --prep` starts every existing one. |
 
 All are on-demand (standard) VMs. Size the GPU disk for the data directory plus the output written
@@ -322,7 +323,8 @@ from a clean clone.
 - The `Scratch.jl` bathymetry cache (`src/Bathymetry/geonorge.jl`) lives in the Julia depot inside
   the image, so it is rebuilt on each VM. `raw_directory` is an ordinary config field; point it
   under `data_root` in a config file if you would rather it were staged and reused.
-- The files here: `fjordsim-gcp` (the driver), `bootstrap.sh` and `remote-run.sh` (both rendered
+- The files here: `fjordsim-gcp` (the driver), `load_config.sh` (reads `config.env`, which
+  `config.env.example` is the template for), `bootstrap.sh` and `remote-run.sh` (both rendered
   with `envsubst` and run on the VM), `Dockerfile` / `build_image.sh` (the image),
   `Dockerfile.environment` (a setup's environment on top of it), `preflight.jl` (fails a GPU run
   that silently fell back to CPU) and `resume.jl` (sets `pickup = true`).

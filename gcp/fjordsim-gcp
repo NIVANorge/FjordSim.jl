@@ -40,23 +40,30 @@ usage() {
     cat <<'EOF'
 Usage: gcp/fjordsim-gcp SUBCOMMAND [options] [--vm N|NAME]
 
-  --vm N|NAME        The VM that bootstrap, down, ssh, run and logs act on: N is preprocessing VM
-                     PREP_VM_PREFIX-N, anything else an instance name. Default: VM_NAME, the GPU
-                     VM — except for `logs`, which defaults to the VM the run was launched on.
+  --vm N|NAME        The VM that up, bootstrap, down, delete, ssh, run and logs act on: N is
+                     preprocessing VM PREP_VM_PREFIX-N, anything else a GPU VM of that name.
+                     Default: VM_NAME, the GPU VM — except for `logs`, which defaults to the VM the
+                     run was launched on.
 
 The VMs (see gcp/README.md):
-  up                 Create the GPU VM, or start it if it is stopped, and wait. Tries each zone in
-                     ZONES until one has capacity.
+  up [--machine-type T] [--accelerator A]
+                     Create the GPU VM, or start it if it is stopped, and wait. Tries each zone in
+                     ZONES until one has capacity. With --vm NAME, another GPU VM: several can run
+                     at once. --machine-type replaces GPU_MACHINE_TYPE, and GPU_ACCELERATOR with it
+                     unless --accelerator is given too, for a VM being created, e.g.
+                     `up --vm fjordsim-gpu-a100 --machine-type a2-highgpu-1g`.
   up --prep [N]      Create or start the CPU-only VMs PREP_VM_PREFIX-1 ... -N, and wait. Without N,
                      start every existing preprocessing VM.
   bootstrap          Install Docker on the VM — and on a GPU VM the NVIDIA driver and container
                      toolkit — and pull the image. Idempotent: a second call is a fast no-op.
   down               Shut the VM down from inside (sudo poweroff), which needs no
                      compute.instances.stop. The boot disk survives; `up` starts it again.
+                     `down --vm 2` stops preprocessing VM 2 alone.
   down --prep        Stop every preprocessing VM, whatever it is running. Their disks survive,
                      and are billed while stopped.
-  delete [--prep]    Delete the VM (or every preprocessing VM) and its disk, after a typed
-                     confirmation. Ends the disk's cost; the next `up` creates it afresh.
+  delete [--prep]    Delete the VM (or with --prep every preprocessing VM) and its disk, after a
+                     typed confirmation. Ends the disk's cost; the next `up` creates it afresh.
+                     `delete --vm 2` deletes preprocessing VM 2 alone.
   ssh [ARGS...]      SSH into the VM. Extra arguments go to `gcloud compute ssh`.
 
 Data movement (between this machine and the bucket):
@@ -133,6 +140,11 @@ vm_ssh() {
 # Ship a local file to the VM's home directory.
 vm_push() {
     gcloud compute scp "$1" "$VM_NAME:$2" --project="$PROJECT_ID" --zone="$(vm_zone)" --quiet
+}
+
+# A preprocessing VM is PREP_VM_PREFIX-N; any other name is a GPU VM.
+is_prep_vm() {
+    [[ -n "$PREP_VM_PREFIX" && "$1" =~ ^${PREP_VM_PREFIX}-[0-9]+$ ]]
 }
 
 prep_vms() {
@@ -220,14 +232,35 @@ cmd_up_prep() {
 cmd_up() {
     [[ "${1:-}" == "--prep" ]] && { cmd_up_prep "${2:-}"; return; }
     need PROJECT_ID; need VM_NAME
-    ensure_instance "$VM_NAME" gpu
+    local machine_type="" accelerator=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --machine-type) machine_type="${2:?--machine-type takes a machine type}"; shift 2 ;;
+            --accelerator)  accelerator="${2:?--accelerator takes type=...,count=N}"; shift 2 ;;
+            *) die "up takes --prep [N], --machine-type T or --accelerator A, not $1." ;;
+        esac
+    done
+    # A machine type of another family comes with its own GPUs, or needs others than config.env's.
+    if [[ -n "$machine_type" ]]; then GPU_MACHINE_TYPE="$machine_type"; GPU_ACCELERATOR="$accelerator"; fi
+    if [[ -n "$accelerator" ]]; then GPU_ACCELERATOR="$accelerator"; fi
+
+    local kind=gpu
+    if is_prep_vm "$VM_NAME"; then
+        [[ -z "$machine_type$accelerator" ]] ||
+            die "--machine-type and --accelerator are for a GPU VM; $VM_NAME is a preprocessing VM."
+        kind=prep
+    fi
+    if [[ -n "$machine_type$accelerator" && -n "$(instance_zone "$VM_NAME")" ]]; then
+        echo "$VM_NAME exists: --machine-type and --accelerator apply only when a VM is created"
+    fi
+    ensure_instance "$VM_NAME" "$kind"
 
     VM_ZONE=""
     vm_zone >/dev/null
     echo
     echo "vm:     $VM_NAME  (zone $(vm_zone))"
     echo "status: $(vm_status)"
-    echo "next:   gcp/fjordsim-gcp bootstrap"
+    echo "next:   gcp/fjordsim-gcp bootstrap$($vm_given && echo " --vm $VM_NAME")"
 }
 
 cmd_down() {
